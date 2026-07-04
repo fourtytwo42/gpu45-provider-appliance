@@ -458,6 +458,56 @@ def normalize_system_messages(value):
     ]
 
 
+
+def prepend_system_text(body, text):
+    normalized = dict(body)
+    current_input = normalized.get("input")
+    if isinstance(current_input, list):
+        input_items = current_input
+    elif isinstance(current_input, str):
+        input_items = [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": current_input}],
+            }
+        ]
+    elif current_input is None:
+        input_items = []
+    else:
+        input_items = [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": json.dumps(current_input, ensure_ascii=False)}],
+            }
+        ]
+    normalized["input"] = [
+        {
+            "type": "message",
+            "role": "system",
+            "content": [{"type": "input_text", "text": text}],
+        },
+        *input_items,
+    ]
+    return normalized
+
+
+def apply_model_behavior_hints(body):
+    """Add small model-specific execution hints for open weights that over-explain."""
+    model = str(body.get("model") or "").lower()
+    tools = body.get("tools")
+    if "gemma" not in model or not isinstance(tools, list) or not tools:
+        return body
+    hint = (
+        "Gemma tool-use compatibility hint: when the user asks you to inspect files, "
+        "search, run commands, open links, use browser/MCP resources, or otherwise take "
+        "an external action, call the appropriate tool immediately. Do not merely say "
+        "that you will do it. If a tool is needed, emit a tool call as the next action; "
+        "after tool results are returned, continue from the result."
+    )
+    return prepend_system_text(body, hint)
+
 def normalize_responses_instructions(body):
     """Move top-level Responses instructions into leading system input."""
     instructions = body.get("instructions")
@@ -764,6 +814,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 request_body["input"] = build_followup_input(request_body)
                 request_body.pop("previous_response_id", None)
             request_body = normalize_responses_instructions(request_body)
+            request_body = apply_model_behavior_hints(request_body)
             request_body, namespace_map = flatten_namespace_tools(request_body)
             request_body["input"] = normalize_tool_output_items(
                 flatten_namespaced_calls(request_body.get("input"), namespace_map)
