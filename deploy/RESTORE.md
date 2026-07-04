@@ -68,3 +68,7 @@ Core restore should prioritize:
 4. Recreate Python virtual environments from service dependency requirements or current package imports.
 
 `/models/qwen3-tts` contains runtime voice/model metadata and generated assets. It is intentionally excluded from git; if preserving trained voices matters, back it up separately.
+
+## External local patches
+
+`deploy/patches/` contains `git diff --binary` snapshots and status files for external source directories. Apply these after cloning the matching upstream SHA if those patches are still needed.
