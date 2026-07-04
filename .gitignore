@@ -70,3 +70,13 @@ models/
 Thumbs.db
 .vscode/
 .idea/
+
+# Python generated files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
