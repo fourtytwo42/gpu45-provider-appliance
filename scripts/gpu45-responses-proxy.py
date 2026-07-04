@@ -506,6 +506,7 @@ def apply_model_behavior_hints(body):
         "that you will do it. If a tool is needed, emit a tool call as the next action; "
         "after tool results are returned, continue from the result."
     )
+    print(f"applied Gemma tool-use hint model={body.get('model')} tools={len(tools)}", flush=True)
     return prepend_system_text(body, hint)
 
 def normalize_responses_instructions(body):
