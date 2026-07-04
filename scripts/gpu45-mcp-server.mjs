@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -84,6 +84,59 @@ const tools = [
     inputSchema: {
       type: "object",
       properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "gpu45_tts_audiobook_create",
+    description: "Upload a local EPUB/PDF/DOCX/TXT/HTML file to GPU45 and start chunked audiobook TTS. Chunks are available for preview as each completes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        file_path: { type: "string", minLength: 1 },
+        model_id: { type: "string", minLength: 1 },
+        title: { type: "string" },
+        chunk_chars: { type: "integer", minimum: 240, maximum: 1800, default: 700 },
+        wait: { type: "boolean", default: false },
+        timeout_seconds: { type: "integer", minimum: 5, maximum: 7200, default: 600 },
+      },
+      required: ["file_path", "model_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "gpu45_tts_audiobook_get",
+    description: "Get audiobook TTS job status, chunk states, preview URLs, and stitched output URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", minLength: 1 },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "gpu45_tts_audiobook_stop",
+    description: "Request stop for an active audiobook TTS job. Current chunk may finish first; completed audio remains available.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", minLength: 1 },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "gpu45_tts_audiobook_resume",
+    description: "Resume a stopped, failed, or review-needed audiobook TTS job from incomplete chunks.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", minLength: 1 },
+      },
+      required: ["id"],
       additionalProperties: false,
     },
   },
@@ -389,6 +442,56 @@ async function toolTtsSynthesize(baseUrl, args) {
   });
 }
 
+function audiobookSummary(job, baseUrl) {
+  if (!job) return null;
+  const copy = { ...job };
+  copy.stitched_url = `${baseUrl}/api/tts/audiobook/audio?id=${encodeURIComponent(job.id)}`;
+  copy.chunks = (job.chunks || []).map((chunk) => ({
+    ...chunk,
+    preview_url: `${baseUrl}/api/tts/audiobook/audio?id=${encodeURIComponent(job.id)}&chunk=${encodeURIComponent(chunk.index)}`,
+  }));
+  return copy;
+}
+
+async function toolTtsAudiobookCreate(baseUrl, args) {
+  const bytes = await readFile(args.file_path);
+  const form = new FormData();
+  form.set("action", "createAudiobook");
+  form.set("model_id", args.model_id);
+  if (args.title) form.set("title", args.title);
+  form.set("chunk_chars", String(args.chunk_chars || 700));
+  form.set("file", new Blob([bytes]), basename(args.file_path));
+  const response = await fetch(`${baseUrl}/api/tts`, { method: "POST", body: form });
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+  const created = await response.json();
+  let job = created.job;
+  if (args.wait === true && job?.id) {
+    const started = Date.now();
+    while (Date.now() - started < (args.timeout_seconds || 600) * 1000) {
+      const snapshot = await fetchJson(`${baseUrl}/api/tts`);
+      job = snapshot.audiobookJobs?.find((item) => item.id === job.id) || job;
+      if (["completed", "failed", "stopped", "needs_review"].includes(job?.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+  return audiobookSummary(job, baseUrl);
+}
+
+async function toolTtsAudiobookGet(baseUrl, args) {
+  const snapshot = await fetchJson(`${baseUrl}/api/tts`);
+  const job = snapshot.audiobookJobs?.find((item) => item.id === args.id);
+  if (!job) throw new Error(`Audiobook job not found: ${args.id}`);
+  return audiobookSummary(job, baseUrl);
+}
+
+async function toolTtsAudiobookAction(baseUrl, id, action) {
+  const response = await fetchJson(`${baseUrl}/api/tts`, {
+    method: "POST",
+    body: JSON.stringify({ action, id }),
+  });
+  return audiobookSummary(response.job, baseUrl);
+}
+
 async function toolWebSearch(baseUrl, args) {
   const params = new URLSearchParams({
     q: args.query,
@@ -455,6 +558,10 @@ async function callTool(name, args = {}, baseUrl = DEFAULT_BASE_URL) {
   if (name === "gpu45_video_generate") return await toolVideoGenerate(baseUrl, args);
   if (name === "gpu45_tts_synthesize") return await toolTtsSynthesize(baseUrl, args);
   if (name === "gpu45_tts_list_assets") return textContent((await fetchJson(`${baseUrl}/api/tts`)));
+  if (name === "gpu45_tts_audiobook_create") return textContent(await toolTtsAudiobookCreate(baseUrl, args));
+  if (name === "gpu45_tts_audiobook_get") return textContent(await toolTtsAudiobookGet(baseUrl, args));
+  if (name === "gpu45_tts_audiobook_stop") return textContent(await toolTtsAudiobookAction(baseUrl, args.id, "stopAudiobook"));
+  if (name === "gpu45_tts_audiobook_resume") return textContent(await toolTtsAudiobookAction(baseUrl, args.id, "resumeAudiobook"));
   if (name === "gpu45_job_get") return textContent(summarizeJob(args.kind, await getJob(baseUrl, args.kind, args.id), baseUrl));
   if (name === "gpu45_web_search") return textContent(await toolWebSearch(baseUrl, args));
   if (name === "gpu45_web_fetch") return textContent(await toolWebFetch(baseUrl, args));

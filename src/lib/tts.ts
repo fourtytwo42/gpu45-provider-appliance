@@ -55,6 +55,47 @@ export type TtsModel = {
   updated_at?: string;
 };
 
+export type TtsAudiobookChunk = {
+  index: number;
+  status: "pending" | "running" | "completed" | "failed" | "flagged";
+  text: string;
+  text_chars: number;
+  output_path?: string;
+  output_bytes?: number;
+  audio_url?: string;
+  quality?: { ok?: boolean; reasons?: string[]; duration_seconds?: number; rms?: number; peak?: number; zero_crossing_rate?: number } | null;
+  error?: string;
+  started_at?: string;
+  finished_at?: string;
+  updated_at?: string;
+};
+
+export type TtsAudiobookJob = {
+  id: string;
+  kind: "audiobook";
+  status: "queued" | "running" | "stopped" | "completed" | "failed" | "needs_review";
+  title: string;
+  source_filename: string;
+  model_id: string;
+  model_name?: string;
+  chunk_chars: number;
+  total_chunks: number;
+  completed_chunks: number;
+  failed_chunks: number;
+  current_chunk?: number | null;
+  progress_label: string;
+  progress_percent: number;
+  stop_requested?: boolean;
+  stitched_audio_url?: string;
+  text_chars: number;
+  chunks: TtsAudiobookChunk[];
+  error?: string;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  updated_at: string;
+};
+
 export type TtsSynthesisJob = {
   id: string;
   kind: "synthesis";
@@ -85,6 +126,7 @@ export type TtsSnapshot = {
   voiceJobs: TtsVoiceJob[];
   models: TtsModel[];
   synthesisJobs: TtsSynthesisJob[];
+  audiobookJobs: TtsAudiobookJob[];
   error?: string;
 };
 
@@ -120,7 +162,8 @@ export async function getTtsSnapshot(): Promise<TtsSnapshot> {
     ]);
     const voiceJobs = await fetchJson<TtsVoiceJob[]>("/voice-jobs").catch(() => []);
     const synthesisJobs = await fetchJson<TtsSynthesisJob[]>("/synthesis-jobs").catch(() => []);
-    return { healthy: true, serviceUrl, voices, voiceJobs, models, synthesisJobs };
+    const audiobookJobs = await fetchJson<TtsAudiobookJob[]>("/audiobooks").catch(() => []);
+    return { healthy: true, serviceUrl, voices, voiceJobs, models, synthesisJobs, audiobookJobs };
   } catch (error) {
     return {
       healthy: false,
@@ -129,6 +172,7 @@ export async function getTtsSnapshot(): Promise<TtsSnapshot> {
       voiceJobs: [],
       models: [],
       synthesisJobs: [],
+      audiobookJobs: [],
       error: error instanceof Error ? error.message : "TTS service unavailable",
     };
   }
@@ -149,6 +193,36 @@ export async function importTtsVoice(formData: FormData): Promise<JsonValue> {
   });
   if (!response.ok) throw new Error(await response.text());
   return await response.json() as JsonValue;
+}
+
+export async function createTtsAudiobook(formData: FormData): Promise<TtsAudiobookJob> {
+  const response = await fetch(ttsUrl("/audiobooks"), {
+    method: "POST",
+    body: formData,
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return await response.json() as TtsAudiobookJob;
+}
+
+export async function stopTtsAudiobook(id: string): Promise<TtsAudiobookJob> {
+  return await fetchJson<TtsAudiobookJob>(`/audiobooks/${encodeURIComponent(id)}/stop`, { method: "POST" });
+}
+
+export async function resumeTtsAudiobook(id: string): Promise<TtsAudiobookJob> {
+  return await fetchJson<TtsAudiobookJob>(`/audiobooks/${encodeURIComponent(id)}/resume`, { method: "POST" });
+}
+
+export async function deleteTtsAudiobook(id: string): Promise<void> {
+  const response = await fetch(ttsUrl(`/audiobooks/${encodeURIComponent(id)}`), { method: "DELETE", cache: "no-store" });
+  if (!response.ok) throw new Error(await response.text());
+}
+
+export async function fetchTtsAudiobookAudio(id: string, chunk?: number): Promise<Response> {
+  const path = typeof chunk === "number" ? `/audiobooks/${encodeURIComponent(id)}/chunks/${chunk}/audio` : `/audiobooks/${encodeURIComponent(id)}/audio`;
+  const response = await fetch(ttsUrl(path), { cache: "no-store" });
+  if (!response.ok) throw new Error(await response.text());
+  return response;
 }
 
 export async function trainTtsModel(payload: JsonValue): Promise<JsonValue> {
@@ -224,4 +298,11 @@ export function ttsSynthesisAudioUrl(id: string, download = false): string {
   const params = new URLSearchParams({ id });
   if (download) params.set("download", "1");
   return `/api/tts/audio?${params.toString()}`;
+}
+
+export function ttsAudiobookAudioUrl(id: string, options: { chunk?: number; download?: boolean } = {}): string {
+  const params = new URLSearchParams({ id });
+  if (typeof options.chunk === "number") params.set("chunk", String(options.chunk));
+  if (options.download) params.set("download", "1");
+  return `/api/tts/audiobook/audio?${params.toString()}`;
 }

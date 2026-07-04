@@ -20,6 +20,7 @@ from tts_api import store
 from tts_api import voices as voices_module
 from tts_api import models as models_module
 from tts_api import synthesize as synthesize_module
+from tts_api import document_tts
 
 
 # Request/response schemas
@@ -120,6 +121,19 @@ async def lifespan(app: FastAPI):
             synthesis_changed = True
     if synthesis_changed:
         store.save_synthesis_jobs(synthesis_jobs)
+    audiobook_jobs = store.load_audiobook_jobs()
+    audiobook_changed = False
+    for job in audiobook_jobs:
+        if job.get("status") in ("queued", "running"):
+            job.update(
+                status="stopped",
+                progress_label="Interrupted by service restart",
+                stop_requested=False,
+                updated_at=now,
+            )
+            audiobook_changed = True
+    if audiobook_changed:
+        store.save_audiobook_jobs(audiobook_jobs)
     yield
     # Optional: clear model cache on shutdown
     pass
@@ -713,6 +727,118 @@ def delete_synthesis_job(job_id: str):
     if job.get("status") in ("queued", "running"):
         raise HTTPException(status_code=409, detail="Synthesis job is still running")
     store.delete_synthesis_job(job_id)
+
+
+# Audiobooks / long document TTS
+@app.post("/audiobooks", status_code=202)
+async def create_audiobook(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    model_id: str = Form(...),
+    title: str | None = Form(None),
+    chunk_chars: int = Form(700),
+):
+    suffix = Path(file.filename or "upload.txt").suffix or ".txt"
+    with tempfile.NamedTemporaryFile(prefix="tts-audiobook-upload-", suffix=suffix, delete=False) as target:
+        shutil.copyfileobj(file.file, target)
+        source_path = target.name
+    try:
+        job = document_tts.create_audiobook_job(
+            source_path=source_path,
+            source_filename=file.filename or "upload",
+            model_id=model_id,
+            title=title,
+            chunk_chars=chunk_chars,
+        )
+    except KeyError as e:
+        try:
+            os.remove(source_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        try:
+            os.remove(source_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        try:
+            os.remove(source_path)
+        except OSError:
+            pass
+    background_tasks.add_task(document_tts.run_audiobook_job, job["id"])
+    return job
+
+
+@app.get("/audiobooks")
+def list_audiobooks():
+    return store.load_audiobook_jobs()
+
+
+@app.get("/audiobooks/{job_id}")
+def get_audiobook(job_id: str):
+    job = store.get_audiobook_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Audiobook job not found")
+    return job
+
+
+@app.post("/audiobooks/{job_id}/stop")
+def stop_audiobook(job_id: str):
+    try:
+        return document_tts.request_stop(job_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/audiobooks/{job_id}/resume", status_code=202)
+def resume_audiobook(job_id: str, background_tasks: BackgroundTasks):
+    job = store.get_audiobook_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Audiobook job not found")
+    if job.get("status") in ("queued", "running"):
+        raise HTTPException(status_code=409, detail="Audiobook job is already running")
+    store.update_audiobook_job(job_id, status="queued", stop_requested=False, progress_label="Queued for resume", updated_at=_utcnow())
+    background_tasks.add_task(document_tts.run_audiobook_job, job_id)
+    return store.get_audiobook_job_by_id(job_id)
+
+
+@app.get("/audiobooks/{job_id}/chunks/{index}/audio")
+def get_audiobook_chunk_audio(job_id: str, index: int):
+    job = store.get_audiobook_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Audiobook job not found")
+    chunk = next((c for c in job.get("chunks", []) if int(c.get("index", -1)) == int(index)), None)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Audiobook chunk not found")
+    path = chunk.get("output_path")
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Audiobook chunk audio not found")
+    return FileResponse(path, media_type="audio/mpeg", filename=f"{job_id}_chunk_{index:05d}.mp3")
+
+
+@app.get("/audiobooks/{job_id}/audio")
+def get_audiobook_audio(job_id: str):
+    job = store.get_audiobook_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Audiobook job not found")
+    path = job.get("stitched_output_path")
+    if not path or not os.path.isfile(path):
+        path = document_tts.stitch_completed_chunks(job_id)
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="No completed audiobook audio is available yet")
+    return FileResponse(path, media_type="audio/mpeg", filename=f"audiobook_{job_id}.mp3")
+
+
+@app.delete("/audiobooks/{job_id}", status_code=204)
+def delete_audiobook(job_id: str):
+    job = store.get_audiobook_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Audiobook job not found")
+    if job.get("status") in ("queued", "running"):
+        raise HTTPException(status_code=409, detail="Stop the audiobook job before deleting it")
+    store.delete_audiobook_job(job_id)
 
 
 # Synthesize

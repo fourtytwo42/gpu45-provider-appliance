@@ -13,9 +13,11 @@ VOICES_JSON = "voices.json"
 MODELS_JSON = "models.json"
 VOICE_JOBS_JSON = "voice_jobs.json"
 SYNTHESIS_JOBS_JSON = "synthesis_jobs.json"
+AUDIOBOOK_JOBS_JSON = "audiobook_jobs.json"
 VOICES_DIR = "voices"
 MODELS_DIR = "models"
 AUDIO_DIR = "audio"
+AUDIOBOOKS_DIR = "audiobooks"
 PARAGRAPH_WAV = "paragraph.wav"
 SAMPLE_WAV = "sample.wav"
 CHECKPOINT_DIR = "checkpoint"
@@ -47,6 +49,12 @@ def _audio_dir() -> str:
     return d
 
 
+def _audiobooks_dir() -> str:
+    d = os.path.join(API_DATA_DIR, AUDIOBOOKS_DIR)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def voices_json_path() -> str:
     return os.path.join(_data_dir(), VOICES_JSON)
 
@@ -61,6 +69,16 @@ def voice_jobs_json_path() -> str:
 
 def synthesis_jobs_json_path() -> str:
     return os.path.join(_data_dir(), SYNTHESIS_JOBS_JSON)
+
+
+def audiobook_jobs_json_path() -> str:
+    return os.path.join(_data_dir(), AUDIOBOOK_JOBS_JSON)
+
+
+def audiobook_dir(job_id: str) -> str:
+    d = os.path.join(_audiobooks_dir(), job_id)
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 def voice_dir(voice_id: str) -> str:
@@ -234,6 +252,74 @@ def delete_synthesis_job(job_id: str) -> Optional[Dict[str, Any]]:
             except OSError:
                 pass
         save_synthesis_jobs(kept)
+    return deleted
+
+
+def load_audiobook_jobs() -> List[Dict[str, Any]]:
+    path = audiobook_jobs_json_path()
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_audiobook_jobs(jobs: List[Dict[str, Any]]) -> None:
+    path = audiobook_jobs_json_path()
+    _write_json_atomic(path, jobs)
+
+
+def get_audiobook_job_by_id(job_id: str) -> Optional[Dict[str, Any]]:
+    for job in load_audiobook_jobs():
+        if job.get("id") == job_id:
+            return job
+    return None
+
+
+def update_audiobook_job(job_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    jobs = load_audiobook_jobs()
+    for job in jobs:
+        if job.get("id") == job_id:
+            job.update(kwargs)
+            save_audiobook_jobs(jobs)
+            return job
+    return None
+
+
+def update_audiobook_chunk(job_id: str, index: int, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    jobs = load_audiobook_jobs()
+    for job in jobs:
+        if job.get("id") != job_id:
+            continue
+        for chunk in job.get("chunks", []):
+            if int(chunk.get("index", -1)) == int(index):
+                chunk.update(kwargs)
+                completed = sum(1 for c in job.get("chunks", []) if c.get("status") == "completed")
+                failed = sum(1 for c in job.get("chunks", []) if c.get("status") == "failed")
+                total = max(1, int(job.get("total_chunks") or len(job.get("chunks", [])) or 1))
+                job["completed_chunks"] = completed
+                job["failed_chunks"] = failed
+                job["progress_percent"] = round((completed / total) * 100, 1)
+                job["updated_at"] = kwargs.get("updated_at", job.get("updated_at"))
+                save_audiobook_jobs(jobs)
+                return chunk
+    return None
+
+
+def delete_audiobook_job(job_id: str) -> Optional[Dict[str, Any]]:
+    jobs = load_audiobook_jobs()
+    kept = []
+    deleted = None
+    for job in jobs:
+        if job.get("id") == job_id:
+            deleted = job
+            continue
+        kept.append(job)
+    if deleted is not None:
+        import shutil
+        d = os.path.join(_audiobooks_dir(), job_id)
+        if os.path.isdir(d):
+            shutil.rmtree(d, ignore_errors=True)
+        save_audiobook_jobs(kept)
     return deleted
 
 

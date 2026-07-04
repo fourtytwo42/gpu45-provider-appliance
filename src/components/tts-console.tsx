@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Clock, Download, Mic2, Play, RefreshCw, Sparkles, Trash2, Upload, Wand2 } from "lucide-react";
+import { BookOpen, Clock, Download, Mic2, PauseCircle, Play, RefreshCw, RotateCcw, Sparkles, Trash2, Upload, Wand2 } from "lucide-react";
 import { SectionCard } from "./section-card";
-import type { TtsModel, TtsSnapshot, TtsSynthesisJob, TtsVoice, TtsVoiceJob } from "@/lib/tts";
-import { ttsSampleUrl, ttsSynthesisAudioUrl } from "@/lib/tts";
+import type { TtsAudiobookJob, TtsModel, TtsSnapshot, TtsSynthesisJob, TtsVoice, TtsVoiceJob } from "@/lib/tts";
+import { ttsAudiobookAudioUrl, ttsSampleUrl, ttsSynthesisAudioUrl } from "@/lib/tts";
 import { cn } from "@/lib/cn";
 
 type Status = "idle" | "working" | "error";
@@ -49,6 +49,10 @@ function synthesisProgressValue(job: TtsSynthesisJob): number {
   return Math.max(0, Math.min(100, Number(job.progress_percent ?? 0)));
 }
 
+function audiobookProgressValue(job: TtsAudiobookJob): number {
+  return Math.max(0, Math.min(100, Number(job.progress_percent ?? 0)));
+}
+
 export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [status, setStatus] = useState<Status>("idle");
@@ -67,6 +71,12 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
       .slice()
       .sort((a, b) => String(b.finished_at ?? b.updated_at).localeCompare(String(a.finished_at ?? a.updated_at)))
   ), [snapshot.synthesisJobs]);
+  const audiobookJobs = useMemo(() => (
+    snapshot.audiobookJobs
+      .slice()
+      .sort((a, b) => String(b.updated_at ?? b.created_at).localeCompare(String(a.updated_at ?? a.created_at)))
+  ), [snapshot.audiobookJobs]);
+  const activeAudiobookJobs = useMemo(() => audiobookJobs.filter((job) => job.status === "queued" || job.status === "running"), [audiobookJobs]);
 
   const reconcileSynthesisStatus = useCallback((next: TtsSnapshot, id = activeSynthesisId): void => {
     if (!id) return;
@@ -110,12 +120,12 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
   }, [refresh]);
 
   useEffect(() => {
-    if (activeSynthesisJobs.length === 0) return undefined;
+    if (activeSynthesisJobs.length === 0 && activeAudiobookJobs.length === 0) return undefined;
     const timer = window.setInterval(() => {
       void refresh().catch(() => undefined);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [activeSynthesisJobs.length, refresh]);
+  }, [activeSynthesisJobs.length, activeAudiobookJobs.length, refresh]);
 
   async function createVoice(formData: FormData): Promise<void> {
     await run(async () => {
@@ -209,6 +219,35 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
       setStatus("error");
       setMessage(detail);
     }
+  }
+
+  async function createAudiobook(formData: FormData): Promise<void> {
+    setStatus("working");
+    setMessage("Uploading document and queueing audiobook TTS.");
+    try {
+      const modelId = String(formData.get("model_id") ?? "");
+      if (!modelId) throw new Error("Choose a trained voice model before creating an audiobook.");
+      const response = await fetch("/api/tts", { method: "POST", body: formData });
+      await parseJson(response);
+      setMessage("Audiobook queued. Chunks appear as soon as they finish.");
+      await refresh();
+      setStatus("idle");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Audiobook upload failed");
+    }
+  }
+
+  async function controlAudiobook(action: "stopAudiobook" | "resumeAudiobook" | "deleteAudiobook", id: string): Promise<void> {
+    await run(async () => {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, id }),
+      });
+      await parseJson(response);
+      setMessage(action === "stopAudiobook" ? "Stop requested. Current chunk may finish first." : action === "resumeAudiobook" ? "Audiobook resumed." : "Audiobook deleted.");
+    }, action === "stopAudiobook" ? "Stopping audiobook." : action === "resumeAudiobook" ? "Resuming audiobook." : "Deleting audiobook.");
   }
 
   return (
@@ -401,6 +440,80 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
             )}
           </div>
         </form>
+      </SectionCard>
+
+
+      <SectionCard title="Document To Audiobook" description="Upload EPUB, PDF, DOCX, TXT, Markdown, or HTML and generate chunked TTS with preview, stop, resume, and stitching.">
+        <form action={(formData) => void createAudiobook(formData)} className="grid gap-3">
+          <input type="hidden" name="action" value="createAudiobook" />
+          <input name="title" className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60" placeholder="optional audiobook title" />
+          <select name="model_id" required className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
+            <option value="">Choose trained voice model</option>
+            {readyModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+          </select>
+          <div className="grid gap-3 sm:grid-cols-[1fr_150px]">
+            <input
+              name="file"
+              type="file"
+              required
+              accept=".epub,.pdf,.docx,.txt,.md,.html,.htm,application/epub+zip,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
+              className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-200 file:mr-3 file:border-0 file:bg-cyan-400/10 file:px-3 file:py-1 file:text-cyan-100"
+            />
+            <input name="chunk_chars" type="number" min={240} max={1800} defaultValue={700} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60" title="Characters per generated chunk" />
+          </div>
+          <button disabled={status === "working" || readyModels.length === 0} className="inline-flex items-center justify-center gap-2 border border-emerald-400/40 bg-emerald-400/10 px-4 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-50">
+            <BookOpen className="h-4 w-4" />
+            Create Audiobook
+          </button>
+        </form>
+        <div className="mt-4 grid gap-3">
+          {audiobookJobs.length === 0 ? <p className="text-sm text-slate-400">No audiobook jobs yet.</p> : null}
+          {audiobookJobs.map((job) => {
+            const completedChunks = job.chunks.filter((chunk) => chunk.status === "completed" || chunk.status === "flagged");
+            const canStop = job.status === "queued" || job.status === "running";
+            const canResume = job.status === "stopped" || job.status === "failed" || job.status === "needs_review";
+            const hasAudio = completedChunks.length > 0;
+            return (
+              <div key={job.id} className={cn("border p-3", job.status === "failed" || job.status === "needs_review" ? "border-amber-400/30 bg-amber-500/10" : "border-white/10 bg-black/20")}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-white">{job.title}</div>
+                    <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-400">
+                      <span>{job.status}</span>
+                      <span>{job.completed_chunks}/{job.total_chunks} chunks</span>
+                      <span>{job.model_name ?? job.model_id}</span>
+                      <span>{job.source_filename}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {canStop ? <button type="button" className="inline-flex items-center gap-1 border border-amber-400/30 px-2 py-1 text-xs text-amber-100 hover:bg-amber-400/10" onClick={() => void controlAudiobook("stopAudiobook", job.id)}><PauseCircle className="h-3.5 w-3.5" />Stop</button> : null}
+                    {canResume ? <button type="button" className="inline-flex items-center gap-1 border border-cyan-400/30 px-2 py-1 text-xs text-cyan-100 hover:bg-cyan-400/10" onClick={() => void controlAudiobook("resumeAudiobook", job.id)}><RotateCcw className="h-3.5 w-3.5" />Resume</button> : null}
+                    {hasAudio ? <a className="inline-flex items-center gap-1 border border-emerald-400/30 px-2 py-1 text-xs text-emerald-100 hover:bg-emerald-400/10" href={ttsAudiobookAudioUrl(job.id, { download: true })}><Download className="h-3.5 w-3.5" />Download</a> : null}
+                    {!canStop ? <button type="button" className="border border-red-400/30 px-2 py-1 text-xs text-red-100 hover:bg-red-400/10" onClick={() => void controlAudiobook("deleteAudiobook", job.id)}><Trash2 className="inline h-3.5 w-3.5" /></button> : null}
+                  </div>
+                </div>
+                <div className="mt-3 h-2 border border-white/10 bg-black/30">
+                  <div className="h-full bg-emerald-300 transition-all" style={{ width: `${audiobookProgressValue(job)}%` }} />
+                </div>
+                <div className="mt-1 flex justify-between text-xs text-slate-400"><span>{job.progress_label}</span><span>{audiobookProgressValue(job).toFixed(1)}%</span></div>
+                {job.error ? <p className="mt-2 text-sm text-red-200">{job.error}</p> : null}
+                {hasAudio ? <audio className="mt-3 w-full" controls src={ttsAudiobookAudioUrl(job.id)} /> : null}
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {completedChunks.slice(0, 8).map((chunk) => (
+                    <div key={chunk.index} className={cn("border p-2", chunk.status === "flagged" ? "border-amber-400/30 bg-amber-500/10" : "border-white/10 bg-black/20")}>
+                      <div className="flex items-center justify-between gap-2 text-xs text-slate-300">
+                        <span>Chunk {chunk.index + 1}</span>
+                        <span>{chunk.quality?.duration_seconds ? `${chunk.quality.duration_seconds}s` : chunk.status}</span>
+                      </div>
+                      {chunk.quality?.ok === false ? <p className="mt-1 text-xs text-amber-200">Flagged: {chunk.quality.reasons?.join(", ")}</p> : null}
+                      <audio className="mt-2 w-full" controls src={ttsAudiobookAudioUrl(job.id, { chunk: chunk.index })} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </SectionCard>
 
       <SectionCard title="Voices" description="Prompt-designed reference voices.">

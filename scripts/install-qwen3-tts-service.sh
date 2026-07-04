@@ -25,6 +25,7 @@ python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
 "$VENV_DIR/bin/python" -m pip install --force-reinstall --index-url https://download.pytorch.org/whl/rocm6.4 torch torchaudio
 "$VENV_DIR/bin/python" -m pip install -e "$QWEN_ROOT"
+"$VENV_DIR/bin/python" -m pip install pypdf python-docx ebooklib beautifulsoup4 lxml mutagen
 python3 - <<PY
 from pathlib import Path
 path = Path("$QWEN_ROOT") / "finetuning" / "sft_12hz.py"
