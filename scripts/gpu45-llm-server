@@ -197,7 +197,13 @@ model_basename=$(basename "$MODEL_PATH")
 if [[ -z "${REASONING:-}" && "${model_basename,,}" == *"gemma-4"* ]]; then
   REASONING=off
 fi
+if [[ -z "${REASONING:-}" && "${model_basename,,}" == *"qwen3.6-35b-a3b"* ]]; then
+  REASONING=off
+fi
 if [[ -z "${TOP_K:-}" && "${model_basename,,}" == *"gemma-4"* ]]; then
+  TOP_K=0
+fi
+if [[ -z "${TOP_K:-}" && "${model_basename,,}" == *"qwen3.6-35b-a3b"* ]]; then
   TOP_K=0
 fi
 
