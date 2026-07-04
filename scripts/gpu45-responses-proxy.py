@@ -232,6 +232,7 @@ def ensure_model_loaded(model):
     )
     next_profile.update({
         "name": model["servedAlias"],
+        "alias": model["servedAlias"],
         "description": model["name"],
         "modelPath": model["path"],
         "modelDraftPath": draft,
@@ -240,6 +241,7 @@ def ensure_model_loaded(model):
 
     restart_keys = (
         "modelPath",
+        "alias",
         "modelDraftPath",
         "mmprojPath",
         "batchSize",
