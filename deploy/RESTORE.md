@@ -1,0 +1,46 @@
+# GPU45 Appliance Restore Notes
+
+This repository contains the appliance management app, local provider launcher/proxy code, service API wrappers, Prisma schema, tests, and restore snapshots for systemd and `/etc/gpu45`.
+
+It intentionally does not contain generated/runtime-heavy artifacts:
+
+- GGUF/model/checkpoint files
+- `/models` contents
+- generated audio/video/image/transcript outputs
+- Next.js build output `.next`
+- `node_modules`
+- SQLite runtime databases
+- Python virtual environments
+
+## Important live paths
+
+- App repo: `/opt/gpu45-provider-appliance`
+- Management UI service: `gpu45-provider-appliance.service`
+- Collector worker: `gpu45-provider-appliance-worker.service`
+- Responses proxy: `gpu45-responses-proxy.service`
+- LLM service: `llama-openai.service`
+- Image API: `gpu45-image-api.service`
+- Whisper API: `gpu45-whisper-api.service`
+- TTS API: `qwen3-tts-api.service`
+- Video API: `wan2-video-api.service`
+- Fan controller: `gpu45-v620-fan-controller.service`
+- Provider profile: `/etc/gpu45/provider-profile.json`
+- LLM launcher: `/usr/local/bin/gpu45-llm-server`
+
+## Restore outline
+
+1. Install Ubuntu 22.04, ROCm/amdgpu stack, Node.js, npm, Python tooling, build tools, git, and GitHub CLI.
+2. Clone this repo to `/opt/gpu45-provider-appliance`.
+3. Run `npm ci`, generate Prisma client, initialize the database, and build Next.js.
+4. Install service API dependencies and virtual environments for image, Whisper, Qwen3 TTS, and Wan video services.
+5. Copy `deploy/systemd/*.service` to `/etc/systemd/system/`.
+6. Copy `deploy/etc/gpu45/*` to `/etc/gpu45/` and adjust model paths if models live somewhere different.
+7. Copy `deploy/usr/local/bin/gpu45-llm-server` to `/usr/local/bin/gpu45-llm-server` and make it executable.
+8. Download model artifacts listed in `docs/model-inventory.md` or the management UI model registry.
+9. Run `systemctl daemon-reload`, enable services, and start them.
+
+## Known model profile constraints
+
+- Qwen3.6 27B MTP was the default known-good Codex provider model.
+- Gemma 4 12B IT UD-Q8_K_XL works with MTP at 262144 context.
+- Gemma 4 26B A4B IT UD-Q8_K_XL works with MTP at 131072 context. Higher contexts caused ROCm OOM or unstable speculative decoding.

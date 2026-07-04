@@ -1,0 +1,29 @@
+{
+  "channels": [
+    {
+      "fan": "fan3_input",
+      "label": "gpu-fan-a",
+      "pwm": "pwm3"
+    },
+    {
+      "fan": "fan4_input",
+      "label": "gpu-fan-b",
+      "pwm": "pwm4"
+    }
+  ],
+  "label": "gpu-fan-a,gpu-fan-b",
+  "maxTempC": 29.0,
+  "pwm": 70,
+  "rpm": 5000,
+  "rpms": {
+    "gpu-fan-a": 4918,
+    "gpu-fan-b": 5000
+  },
+  "status": "ok",
+  "temperaturesC": {
+    "edge": 26.0,
+    "junction": 29.0,
+    "mem": 24.0
+  },
+  "updatedAt": "2026-07-04T01:04:43Z"
+}

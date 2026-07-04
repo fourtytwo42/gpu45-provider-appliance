@@ -1,0 +1,14 @@
+[Unit]
+Description=GPU45 Radeon Pro V620 external fan curve controller
+After=multi-user.target gpu45-host-tune.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/gpu45-v620-fan-controller
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

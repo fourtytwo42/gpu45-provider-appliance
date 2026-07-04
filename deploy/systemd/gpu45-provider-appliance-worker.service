@@ -1,0 +1,20 @@
+[Unit]
+Description=GPU45 provider appliance collector worker
+After=network-online.target gpu45-host-tune.service llama-openai.service
+Wants=network-online.target llama-openai.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/gpu45-provider-appliance
+EnvironmentFile=-/opt/gpu45-provider-appliance/.env
+EnvironmentFile=-/opt/gpu45-provider-appliance/.env.local
+ExecStartPre=/usr/bin/npm run db:push
+ExecStart=/usr/bin/npm run worker
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

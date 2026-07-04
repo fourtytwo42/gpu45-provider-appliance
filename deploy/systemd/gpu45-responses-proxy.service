@@ -1,0 +1,15 @@
+[Unit]
+Description=GPU45 Responses API compatibility proxy
+After=network-online.target gpu45-host-tune.service llama-openai.service
+Wants=network-online.target llama-openai.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/gpu45-responses-proxy
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

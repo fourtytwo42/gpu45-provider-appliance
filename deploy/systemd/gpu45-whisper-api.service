@@ -1,0 +1,21 @@
+[Unit]
+Description=GPU45 Whisper transcription API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hendo420
+Group=hendo420
+WorkingDirectory=/opt/gpu45-whisper-api
+Environment=WHISPER_API_HOST=0.0.0.0
+Environment=WHISPER_API_PORT=8020
+Environment=WHISPER_API_DATA=/models/whisper
+Environment=WHISPER_DEVICE=cpu
+Environment=WHISPER_COMPUTE_TYPE=int8
+ExecStart=/opt/gpu45-whisper-venv/bin/python -m whisper_api
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

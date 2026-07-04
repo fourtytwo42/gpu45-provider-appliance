@@ -1,0 +1,25 @@
+[Unit]
+Description=GPU45 image generation API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hendo420
+Group=hendo420
+WorkingDirectory=/opt/gpu45-image-api
+Environment=IMAGE_API_HOST=0.0.0.0
+Environment=IMAGE_API_PORT=8030
+Environment=IMAGE_API_DATA=/models/image-gen
+Environment=IMAGE_MODEL_BASE=/models/image-gen/models
+Environment=IMAGE_DEVICE=cuda
+Environment=IMAGE_LLM_SERVICE=llama-openai.service
+Environment=IMAGE_RESTART_LLM=true
+Environment=HSA_OVERRIDE_GFX_VERSION=10.3.0
+Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+ExecStart=/opt/gpu45-image-venv/bin/python -m image_api
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+[Unit]
+Description=GPU45 ROCm Qwen3.6-27B-MTP inference server
+After=network-online.target gpu45-host-tune.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/gpu45-provider-appliance
+Environment=HF_HOME=/models/huggingface
+Environment=LLAMA_CACHE=/models/llama-cache
+ExecStart=/usr/local/bin/gpu45-llm-server
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=300
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

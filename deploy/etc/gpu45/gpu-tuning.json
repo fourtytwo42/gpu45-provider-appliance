@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "performanceLevel": "auto",
+  "powerDpmState": "performance",
+  "powerProfile": 5,
+  "vddgfxOffsetMv": -80,
+  "note": "Measured safe operating point on bare-metal Ubuntu 22.04/5.15 with ROCm llama.cpp runtime. -80mV reduced Gemma4 peak package power from 250W to about 239W and average from about 236W to about 226W with prompt/decode throughput within small-run noise. -120mV caused a ROCm illegal memory access and must not be used."
+}

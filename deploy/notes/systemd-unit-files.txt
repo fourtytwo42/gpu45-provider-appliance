@@ -1,0 +1,13 @@
+UNIT FILE                               STATE   VENDOR PRESET
+gpu45-host-tune.service                 enabled enabled
+gpu45-image-api.service                 enabled enabled
+gpu45-provider-appliance-worker.service enabled enabled
+gpu45-provider-appliance.service        enabled enabled
+gpu45-responses-proxy.service           enabled enabled
+gpu45-v620-fan-controller.service       enabled enabled
+gpu45-whisper-api.service               enabled enabled
+llama-openai.service                    enabled enabled
+qwen3-tts-api.service                   enabled enabled
+wan2-video-api.service                  enabled enabled
+
+10 unit files listed.

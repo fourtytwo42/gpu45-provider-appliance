@@ -1,0 +1,22 @@
+{
+  "name": "dual-gpu-fan-quiet-guard-88c",
+  "description": "Quiet-biased dual GPU fan curve: keep fans near the silent floor longer, then force maximum before junction can pass 90C.",
+  "fanStopBelowC": null,
+  "fanStartAtC": null,
+  "idlePwm": 70,
+  "startupPwm": 255,
+  "startupSeconds": 6,
+  "channels": [
+    { "pwm": "pwm3", "fan": "fan3_input", "label": "gpu-fan-a" },
+    { "pwm": "pwm4", "fan": "fan4_input", "label": "gpu-fan-b" }
+  ],
+  "points": [
+    { "temperatureC": 35, "pwm": 70 },
+    { "temperatureC": 50, "pwm": 75 },
+    { "temperatureC": 60, "pwm": 95 },
+    { "temperatureC": 70, "pwm": 140 },
+    { "temperatureC": 78, "pwm": 190 },
+    { "temperatureC": 84, "pwm": 255 },
+    { "temperatureC": 100, "pwm": 255 }
+  ]
+}
