@@ -201,7 +201,7 @@ model_basename=$(basename "$MODEL_PATH")
 model_basename_lc="${model_basename,,}"
 if [[ -z "${REASONING:-}" ]]; then
   case "$model_basename_lc" in
-    *gemma4*|*gemma-4*|*qwen3.6*|*qwythos*) REASONING=off ;;
+    *gemma4*|*gemma-4*|*qwen3.6*|*qwythos*) REASONING=on ;;
   esac
 fi
 if [[ -z "${TOP_K:-}" ]]; then
@@ -209,14 +209,9 @@ if [[ -z "${TOP_K:-}" ]]; then
     *gemma4*|*gemma-4*|*qwen3.6*|*qwythos*) TOP_K=0 ;;
   esac
 fi
-if [[ -z "${REASONING_FORMAT:-}" ]]; then
-  case "$model_basename_lc" in
-    *qwythos*) REASONING_FORMAT=none ;;
-  esac
-fi
 if [[ -z "${REASONING_BUDGET:-}" ]]; then
   case "$model_basename_lc" in
-    *qwythos*) REASONING_BUDGET=0 ;;
+    *gemma4*|*gemma-4*|*qwen3.6*|*qwythos*) REASONING_BUDGET=4096 ;;
   esac
 fi
 
