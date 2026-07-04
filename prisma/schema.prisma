@@ -1,0 +1,171 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model MetricSample {
+  id         String   @id @default(cuid())
+  kind       String
+  series     String
+  value      Float
+  unit       String
+  capturedAt DateTime @default(now())
+
+  @@index([kind, capturedAt])
+}
+
+model ProviderState {
+  id              String   @id @default(cuid())
+  status          String
+  model           String
+  activeRequests  Int
+  promptTokens    Int
+  completionTokens Int
+  tokensPerSecond Float
+  providerUrl     String
+  lastError       String?
+  capturedAt      DateTime @default(now())
+
+  @@index([capturedAt])
+}
+
+model ModelAsset {
+  id             String   @id @default(cuid())
+  name           String
+  path           String
+  repo           String?
+  revision       String?
+  sizeBytes      BigInt
+  multimodal     Boolean  @default(false)
+  projectorPath  String?
+  draftPath      String?
+  active         Boolean  @default(false)
+  served         Boolean  @default(false)
+  servedAlias    String?  @unique
+  defaultModel   Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([name])
+  @@unique([path])
+}
+
+model ApiKey {
+  id               String   @id @default(cuid())
+  name             String?
+  keyHash          String   @unique
+  keyPrefix        String
+  expiresAt        DateTime?
+  suspendedAt      DateTime?
+  lastUsedAt       DateTime?
+  requestCount     Int      @default(0)
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  createdAt        DateTime @default(now())
+  usage            ApiKeyUsage[]
+}
+
+model ApiKeyUsage {
+  id               String   @id @default(cuid())
+  apiKeyId         String?
+  apiKey           ApiKey?  @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  model            String
+  requestedModel   String?
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  statusCode       Int
+  createdAt        DateTime @default(now())
+
+  @@index([apiKeyId, createdAt])
+  @@index([model, createdAt])
+}
+
+model EndpointSetting {
+  id             String   @id @default("default")
+  allowAnonymous Boolean  @default(true)
+  updatedAt      DateTime @updatedAt
+}
+
+model LaunchProfile {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  description  String?
+  modelPath    String
+  mmprojPath   String?
+  modelDraftPath String?
+  host         String   @default("0.0.0.0")
+  port         Int      @default(30000)
+  ctxSize      Int      @default(262144)
+  gpuLayers    String   @default("all")
+  batchSize    Int      @default(2048)
+  uBatchSize   Int      @default(512)
+  cacheRamMiB  Int      @default(8192)
+  cacheTypeK   String   @default("q4_0")
+  cacheTypeV   String   @default("q4_0")
+  cacheReuse   Int      @default(1024)
+  specType     String   @default("draft-mtp")
+  specDraftNMax Int     @default(2)
+  flashAttention String @default("on")
+  imageMinTokens Int     @default(1024)
+  metrics      Boolean  @default(true)
+  jinja        Boolean  @default(true)
+  active       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model FanCurveProfile {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  description  String?
+  pointsJson   String
+  active       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model BenchmarkRun {
+  id                     String   @id @default(cuid())
+  modelName              String
+  prompt                 String
+  totalTokens            Int
+  promptTokens           Int
+  completionTokens       Int
+  promptTokensPerSecond  Float
+  generationTokensPerSecond Float
+  durationMs             Int
+  peakGpuTempC           Float?
+  peakVramBytes          BigInt?
+  notes                  String?
+  optionsJson            String?
+  createdAt              DateTime @default(now())
+}
+
+model DownloadJob {
+  id              String   @id @default(cuid())
+  repoId          String
+  fileName        String
+  revision        String   @default("main")
+  status          String   @default("queued")
+  bytesDownloaded BigInt   @default(0)
+  totalBytes      BigInt   @default(0)
+  targetPath      String
+  error           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String
+  subject    String
+  details    String
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}

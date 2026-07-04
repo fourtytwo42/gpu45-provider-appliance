@@ -1,0 +1,72 @@
+# dependencies and build outputs
+node_modules/
+.next/
+out/
+dist/
+coverage/
+.playwright/
+playwright-report/
+test-results/
+
+# runtime state and databases
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+prisma/dev.db
+prisma/dev.db-*
+prisma/*.corrupt.*
+*.log
+logs/
+run/
+tmp/
+.cache/
+
+# local env and secrets
+.env
+.env.*
+!.env.example
+
+# generated media and uploads
+uploads/
+outputs/
+generated/
+media/
+audio/
+video/
+videos/
+images/
+transcripts/
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+
+# model/checkpoint artifacts
+models/
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.onnx
+*.ckpt
+*.tar
+*.zip
+*.7z
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

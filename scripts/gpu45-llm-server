@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROFILE_FILE=${GPU45_PROVIDER_PROFILE_PATH:-/etc/gpu45/provider-profile.json}
+TUNING_FILE=${GPU45_TUNING_PATH:-/etc/gpu45/gpu-tuning.json}
+GPU_DEVICE_PATH=${GPU45_GPU_DEVICE_PATH:-/sys/class/drm/card1/device}
+DEFAULT_MODEL=/models/huggingface/staging/unsloth--Qwen3.6-27B-MTP-GGUF/main/Qwen3.6-27B-UD-Q4_K_XL.gguf
+DEFAULT_MMPROJ=/models/huggingface/hub/models--unsloth--Qwen3.6-27B-MTP-GGUF/snapshots/5cb35eb3dcbf52dbce5f87dbc64df6aaffadcace/mmproj-BF16.gguf
+DEFAULT_VDDGFX_OFFSET_MV=${GPU45_DEFAULT_VDDGFX_OFFSET_MV:--40}
+FLASH_ATTN=${GPU45_FLASH_ATTN:-on}
+SPEC_TYPE=${GPU45_SPEC_TYPE:-draft-mtp}
+SPEC_DRAFT_N_MAX=${GPU45_SPEC_DRAFT_N_MAX:-2}
+CACHE_TYPE_K=${GPU45_CACHE_TYPE_K:-q4_0}
+CACHE_TYPE_V=${GPU45_CACHE_TYPE_V:-q4_0}
+LLAMA_SERVER_BIN=${GPU45_LLAMA_SERVER_BIN:-$(command -v llama-server 2>/dev/null || true)}
+ROCM_RUNTIME_PATH=${GPU45_ROCM_RUNTIME_PATH:-/opt/rocm-7.0.0}
+
+load_profile() {
+  local file=$1
+  python3 - "$file" <<'PY'
+import json, sys
+from pathlib import Path
+
+def emit(name, value):
+    if isinstance(value, str):
+        print(f"{name}={json.dumps(value)}")
+    elif isinstance(value, bool):
+        print(f"{name}={'1' if value else '0'}")
+    elif value is None:
+        print(f"{name}=")
+    else:
+        print(f"{name}={value}")
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    data = {}
+
+emit("MODEL_PATH", data.get("modelPath", "/models/huggingface/hub/models--unsloth--Qwen3.6-27B-MTP-GGUF/snapshots/5cb35eb3dcbf52dbce5f87dbc64df6aaffadcace/Qwen3.6-27B-UD-Q4_K_XL.gguf"))
+emit("MMPROJ_PATH", data.get("mmprojPath", "/models/huggingface/hub/models--unsloth--Qwen3.6-27B-MTP-GGUF/snapshots/5cb35eb3dcbf52dbce5f87dbc64df6aaffadcace/mmproj-BF16.gguf"))
+emit("MODEL_DRAFT_PATH", data.get("modelDraftPath"))
+emit("ALIAS", data.get("alias", f"gpu45-llm,{data.get('name', 'gpu45-model')}"))
+emit("HOST", data.get("host", "0.0.0.0"))
+emit("PORT", data.get("port", 30000))
+emit("CTX_SIZE", data.get("ctxSize", 262144))
+emit("GPU_LAYERS", data.get("gpuLayers", "all"))
+emit("BATCH_SIZE", data.get("batchSize", 2048))
+emit("UBATCH_SIZE", data.get("uBatchSize", 512))
+emit("CACHE_RAM", data.get("cacheRamMiB", 8192))
+emit("CACHE_TYPE_K", data.get("cacheTypeK", "q4_0"))
+emit("CACHE_TYPE_V", data.get("cacheTypeV", "q4_0"))
+emit("CACHE_REUSE", data.get("cacheReuse", 1024))
+emit("SPEC_TYPE", data.get("specType", "draft-mtp"))
+emit("SPEC_DRAFT_N_MAX", data.get("specDraftNMax", 2))
+emit("FLASH_ATTN", data.get("flashAttention", "on"))
+emit("IMAGE_MIN_TOKENS", data.get("imageMinTokens", 1024))
+emit("METRICS", data.get("metrics", True))
+emit("JINJA", data.get("jinja", True))
+PY
+}
+
+load_tuning() {
+  local file=$1
+  python3 - "$file" <<'PY'
+import json, sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = {}
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    pass
+
+def emit(name, value):
+    if value is None:
+        print(f"{name}=")
+    elif isinstance(value, bool):
+        print(f"{name}={'1' if value else '0'}")
+    else:
+        print(f"{name}={value}")
+
+emit("PERF_LEVEL", data.get("performanceLevel", "manual"))
+emit("VDDGFX_OFFSET_MV", data.get("vddgfxOffsetMv", -100))
+emit("POWER_PROFILE", data.get("powerProfile"))
+emit("MCLK_LEVEL", data.get("mclkLevel"))
+emit("PP_TABLE_PATH", data.get("ppTablePath"))
+PY
+}
+
+tuning_enabled() {
+  local file=$1
+  python3 - "$file" <<'PY'
+import json, sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    data = {}
+raise SystemExit(0 if data.get("enabled", True) is not False else 1)
+PY
+}
+
+write_gpu_control() {
+  local value=$1
+  local target=$2
+  local label=$3
+
+  if [[ ! -w "$target" ]]; then
+    echo "gpu45 tuning warning: $label is not writable at $target" >&2
+    return 0
+  fi
+  if ! echo "$value" > "$target"; then
+    echo "gpu45 tuning warning: failed to write $label=$value to $target" >&2
+  fi
+}
+
+apply_gpu_tuning() {
+  local perf_level="${PERF_LEVEL:-manual}"
+  local offset_mv="${VDDGFX_OFFSET_MV:-$DEFAULT_VDDGFX_OFFSET_MV}"
+  local power_profile="${POWER_PROFILE:-}"
+  local mclk_level="${MCLK_LEVEL:-}"
+  local pp_table_path="${PP_TABLE_PATH:-}"
+  local perf_path="$GPU_DEVICE_PATH/power_dpm_force_performance_level"
+  local od_path="$GPU_DEVICE_PATH/pp_od_clk_voltage"
+  local pp_table_device_path="$GPU_DEVICE_PATH/pp_table"
+  local profile_path="$GPU_DEVICE_PATH/pp_power_profile_mode"
+  local mclk_path="$GPU_DEVICE_PATH/pp_dpm_mclk"
+
+  if [[ -f "$TUNING_FILE" ]] && ! tuning_enabled "$TUNING_FILE"; then
+    write_gpu_control auto "$perf_path" "perf_level"
+    echo "gpu45 tuning disabled; restored automatic GPU performance level" >&2
+    return 0
+  fi
+
+  if [[ -f "$TUNING_FILE" ]]; then
+    eval "$(load_tuning "$TUNING_FILE")"
+    perf_level="${PERF_LEVEL:-manual}"
+    offset_mv="${VDDGFX_OFFSET_MV:-$DEFAULT_VDDGFX_OFFSET_MV}"
+    power_profile="${POWER_PROFILE:-}"
+    mclk_level="${MCLK_LEVEL:-}"
+    pp_table_path="${PP_TABLE_PATH:-}"
+  fi
+
+  if [[ -w "$perf_path" && -w "$od_path" ]]; then
+    if [[ -n "$pp_table_path" && -r "$pp_table_path" && -w "$pp_table_device_path" ]]; then
+      cp "$pp_table_path" "$pp_table_device_path" || echo "gpu45 tuning warning: failed to write soft pp_table=$pp_table_path" >&2
+    fi
+    write_gpu_control "$perf_level" "$perf_path" "perf_level"
+    if [[ -n "$power_profile" ]]; then
+      write_gpu_control "$power_profile" "$profile_path" "power_profile"
+    fi
+    if [[ -n "$mclk_level" ]]; then
+      write_gpu_control "$mclk_level" "$mclk_path" "mclk_level"
+    fi
+    write_gpu_control "vo ${offset_mv}" "$od_path" "vddgfx_offset"
+    write_gpu_control "c" "$od_path" "overdrive_commit"
+    echo "gpu45 tuning applied: perf_level=$perf_level pp_table=${pp_table_path:-default} power_profile=${power_profile:-default} mclk_level=${mclk_level:-default} vddgfx_offset_mv=$offset_mv" >&2
+  else
+    echo "gpu45 tuning skipped: missing writable GPU control files under $GPU_DEVICE_PATH" >&2
+  fi
+}
+
+if [[ -f "$PROFILE_FILE" ]]; then
+  eval "$(load_profile "$PROFILE_FILE")"
+else
+  MODEL_PATH=$DEFAULT_MODEL
+  MMPROJ_PATH=$DEFAULT_MMPROJ
+  ALIAS=gpu45-llm,gpu45-qwen36-27b-mtp
+  HOST=0.0.0.0
+  PORT=30000
+  CTX_SIZE=262144
+  GPU_LAYERS=all
+  BATCH_SIZE=2048
+  UBATCH_SIZE=512
+  CACHE_RAM=8192
+  CACHE_TYPE_K=q4_0
+  CACHE_TYPE_V=q4_0
+  CACHE_REUSE=1024
+  SPEC_TYPE=draft-mtp
+  SPEC_DRAFT_N_MAX=2
+  FLASH_ATTN=on
+  IMAGE_MIN_TOKENS=1024
+  METRICS=1
+  JINJA=1
+fi
+
+apply_gpu_tuning
+
+build_args=(
+  -m "$MODEL_PATH"
+  --alias "$ALIAS"
+  --host "$HOST"
+  --port "$PORT"
+  --ctx-size "$CTX_SIZE"
+  --n-gpu-layers "$GPU_LAYERS"
+  --parallel 1
+  --batch-size "$BATCH_SIZE"
+  --ubatch-size "$UBATCH_SIZE"
+  --cache-type-k "$CACHE_TYPE_K"
+  --cache-type-v "$CACHE_TYPE_V"
+  --temp 0.6
+  --top-p 0.95
+  --top-k 20
+  --min-p 0.0
+  --repeat-penalty 1.0
+  --image-min-tokens "$IMAGE_MIN_TOKENS"
+)
+build_args+=(--flash-attn "$FLASH_ATTN")
+build_args+=(--cache-ram "$CACHE_RAM")
+
+if [[ "${CACHE_RAM:-0}" != "0" ]]; then
+  build_args+=(
+    --cache-prompt
+    --cache-reuse "$CACHE_REUSE"
+  )
+else
+  build_args+=(
+    --no-cache-prompt
+    --no-cache-idle-slots
+    --ctx-checkpoints 0
+  )
+fi
+
+if [[ "$SPEC_TYPE" != "none" && "${SPEC_DRAFT_N_MAX:-0}" -gt 0 ]]; then
+  build_args+=(--spec-type "$SPEC_TYPE")
+  build_args+=(
+    --spec-draft-n-max "$SPEC_DRAFT_N_MAX"
+    --spec-draft-type-k q4_0
+    --spec-draft-type-v q4_0
+  )
+else
+  build_args+=(--spec-type none)
+fi
+
+if [[ -n "${MODEL_DRAFT_PATH:-}" && -f "$MODEL_DRAFT_PATH" ]]; then
+  build_args+=(--model-draft "$MODEL_DRAFT_PATH")
+fi
+
+if [[ -n "${MMPROJ_PATH:-}" && -f "$MMPROJ_PATH" ]]; then
+  build_args+=(--mmproj "$MMPROJ_PATH")
+fi
+if [[ "${JINJA:-0}" == "1" ]]; then
+  build_args+=(--jinja)
+fi
+if [[ "${METRICS:-0}" == "1" ]]; then
+  build_args+=(--metrics)
+fi
+build_args+=(--no-webui)
+export HSA_OVERRIDE_GFX_VERSION=${GPU45_HSA_OVERRIDE_GFX_VERSION:-10.3.0}
+if [[ -d "$ROCM_RUNTIME_PATH/lib" ]]; then
+  export LD_LIBRARY_PATH="$ROCM_RUNTIME_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+if [[ -x "$LLAMA_SERVER_BIN" ]]; then
+  exec "$LLAMA_SERVER_BIN" "${build_args[@]}"
+fi
+
+echo "gpu45 error: no llama-server binary found in PATH or GPU45_LLAMA_SERVER_BIN" >&2
+exit 1
