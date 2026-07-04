@@ -55,6 +55,8 @@ emit("SPEC_TYPE", data.get("specType", "draft-mtp"))
 emit("SPEC_DRAFT_N_MAX", data.get("specDraftNMax", 2))
 emit("FLASH_ATTN", data.get("flashAttention", "on"))
 emit("REASONING", data.get("reasoning"))
+emit("REASONING_FORMAT", data.get("reasoningFormat"))
+emit("REASONING_BUDGET", data.get("reasoningBudget"))
 emit("TOP_K", data.get("topK"))
 emit("IMAGE_MIN_TOKENS", data.get("imageMinTokens", 1024))
 emit("METRICS", data.get("metrics", True))
@@ -185,6 +187,8 @@ else
   SPEC_DRAFT_N_MAX=2
   FLASH_ATTN=on
   REASONING=
+  REASONING_FORMAT=
+  REASONING_BUDGET=
   TOP_K=
   IMAGE_MIN_TOKENS=1024
   METRICS=1
@@ -194,17 +198,26 @@ fi
 apply_gpu_tuning
 
 model_basename=$(basename "$MODEL_PATH")
-if [[ -z "${REASONING:-}" && "${model_basename,,}" == *"gemma-4"* ]]; then
-  REASONING=off
+model_basename_lc="${model_basename,,}"
+if [[ -z "${REASONING:-}" ]]; then
+  case "$model_basename_lc" in
+    *gemma4*|*gemma-4*|*qwen3.6*|*qwythos*) REASONING=off ;;
+  esac
 fi
-if [[ -z "${REASONING:-}" && "${model_basename,,}" == *"qwen3.6-35b-a3b"* ]]; then
-  REASONING=off
+if [[ -z "${TOP_K:-}" ]]; then
+  case "$model_basename_lc" in
+    *gemma4*|*gemma-4*|*qwen3.6*|*qwythos*) TOP_K=0 ;;
+  esac
 fi
-if [[ -z "${TOP_K:-}" && "${model_basename,,}" == *"gemma-4"* ]]; then
-  TOP_K=0
+if [[ -z "${REASONING_FORMAT:-}" ]]; then
+  case "$model_basename_lc" in
+    *qwythos*) REASONING_FORMAT=none ;;
+  esac
 fi
-if [[ -z "${TOP_K:-}" && "${model_basename,,}" == *"qwen3.6-35b-a3b"* ]]; then
-  TOP_K=0
+if [[ -z "${REASONING_BUDGET:-}" ]]; then
+  case "$model_basename_lc" in
+    *qwythos*) REASONING_BUDGET=0 ;;
+  esac
 fi
 
 build_args=(
@@ -230,6 +243,12 @@ build_args+=(--flash-attn "$FLASH_ATTN")
 build_args+=(--cache-ram "$CACHE_RAM")
 if [[ -n "${REASONING:-}" ]]; then
   build_args+=(--reasoning "$REASONING")
+fi
+if [[ -n "${REASONING_FORMAT:-}" ]]; then
+  build_args+=(--reasoning-format "$REASONING_FORMAT")
+fi
+if [[ -n "${REASONING_BUDGET:-}" ]]; then
+  build_args+=(--reasoning-budget "$REASONING_BUDGET")
 fi
 
 if [[ "${CACHE_RAM:-0}" != "0" ]]; then

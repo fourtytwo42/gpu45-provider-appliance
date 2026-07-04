@@ -18,10 +18,10 @@
   "specType": "draft-mtp",
   "specDraftNMax": 2,
   "flashAttention": "on",
+  "reasoning": "off",
+  "topK": 0,
   "imageMinTokens": 1024,
   "metrics": true,
   "jinja": true,
-  "active": true,
-  "reasoning": "off",
-  "topK": 0
+  "active": true
 }
