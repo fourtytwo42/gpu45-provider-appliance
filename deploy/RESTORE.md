@@ -55,3 +55,16 @@ It intentionally does not contain generated/runtime-heavy artifacts:
 - `deploy/notes/launch-profiles.tsv` records per-model launch profile settings from SQLite.
 
 The restore assets are snapshots. After restoring, validate paths against the actual downloaded model locations and then start services.
+
+## External source dependencies
+
+See `deploy/notes/external-source-repos.tsv` for external repositories and exact commit SHAs observed on the live appliance. These are not vendored into this repo because they are upstream projects or experimental stacks.
+
+Core restore should prioritize:
+
+1. `/opt/gpu45-provider-appliance` from this repo.
+2. `/opt/qwen3-tts` from the recorded upstream SHA if TTS training/synthesis is needed.
+3. `/opt/wan2.2` plus `/opt/DiffSynth-Studio` from recorded source state if video generation is needed.
+4. Recreate Python virtual environments from service dependency requirements or current package imports.
+
+`/models/qwen3-tts` contains runtime voice/model metadata and generated assets. It is intentionally excluded from git; if preserving trained voices matters, back it up separately.
