@@ -19,9 +19,11 @@ from pypdf import PdfReader
 from tts_api import store
 from tts_api.audio_convert import wav_to_mp3_bytes
 from tts_api import synthesize as synthesize_module
+from tts_api.config import DEVICE
+from tts_api.resource_guard import tts_vram_guard
 
 SUPPORTED_EXTENSIONS = {".epub", ".pdf", ".docx", ".txt", ".md", ".html", ".htm"}
-TARGET_CHUNK_CHARS = 900
+TARGET_CHUNK_CHARS = 450
 
 
 def utcnow() -> str:
@@ -69,19 +71,28 @@ def split_sentences(text: str) -> list[str]:
     text = normalize_text(text)
     if not text:
         return []
+    text = re.sub(
+        r"\s+(?=(?:Prologue|Epilogue|Extra Chapter|Side Story:|Chapter\s+\d+:|Character Design Concept Gallery|About the Author|Newsletter)\b)",
+        "\n",
+        text,
+    )
     sentence_pattern = re.compile(r".+?(?:[.!?][\"')\]]*|$)(?=\s+|$)", re.DOTALL)
     sentences: list[str] = []
     for paragraph in re.split(r"\n\s*\n+", text):
-        paragraph = re.sub(r"\s+", " ", paragraph).strip()
-        if not paragraph:
-            continue
-        matches = [match.group(0).strip() for match in sentence_pattern.finditer(paragraph) if match.group(0).strip()]
-        sentences.extend(matches or [paragraph])
+        for line in paragraph.splitlines():
+            line = re.sub(r"\s+", " ", line).strip()
+            if not line:
+                continue
+            if len(line) <= 140 and not re.search(r"[.!?][\"')\]]*$", line):
+                sentences.append(line)
+                continue
+            matches = [match.group(0).strip() for match in sentence_pattern.finditer(line) if match.group(0).strip()]
+            sentences.extend(matches or [line])
     return sentences
 
 
 def split_text(text: str, target_chars: int = TARGET_CHUNK_CHARS) -> list[str]:
-    target_chars = max(500, min(int(target_chars or TARGET_CHUNK_CHARS), 1600))
+    target_chars = max(240, min(int(target_chars or TARGET_CHUNK_CHARS), 1200))
     chunks: list[str] = []
     current = ""
     for sentence in split_sentences(text):
@@ -204,6 +215,34 @@ def request_stop(job_id: str) -> dict[str, Any]:
     return store.update_audiobook_job(job_id, stop_requested=True, progress_label="Stop requested", updated_at=utcnow()) or job
 
 
+def reset_interrupted_chunks(job_id: str) -> dict[str, Any]:
+    jobs = store.load_audiobook_jobs()
+    for job in jobs:
+        if job.get("id") != job_id:
+            continue
+        changed = False
+        for chunk in job.get("chunks", []):
+            if chunk.get("status") == "running":
+                chunk["status"] = "pending"
+                chunk.pop("started_at", None)
+                chunk["updated_at"] = utcnow()
+                changed = True
+        if changed:
+            completed = sum(1 for c in job.get("chunks", []) if c.get("status") == "completed")
+            failed = sum(1 for c in job.get("chunks", []) if c.get("status") == "failed")
+            total = max(1, int(job.get("total_chunks") or len(job.get("chunks", [])) or 1))
+            job.update(
+                completed_chunks=completed,
+                failed_chunks=failed,
+                current_chunk=None,
+                progress_percent=round((completed / total) * 100, 1),
+                updated_at=utcnow(),
+            )
+            store.save_audiobook_jobs(jobs)
+        return job
+    raise KeyError("Audiobook job not found")
+
+
 def stitch_completed_chunks(job_id: str) -> str | None:
     job = store.get_audiobook_job_by_id(job_id)
     if not job:
@@ -233,6 +272,11 @@ def run_audiobook_job(job_id: str) -> None:
     job = store.get_audiobook_job_by_id(job_id)
     if not job:
         return
+    with tts_vram_guard("audiobook", device=DEVICE):
+        _run_audiobook_job_inner(job_id, started, job)
+
+
+def _run_audiobook_job_inner(job_id: str, started: float, job: dict[str, Any]) -> None:
     try:
         store.update_audiobook_job(job_id, status="running", progress_label="Starting", started_at=job.get("started_at") or utcnow(), stop_requested=False, updated_at=utcnow())
         while True:

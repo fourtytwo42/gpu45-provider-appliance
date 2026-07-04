@@ -52,7 +52,7 @@ WorkingDirectory=$QWEN_ROOT
 Environment=QWEN_TTS_API_HOST=0.0.0.0
 Environment=QWEN_TTS_API_PORT=$PORT
 Environment=QWEN_TTS_API_DATA=$DATA_DIR
-Environment=QWEN_TTS_DEVICE=cpu
+Environment=QWEN_TTS_DEVICE=cuda:0
 Environment=QWEN_TTS_VRAM_GUARD=true
 Environment=QWEN_TTS_EXCLUSIVE_GPU=true
 Environment=QWEN_TTS_MIN_FREE_VRAM_MB=8192

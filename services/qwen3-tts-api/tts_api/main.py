@@ -125,9 +125,14 @@ async def lifespan(app: FastAPI):
     audiobook_changed = False
     for job in audiobook_jobs:
         if job.get("status") in ("queued", "running"):
+            for chunk in job.get("chunks", []):
+                if chunk.get("status") == "running":
+                    chunk.update(status="pending", updated_at=now)
+                    chunk.pop("started_at", None)
             job.update(
                 status="stopped",
                 progress_label="Interrupted by service restart",
+                current_chunk=None,
                 stop_requested=False,
                 updated_at=now,
             )
@@ -797,6 +802,7 @@ def resume_audiobook(job_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=404, detail="Audiobook job not found")
     if job.get("status") in ("queued", "running"):
         raise HTTPException(status_code=409, detail="Audiobook job is already running")
+    document_tts.reset_interrupted_chunks(job_id)
     store.update_audiobook_job(job_id, status="queued", stop_requested=False, progress_label="Queued for resume", updated_at=_utcnow())
     background_tasks.add_task(document_tts.run_audiobook_job, job_id)
     return store.get_audiobook_job_by_id(job_id)
