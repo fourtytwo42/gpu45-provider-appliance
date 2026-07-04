@@ -443,7 +443,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
       </SectionCard>
 
 
-      <SectionCard title="Document To Audiobook" description="Upload EPUB, PDF, DOCX, TXT, Markdown, or HTML and generate chunked TTS with preview, stop, resume, and stitching.">
+      <SectionCard title="Document To Audiobook" description="Upload EPUB, PDF, DOCX, TXT, Markdown, or HTML and generate sentence-aware TTS with preview, stop, resume, and stitching.">
         <form action={(formData) => void createAudiobook(formData)} className="grid gap-3">
           <input type="hidden" name="action" value="createAudiobook" />
           <input name="title" className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60" placeholder="optional audiobook title" />
@@ -451,16 +451,13 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
             <option value="">Choose trained voice model</option>
             {readyModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
           </select>
-          <div className="grid gap-3 sm:grid-cols-[1fr_150px]">
-            <input
-              name="file"
-              type="file"
-              required
-              accept=".epub,.pdf,.docx,.txt,.md,.html,.htm,application/epub+zip,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
-              className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-200 file:mr-3 file:border-0 file:bg-cyan-400/10 file:px-3 file:py-1 file:text-cyan-100"
-            />
-            <input name="chunk_chars" type="number" min={240} max={1800} defaultValue={700} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60" title="Characters per generated chunk" />
-          </div>
+          <input
+            name="file"
+            type="file"
+            required
+            accept=".epub,.pdf,.docx,.txt,.md,.html,.htm,application/epub+zip,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
+            className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-200 file:mr-3 file:border-0 file:bg-cyan-400/10 file:px-3 file:py-1 file:text-cyan-100"
+          />
           <button disabled={status === "working" || readyModels.length === 0} className="inline-flex items-center justify-center gap-2 border border-emerald-400/40 bg-emerald-400/10 px-4 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-50">
             <BookOpen className="h-4 w-4" />
             Create Audiobook

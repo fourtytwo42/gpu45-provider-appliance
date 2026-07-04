@@ -96,7 +96,6 @@ const tools = [
         file_path: { type: "string", minLength: 1 },
         model_id: { type: "string", minLength: 1 },
         title: { type: "string" },
-        chunk_chars: { type: "integer", minimum: 240, maximum: 1800, default: 700 },
         wait: { type: "boolean", default: false },
         timeout_seconds: { type: "integer", minimum: 5, maximum: 7200, default: 600 },
       },
@@ -459,7 +458,6 @@ async function toolTtsAudiobookCreate(baseUrl, args) {
   form.set("action", "createAudiobook");
   form.set("model_id", args.model_id);
   if (args.title) form.set("title", args.title);
-  form.set("chunk_chars", String(args.chunk_chars || 700));
   form.set("file", new Blob([bytes]), basename(args.file_path));
   const response = await fetch(`${baseUrl}/api/tts`, { method: "POST", body: form });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);

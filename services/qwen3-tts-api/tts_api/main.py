@@ -736,7 +736,6 @@ async def create_audiobook(
     file: UploadFile = File(...),
     model_id: str = Form(...),
     title: str | None = Form(None),
-    chunk_chars: int = Form(700),
 ):
     suffix = Path(file.filename or "upload.txt").suffix or ".txt"
     with tempfile.NamedTemporaryFile(prefix="tts-audiobook-upload-", suffix=suffix, delete=False) as target:
@@ -748,7 +747,6 @@ async def create_audiobook(
             source_filename=file.filename or "upload",
             model_id=model_id,
             title=title,
-            chunk_chars=chunk_chars,
         )
     except KeyError as e:
         try:

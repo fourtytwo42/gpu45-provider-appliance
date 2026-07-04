@@ -78,7 +78,9 @@ export type TtsAudiobookJob = {
   source_filename: string;
   model_id: string;
   model_name?: string;
-  chunk_chars: number;
+  chunk_chars?: number;
+  split_strategy?: "sentence" | string;
+  target_chunk_chars?: number;
   total_chunks: number;
   completed_chunks: number;
   failed_chunks: number;

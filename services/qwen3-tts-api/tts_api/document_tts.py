@@ -21,6 +21,7 @@ from tts_api.audio_convert import wav_to_mp3_bytes
 from tts_api import synthesize as synthesize_module
 
 SUPPORTED_EXTENSIONS = {".epub", ".pdf", ".docx", ".txt", ".md", ".html", ".htm"}
+TARGET_CHUNK_CHARS = 900
 
 
 def utcnow() -> str:
@@ -64,39 +65,36 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
-def split_text(text: str, max_chars: int = 700) -> list[str]:
-    max_chars = max(240, min(int(max_chars or 700), 1800))
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", normalize_text(text)) if p.strip()]
+def split_sentences(text: str) -> list[str]:
+    text = normalize_text(text)
+    if not text:
+        return []
+    sentence_pattern = re.compile(r".+?(?:[.!?][\"')\]]*|$)(?=\s+|$)", re.DOTALL)
+    sentences: list[str] = []
+    for paragraph in re.split(r"\n\s*\n+", text):
+        paragraph = re.sub(r"\s+", " ", paragraph).strip()
+        if not paragraph:
+            continue
+        matches = [match.group(0).strip() for match in sentence_pattern.finditer(paragraph) if match.group(0).strip()]
+        sentences.extend(matches or [paragraph])
+    return sentences
+
+
+def split_text(text: str, target_chars: int = TARGET_CHUNK_CHARS) -> list[str]:
+    target_chars = max(500, min(int(target_chars or TARGET_CHUNK_CHARS), 1600))
     chunks: list[str] = []
-
-    def push_piece(piece: str) -> None:
-        piece = piece.strip()
-        if not piece:
-            return
-        while len(piece) > max_chars:
-            window = piece[:max_chars]
-            cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "), window.rfind("; "), window.rfind(", "))
-            if cut < max_chars * 0.45:
-                cut = window.rfind(" ")
-            if cut < max_chars * 0.35:
-                cut = max_chars
-            part = piece[:cut + 1].strip()
-            if part:
-                chunks.append(part)
-            piece = piece[cut + 1:].strip()
-        if piece:
-            chunks.append(piece)
-
     current = ""
-    for paragraph in paragraphs:
+    for sentence in split_sentences(text):
         if not current:
-            current = paragraph
-        elif len(current) + 2 + len(paragraph) <= max_chars:
-            current = f"{current}\n\n{paragraph}"
+            current = sentence
+            continue
+        if len(current) + 1 + len(sentence) <= target_chars:
+            current = f"{current} {sentence}"
         else:
-            push_piece(current)
-            current = paragraph
-    push_piece(current)
+            chunks.append(current.strip())
+            current = sentence
+    if current.strip():
+        chunks.append(current.strip())
     return chunks
 
 
@@ -141,7 +139,7 @@ def _stitched_audio_path(job_id: str) -> str:
     return os.path.join(store.audiobook_dir(job_id), f"audiobook_{job_id}.mp3")
 
 
-def create_audiobook_job(source_path: str, source_filename: str, model_id: str, title: str | None, chunk_chars: int = 700) -> dict[str, Any]:
+def create_audiobook_job(source_path: str, source_filename: str, model_id: str, title: str | None) -> dict[str, Any]:
     model = store.get_model_by_id(model_id)
     if not model:
         raise KeyError(f"Model not found: {model_id}")
@@ -150,7 +148,7 @@ def create_audiobook_job(source_path: str, source_filename: str, model_id: str, 
     text = extract_text(source_path, source_filename)
     if not text:
         raise ValueError("No readable text found in uploaded document")
-    chunks_text = split_text(text, chunk_chars)
+    chunks_text = split_text(text)
     if not chunks_text:
         raise ValueError("No synthesizable chunks were created")
     job_id = store.generate_id()
@@ -175,7 +173,8 @@ def create_audiobook_job(source_path: str, source_filename: str, model_id: str, 
         "source_filename": source_filename,
         "model_id": model_id,
         "model_name": model.get("name"),
-        "chunk_chars": chunk_chars,
+        "split_strategy": "sentence",
+        "target_chunk_chars": TARGET_CHUNK_CHARS,
         "total_chunks": len(chunks),
         "completed_chunks": 0,
         "failed_chunks": 0,
