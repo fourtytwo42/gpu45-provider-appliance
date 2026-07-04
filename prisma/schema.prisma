@@ -169,3 +169,67 @@ model AuditLog {
 
   @@index([createdAt])
 }
+
+
+model WebSearchRun {
+  id          String   @id @default(cuid())
+  query       String
+  category    String   @default("general")
+  resultCount Int      @default(0)
+  status      String   @default("completed")
+  error       String?
+  createdAt   DateTime @default(now())
+  results     WebSearchResult[]
+
+  @@index([createdAt])
+}
+
+model WebSearchResult {
+  id             String       @id @default(cuid())
+  runId          String
+  run            WebSearchRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  title          String
+  url            String
+  snippet        String       @default("")
+  engine         String       @default("searxng")
+  rank           Int
+  officialSource Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  @@index([runId, rank])
+  @@index([url])
+}
+
+model WebPageCache {
+  id            String   @id @default(cuid())
+  url           String
+  finalUrl      String
+  statusCode    Int
+  contentType   String
+  fetchedAt     DateTime @default(now())
+  title         String   @default("")
+  text          String   @default("")
+  linksJson     String   @default("[]")
+  robotsAllowed Boolean  @default(true)
+  renderMode    String   @default("static")
+
+  @@index([url, fetchedAt])
+}
+
+model JobLead {
+  id            String   @id @default(cuid())
+  sourceUrl     String
+  company       String   @default("")
+  title         String   @default("")
+  location      String   @default("")
+  remoteStatus  String   @default("unknown")
+  applyUrl      String   @default("")
+  atsType       String?
+  confidence    Float    @default(0)
+  extractedJson String   @default("{}")
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([sourceUrl])
+}
+

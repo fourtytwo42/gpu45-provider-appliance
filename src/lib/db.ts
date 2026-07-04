@@ -171,6 +171,65 @@ function ensureSqliteSchema(): void {
     );
     CREATE INDEX IF NOT EXISTS DownloadJob_status_createdAt_idx ON DownloadJob(status, createdAt);
 
+
+
+    CREATE TABLE IF NOT EXISTS WebSearchRun (
+      id TEXT PRIMARY KEY NOT NULL,
+      query TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'general',
+      resultCount INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'completed',
+      error TEXT,
+      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS WebSearchRun_createdAt_idx ON WebSearchRun(createdAt);
+
+    CREATE TABLE IF NOT EXISTS WebSearchResult (
+      id TEXT PRIMARY KEY NOT NULL,
+      runId TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      snippet TEXT NOT NULL DEFAULT '',
+      engine TEXT NOT NULL DEFAULT 'searxng',
+      rank INTEGER NOT NULL,
+      officialSource INTEGER NOT NULL DEFAULT 1,
+      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT WebSearchResult_runId_fkey FOREIGN KEY (runId) REFERENCES WebSearchRun(id) ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS WebSearchResult_runId_rank_idx ON WebSearchResult(runId, rank);
+    CREATE INDEX IF NOT EXISTS WebSearchResult_url_idx ON WebSearchResult(url);
+
+    CREATE TABLE IF NOT EXISTS WebPageCache (
+      id TEXT PRIMARY KEY NOT NULL,
+      url TEXT NOT NULL,
+      finalUrl TEXT NOT NULL,
+      statusCode INTEGER NOT NULL,
+      contentType TEXT NOT NULL,
+      fetchedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      title TEXT NOT NULL DEFAULT '',
+      text TEXT NOT NULL DEFAULT '',
+      linksJson TEXT NOT NULL DEFAULT '[]',
+      robotsAllowed INTEGER NOT NULL DEFAULT 1,
+      renderMode TEXT NOT NULL DEFAULT 'static'
+    );
+    CREATE INDEX IF NOT EXISTS WebPageCache_url_fetchedAt_idx ON WebPageCache(url, fetchedAt);
+
+    CREATE TABLE IF NOT EXISTS JobLead (
+      id TEXT PRIMARY KEY NOT NULL,
+      sourceUrl TEXT NOT NULL,
+      company TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      location TEXT NOT NULL DEFAULT '',
+      remoteStatus TEXT NOT NULL DEFAULT 'unknown',
+      applyUrl TEXT NOT NULL DEFAULT '',
+      atsType TEXT,
+      confidence REAL NOT NULL DEFAULT 0,
+      extractedJson TEXT NOT NULL DEFAULT '{}',
+      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS JobLead_createdAt_idx ON JobLead(createdAt);
+    CREATE INDEX IF NOT EXISTS JobLead_sourceUrl_idx ON JobLead(sourceUrl);
+
     CREATE TABLE IF NOT EXISTS AuditLog (
       id TEXT PRIMARY KEY NOT NULL,
       action TEXT NOT NULL,

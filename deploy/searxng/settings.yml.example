@@ -1,0 +1,16 @@
+use_default_settings: true
+
+server:
+  bind_address: "127.0.0.1"
+  port: 8888
+  secret_key: "replace-with-random-secret"
+  limiter: false
+  image_proxy: false
+
+search:
+  formats:
+    - html
+    - json
+
+ui:
+  static_use_hash: true

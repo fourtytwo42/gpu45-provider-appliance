@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FileText, Film, Gauge, HardDriveDownload, ImageIcon, KeyRound, Logs, Mic2, Settings2, SquareTerminal, Wrench } from "lucide-react";
+import { FileSearch, FileText, Film, Gauge, HardDriveDownload, ImageIcon, KeyRound, Logs, Mic2, Settings2, SquareTerminal, Wrench } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 const nav = [
@@ -12,6 +12,7 @@ const nav = [
   { href: "/whisper", label: "Whisper", icon: FileText },
   { href: "/video", label: "Video", icon: Film },
   { href: "/images", label: "Images", icon: ImageIcon },
+  { href: "/research", label: "Research", icon: FileSearch },
   { href: "/keys", label: "Keys", icon: KeyRound },
   { href: "/benchmarks", label: "Benchmarks", icon: SquareTerminal },
   { href: "/logs", label: "Logs", icon: Logs },

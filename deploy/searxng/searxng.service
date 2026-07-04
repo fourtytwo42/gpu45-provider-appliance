@@ -1,0 +1,19 @@
+[Unit]
+Description=SearXNG local metasearch for GPU45
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=searxng
+Group=searxng
+WorkingDirectory=/opt/searxng/searxng-src
+Environment=SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+ExecStart=/opt/searxng/venv/bin/python -m searx.webapp
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
