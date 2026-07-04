@@ -44,3 +44,14 @@ It intentionally does not contain generated/runtime-heavy artifacts:
 - Qwen3.6 27B MTP was the default known-good Codex provider model.
 - Gemma 4 12B IT UD-Q8_K_XL works with MTP at 262144 context.
 - Gemma 4 26B A4B IT UD-Q8_K_XL works with MTP at 131072 context. Higher contexts caused ROCm OOM or unstable speculative decoding.
+
+## Captured restore assets
+
+- `deploy/systemd/` contains live systemd units.
+- `deploy/etc/gpu45/` contains current non-secret GPU45 profile, fan, and tuning JSON.
+- `deploy/usr/local/bin/` contains live launcher/proxy executables.
+- `deploy/usr/local/sbin/` contains live host tuning and external fan controller scripts.
+- `deploy/notes/model-registry.tsv` records current model registry metadata, including model paths and MTP draft files.
+- `deploy/notes/launch-profiles.tsv` records per-model launch profile settings from SQLite.
+
+The restore assets are snapshots. After restoring, validate paths against the actual downloaded model locations and then start services.

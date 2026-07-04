@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+import glob
+import json
+import os
+import signal
+import time
+from datetime import datetime
+
+AMD_PCI = "0000:2d:00.0"
+NCT_NAME = "nct6687"
+INTERVAL_SECONDS = 5
+MIN_EXPECTED_RPM = 1000
+MIN_PWM = 70
+STARTUP_PWM = 255
+STARTUP_SECONDS = 6
+PROFILE_FILE = os.environ.get("GPU45_FAN_PROFILE_PATH", "/etc/gpu45/fan-curve.json")
+STATE_FILE = os.environ.get("GPU45_FAN_STATE_PATH", "/etc/gpu45/fan-state.json")
+DEFAULT_CHANNELS = [
+    {"pwm": "pwm3", "fan": "fan3_input", "label": "gpu-fan-a"},
+    {"pwm": "pwm4", "fan": "fan4_input", "label": "gpu-fan-b"},
+]
+DEFAULT_CURVE = [
+    (35.0, 70),
+    (40.0, 80),
+    (45.0, 100),
+    (55.0, 150),
+    (65.0, 210),
+    (75.0, 255),
+    (100.0, 255),
+]
+
+running = True
+last_pwm = None
+last_log = 0.0
+curve_points = DEFAULT_CURVE
+fan_stop_below_c = None
+fan_start_at_c = None
+min_pwm = MIN_PWM
+startup_pwm = STARTUP_PWM
+startup_seconds = STARTUP_SECONDS
+channels = list(DEFAULT_CHANNELS)
+
+
+def log(message):
+    print(f"{datetime.now().isoformat(timespec='seconds')} {message}", flush=True)
+
+
+def read_text(path):
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        return handle.read().strip()
+
+
+def write_text(path, value):
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(str(value))
+
+
+def find_hwmon_by_name(name, must_contain_device=None):
+    for hwmon in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        name_path = os.path.join(hwmon, "name")
+        if not os.path.exists(name_path):
+            continue
+        try:
+            if read_text(name_path) != name:
+                continue
+            if must_contain_device:
+                device = os.path.realpath(os.path.join(hwmon, "device"))
+                if must_contain_device not in device:
+                    continue
+            return hwmon
+        except OSError:
+            continue
+    return None
+
+
+def load_curve_points():
+    global curve_points, fan_stop_below_c, fan_start_at_c, min_pwm, startup_pwm, startup_seconds, channels
+    try:
+        data = json.loads(read_text(PROFILE_FILE))
+        stop_below = data.get("fanStopBelowC")
+        fan_stop_below_c = float(stop_below) if stop_below is not None else None
+        start_at = data.get("fanStartAtC")
+        fan_start_at_c = float(start_at) if start_at is not None else None
+        min_pwm = max(0, min(255, int(data.get("idlePwm", MIN_PWM))))
+        startup_pwm = max(0, min(255, int(data.get("startupPwm", STARTUP_PWM))))
+        startup_seconds = max(0, int(data.get("startupSeconds", STARTUP_SECONDS)))
+        parsed_channels = []
+        for channel in data.get("channels", []):
+            pwm = str(channel.get("pwm", "")).strip()
+            fan = str(channel.get("fan", "")).strip()
+            if pwm.startswith("pwm") and fan.startswith("fan") and fan.endswith("_input"):
+                parsed_channels.append({
+                    "pwm": pwm,
+                    "fan": fan,
+                    "label": str(channel.get("label") or fan),
+                })
+        if parsed_channels:
+            channels = parsed_channels
+        points = data.get("points", [])
+        parsed = []
+        for point in points:
+            temp = float(point.get("temperatureC", point.get("tempC")))
+            pwm = int(point.get("pwm"))
+            parsed.append((temp, pwm))
+        parsed.sort(key=lambda item: item[0])
+        if parsed:
+            curve_points = parsed
+            return
+    except Exception:
+        pass
+    curve_points = DEFAULT_CURVE
+    fan_stop_below_c = None
+    fan_start_at_c = None
+    min_pwm = MIN_PWM
+    startup_pwm = STARTUP_PWM
+    startup_seconds = STARTUP_SECONDS
+    channels = list(DEFAULT_CHANNELS)
+
+
+def read_gpu_temps_c(amd_hwmon):
+    temps = {}
+    for input_path in sorted(glob.glob(os.path.join(amd_hwmon, "temp*_input"))):
+        base = input_path[:-len("_input")]
+        label_path = base + "_label"
+        try:
+            label = read_text(label_path) if os.path.exists(label_path) else os.path.basename(base)
+            raw = float(read_text(input_path))
+            temps[label] = raw / 1000.0
+        except (OSError, ValueError):
+            continue
+    return temps
+
+
+def pwm_for_temp(temp_c):
+    if temp_c is None:
+        return 255
+    points = curve_points
+    if temp_c <= points[0][0]:
+        return points[0][1]
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        if temp_c <= x1:
+            if x1 == x0:
+                return int(y1)
+            ratio = (temp_c - x0) / (x1 - x0)
+            return int(round(y0 + (y1 - y0) * ratio))
+    return points[-1][1]
+
+
+def target_pwm_for_temp(temp_c, current_pwm=None):
+    if temp_c is None or temp_c >= 85.0:
+        return 255
+    if fan_stop_below_c is not None and temp_c < fan_stop_below_c:
+        return min_pwm
+    if current_pwm == 0 and fan_start_at_c is not None and temp_c < fan_start_at_c:
+        return min_pwm
+    return max(min_pwm, pwm_for_temp(temp_c))
+
+
+def should_count_fan_failure(target_pwm, rpm):
+    return target_pwm > 0 and rpm is not None and rpm < MIN_EXPECTED_RPM
+
+
+def set_channel_pwm(nct_hwmon, channel, pwm):
+    pwm = max(0, min(255, int(pwm)))
+    enable_path = os.path.join(nct_hwmon, channel["pwm"] + "_enable")
+    pwm_path = os.path.join(nct_hwmon, channel["pwm"])
+    if os.path.exists(enable_path):
+        write_text(enable_path, "1")
+    write_text(pwm_path, str(pwm))
+
+
+def set_all_pwm(nct_hwmon, pwm):
+    for channel in channels:
+        set_channel_pwm(nct_hwmon, channel, pwm)
+
+
+def read_channel_rpm(nct_hwmon, channel):
+    try:
+        return int(read_text(os.path.join(nct_hwmon, channel["fan"])))
+    except (OSError, ValueError):
+        return None
+
+
+def read_fan_rpms(nct_hwmon):
+    return {
+        channel["label"]: read_channel_rpm(nct_hwmon, channel)
+        for channel in channels
+    }
+
+
+def write_state(temps, max_temp, target_pwm, rpms, status="ok"):
+    payload = {
+        "status": status,
+        "pwm": int(target_pwm) if target_pwm is not None else None,
+        "rpm": max((rpm for rpm in rpms.values() if rpm is not None), default=None),
+        "rpms": {
+            label: int(rpm) if rpm is not None else None
+            for label, rpm in rpms.items()
+        },
+        "maxTempC": round(max_temp, 1) if max_temp is not None else None,
+        "temperaturesC": {key: round(value, 1) for key, value in temps.items()},
+        "label": ",".join(channel["label"] for channel in channels),
+        "channels": channels,
+        "updatedAt": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    }
+    directory = os.path.dirname(STATE_FILE)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    temp_path = STATE_FILE + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(temp_path, STATE_FILE)
+
+
+def handle_signal(signum, frame):
+    global running
+    running = False
+
+
+def main():
+    global last_pwm, last_log
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
+    load_curve_points()
+    log("starting GPU45 V620 fan controller; controlling " + ", ".join(f"{c['pwm']}/{c['fan']}" for c in channels) + " from amdgpu temps")
+    no_fan_counts = {channel["label"]: 0 for channel in channels}
+    temps = {}
+    max_temp = None
+    nct_hwmon = find_hwmon_by_name(NCT_NAME)
+    if nct_hwmon and startup_seconds > 0:
+        set_all_pwm(nct_hwmon, startup_pwm)
+        log(f"startup fan burst pwm={startup_pwm} seconds={startup_seconds}")
+        time.sleep(startup_seconds)
+
+    while running:
+        load_curve_points()
+        amd_hwmon = find_hwmon_by_name("amdgpu", AMD_PCI)
+        nct_hwmon = find_hwmon_by_name(NCT_NAME)
+
+        try:
+            if not amd_hwmon:
+                raise RuntimeError(f"amdgpu hwmon for {AMD_PCI} not found")
+            if not nct_hwmon:
+                raise RuntimeError("nct6687 hwmon not found")
+
+            temps = read_gpu_temps_c(amd_hwmon)
+            if not temps:
+                raise RuntimeError("no amdgpu temperature sensors found")
+
+            max_temp = max(temps.values())
+            target_pwm = target_pwm_for_temp(max_temp, last_pwm)
+            set_all_pwm(nct_hwmon, target_pwm)
+            rpms = read_fan_rpms(nct_hwmon)
+            write_state(temps, max_temp, target_pwm, rpms)
+
+            failing = []
+            for label, rpm in rpms.items():
+                if should_count_fan_failure(target_pwm, rpm):
+                    no_fan_counts[label] = no_fan_counts.get(label, 0) + 1
+                else:
+                    no_fan_counts[label] = 0
+                if no_fan_counts[label] >= 3:
+                    failing.append(f"{label}={rpm}")
+
+            if failing:
+                set_all_pwm(nct_hwmon, 255)
+                log(f"WARNING GPU fan rpm below {MIN_EXPECTED_RPM} for {', '.join(failing)}; forced pwm=255 temps={temps} rpms={rpms}")
+                last_pwm = 255
+            else:
+                now = time.time()
+                if last_pwm != target_pwm or now - last_log >= 60:
+                    log(f"temps={{{', '.join(f'{k}: {v:.1f}C' for k, v in temps.items())}}} max={max_temp:.1f}C pwm={target_pwm} rpms={rpms}")
+                    last_pwm = target_pwm
+                    last_log = now
+
+        except Exception as exc:
+            try:
+                if nct_hwmon:
+                    set_all_pwm(nct_hwmon, 255)
+                write_state(temps, max_temp, 255, {}, status="error")
+            finally:
+                log(f"ERROR {exc}; forced GPU fan pwm=255 where possible")
+                last_pwm = 255
+
+        time.sleep(INTERVAL_SECONDS)
+
+    nct_hwmon = find_hwmon_by_name(NCT_NAME)
+    if nct_hwmon:
+        set_all_pwm(nct_hwmon, 255)
+    log("stopping GPU45 V620 fan controller; left GPU fan pwm at 255 for safety")
+
+
+if __name__ == "__main__":
+    main()
