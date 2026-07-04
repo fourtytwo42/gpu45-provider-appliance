@@ -20,6 +20,11 @@ const BLOCKED_JOB_DOMAINS = [
   "glassdoor.com",
   "careerbuilder.com",
   "simplyhired.com",
+  "remoteai.io",
+  "remoterocketship.com",
+  "builtin.com",
+  "flexjobs.com",
+  "levels.fyi",
 ];
 
 const ATS_DOMAINS = [
@@ -293,7 +298,7 @@ export async function searchJobs(query: string, remoteOnly = true, officialOnly 
       rejected.push({ url: result.url, reason: "blocked public job board or repost source" });
       continue;
     }
-    if (officialOnly && resultConfidence(result.url) < 0.5) {
+    if (officialOnly && resultConfidence(result.url) <= 0.5) {
       rejected.push({ url: result.url, reason: "low official-source confidence" });
       continue;
     }
