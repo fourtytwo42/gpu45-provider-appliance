@@ -302,9 +302,10 @@ export function ttsSynthesisAudioUrl(id: string, download = false): string {
   return `/api/tts/audio?${params.toString()}`;
 }
 
-export function ttsAudiobookAudioUrl(id: string, options: { chunk?: number; download?: boolean } = {}): string {
+export function ttsAudiobookAudioUrl(id: string, options: { chunk?: number; download?: boolean; version?: number | string } = {}): string {
   const params = new URLSearchParams({ id });
   if (typeof options.chunk === "number") params.set("chunk", String(options.chunk));
   if (options.download) params.set("download", "1");
+  if (options.version !== undefined) params.set("v", String(options.version));
   return `/api/tts/audiobook/audio?${params.toString()}`;
 }

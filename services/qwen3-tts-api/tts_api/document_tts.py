@@ -264,6 +264,7 @@ def stitch_completed_chunks(job_id: str) -> str | None:
         return None
     out = _stitched_audio_path(job_id)
     audio.export(out, format="mp3")
+    store.update_audiobook_job(job_id, stitched_output_path=out, stitched_completed_chunks=added, stitched_at=utcnow(), updated_at=utcnow())
     return out
 
 

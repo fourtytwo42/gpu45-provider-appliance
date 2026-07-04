@@ -8,6 +8,7 @@ import { ttsAudiobookAudioUrl, ttsSampleUrl, ttsSynthesisAudioUrl } from "@/lib/
 import { cn } from "@/lib/cn";
 
 type Status = "idle" | "working" | "error";
+const AUDIOBOOK_CHUNKS_PER_PAGE = 8;
 
 async function parseJson(response: Response): Promise<Record<string, unknown>> {
   const json = await response.json() as Record<string, unknown>;
@@ -58,6 +59,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const [activeSynthesisId, setActiveSynthesisId] = useState<string | null>(null);
+  const [audiobookChunkPages, setAudiobookChunkPages] = useState<Record<string, number>>({});
   const readyModels = useMemo(() => snapshot.models.filter((model) => model.status === "ready"), [snapshot.models]);
   const activeSynthesisJobs = useMemo(() => (
     snapshot.synthesisJobs
@@ -467,9 +469,14 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
           {audiobookJobs.length === 0 ? <p className="text-sm text-slate-400">No audiobook jobs yet.</p> : null}
           {audiobookJobs.map((job) => {
             const completedChunks = job.chunks.filter((chunk) => chunk.status === "completed" || chunk.status === "flagged");
+            const totalChunkPages = Math.max(1, Math.ceil(completedChunks.length / AUDIOBOOK_CHUNKS_PER_PAGE));
+            const chunkPage = Math.max(0, Math.min(totalChunkPages - 1, audiobookChunkPages[job.id] ?? totalChunkPages - 1));
+            const visibleCompletedChunks = completedChunks.slice(chunkPage * AUDIOBOOK_CHUNKS_PER_PAGE, (chunkPage + 1) * AUDIOBOOK_CHUNKS_PER_PAGE);
+            const audioVersion = `${job.completed_chunks}-${job.updated_at ?? ""}`;
             const canStop = job.status === "queued" || job.status === "running";
             const canResume = job.status === "stopped" || job.status === "failed" || job.status === "needs_review";
             const hasAudio = completedChunks.length > 0;
+            const setChunkPage = (page: number) => setAudiobookChunkPages((pages) => ({ ...pages, [job.id]: Math.max(0, Math.min(totalChunkPages - 1, page)) }));
             return (
               <div key={job.id} className={cn("border p-3", job.status === "failed" || job.status === "needs_review" ? "border-amber-400/30 bg-amber-500/10" : "border-white/10 bg-black/20")}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -485,7 +492,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                   <div className="flex flex-wrap gap-2">
                     {canStop ? <button type="button" className="inline-flex items-center gap-1 border border-amber-400/30 px-2 py-1 text-xs text-amber-100 hover:bg-amber-400/10" onClick={() => void controlAudiobook("stopAudiobook", job.id)}><PauseCircle className="h-3.5 w-3.5" />Stop</button> : null}
                     {canResume ? <button type="button" className="inline-flex items-center gap-1 border border-cyan-400/30 px-2 py-1 text-xs text-cyan-100 hover:bg-cyan-400/10" onClick={() => void controlAudiobook("resumeAudiobook", job.id)}><RotateCcw className="h-3.5 w-3.5" />Resume</button> : null}
-                    {hasAudio ? <a className="inline-flex items-center gap-1 border border-emerald-400/30 px-2 py-1 text-xs text-emerald-100 hover:bg-emerald-400/10" href={ttsAudiobookAudioUrl(job.id, { download: true })}><Download className="h-3.5 w-3.5" />Download</a> : null}
+                    {hasAudio ? <a className="inline-flex items-center gap-1 border border-emerald-400/30 px-2 py-1 text-xs text-emerald-100 hover:bg-emerald-400/10" href={ttsAudiobookAudioUrl(job.id, { download: true, version: audioVersion })}><Download className="h-3.5 w-3.5" />Download</a> : null}
                     {!canStop ? <button type="button" className="border border-red-400/30 px-2 py-1 text-xs text-red-100 hover:bg-red-400/10" onClick={() => void controlAudiobook("deleteAudiobook", job.id)}><Trash2 className="inline h-3.5 w-3.5" /></button> : null}
                   </div>
                 </div>
@@ -494,9 +501,21 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                 </div>
                 <div className="mt-1 flex justify-between text-xs text-slate-400"><span>{job.progress_label}</span><span>{audiobookProgressValue(job).toFixed(1)}%</span></div>
                 {job.error ? <p className="mt-2 text-sm text-red-200">{job.error}</p> : null}
-                {hasAudio ? <audio className="mt-3 w-full" controls src={ttsAudiobookAudioUrl(job.id)} /> : null}
+                {hasAudio ? <audio className="mt-3 w-full" controls src={ttsAudiobookAudioUrl(job.id, { version: audioVersion })} /> : null}
+                {hasAudio ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border border-white/10 bg-black/20 px-2 py-2 text-xs text-slate-300">
+                    <span>
+                      Showing chunks {chunkPage * AUDIOBOOK_CHUNKS_PER_PAGE + 1}-{Math.min(completedChunks.length, (chunkPage + 1) * AUDIOBOOK_CHUNKS_PER_PAGE)} of {completedChunks.length}
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" disabled={chunkPage === 0} className="border border-white/10 px-2 py-1 text-slate-200 hover:bg-white/10 disabled:opacity-40" onClick={() => setChunkPage(chunkPage - 1)}>Prev</button>
+                      <button type="button" disabled={chunkPage >= totalChunkPages - 1} className="border border-white/10 px-2 py-1 text-slate-200 hover:bg-white/10 disabled:opacity-40" onClick={() => setChunkPage(chunkPage + 1)}>Next</button>
+                      <button type="button" disabled={chunkPage >= totalChunkPages - 1} className="border border-cyan-400/30 px-2 py-1 text-cyan-100 hover:bg-cyan-400/10 disabled:opacity-40" onClick={() => setChunkPage(totalChunkPages - 1)}>Latest</button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="mt-3 grid gap-2 md:grid-cols-2">
-                  {completedChunks.slice(0, 8).map((chunk) => (
+                  {visibleCompletedChunks.map((chunk) => (
                     <div key={chunk.index} className={cn("border p-2", chunk.status === "flagged" ? "border-amber-400/30 bg-amber-500/10" : "border-white/10 bg-black/20")}>
                       <div className="flex items-center justify-between gap-2 text-xs text-slate-300">
                         <span>Chunk {chunk.index + 1}</span>

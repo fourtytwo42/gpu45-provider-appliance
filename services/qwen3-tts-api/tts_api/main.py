@@ -828,7 +828,9 @@ def get_audiobook_audio(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Audiobook job not found")
     path = job.get("stitched_output_path")
-    if not path or not os.path.isfile(path):
+    completed = int(job.get("completed_chunks") or 0)
+    stitched_completed = int(job.get("stitched_completed_chunks") or 0)
+    if completed > stitched_completed or not path or not os.path.isfile(path):
         path = document_tts.stitch_completed_chunks(job_id)
     if not path or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="No completed audiobook audio is available yet")
