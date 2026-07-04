@@ -1,15 +1,16 @@
 {
-  "name": "Qwen3.6-27B-UD-Q4_K_XL-79071309",
-  "description": "Qwen3.6-27B-UD-Q4_K_XL.gguf",
-  "modelPath": "/models/huggingface/staging/unsloth--Qwen3.6-27B-MTP-GGUF/main/Qwen3.6-27B-UD-Q4_K_XL.gguf",
-  "mmprojPath": "/models/huggingface/hub/models--unsloth--Qwen3.6-27B-MTP-GGUF/snapshots/5cb35eb3dcbf52dbce5f87dbc64df6aaffadcace/mmproj-BF16.gguf",
+  "name": "Qwen3.6-35B-A3B-UD-Q4_K_XL-b420e923",
+  "description": "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf embedded MTP 256k candidate",
+  "modelPath": "/models/huggingface/staging/unsloth--Qwen3.6-35B-A3B-MTP-GGUF/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+  "mmprojPath": "/models/huggingface/staging/unsloth--Qwen3.6-35B-A3B-MTP-GGUF/main/mmproj-F16.gguf",
   "modelDraftPath": null,
+  "alias": "Qwen3.6-35B-A3B-UD-Q4_K_XL-b420e923",
   "host": "0.0.0.0",
   "port": 30000,
   "ctxSize": 262144,
   "gpuLayers": "all",
-  "batchSize": 8192,
-  "uBatchSize": 1536,
+  "batchSize": 4096,
+  "uBatchSize": 1024,
   "cacheRamMiB": 16384,
   "cacheTypeK": "q4_0",
   "cacheTypeV": "q4_0",
@@ -20,5 +21,7 @@
   "imageMinTokens": 1024,
   "metrics": true,
   "jinja": true,
-  "active": true
+  "active": true,
+  "reasoning": "off",
+  "topK": 0
 }

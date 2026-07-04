@@ -44,3 +44,15 @@ npm run build
 The production host runs `gpu45-provider-appliance`, `gpu45-provider-appliance-worker`, `gpu45-responses-proxy`, `llama-openai`, and `gpu45-v620-fan-controller` as persistent systemd services.
 
 When deploying proxy changes, copy `scripts/gpu45-responses-proxy.py` to `/usr/local/bin/gpu45-responses-proxy` and restart `gpu45-responses-proxy.service`; the systemd unit runs that installed executable rather than the copy under `/opt/gpu45-provider-appliance`.
+
+## Models
+
+### Qwen3.6 35B A3B Q4 MTP
+
+- Repo: `unsloth/Qwen3.6-35B-A3B-MTP-GGUF`
+- Model: `/models/huggingface/staging/unsloth--Qwen3.6-35B-A3B-MTP-GGUF/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`
+- Projector: `/models/huggingface/staging/unsloth--Qwen3.6-35B-A3B-MTP-GGUF/main/mmproj-F16.gguf`
+- Served alias: `Qwen3.6-35B-A3B-UD-Q4_K_XL-b420e923`
+- Context: `262144`
+- Quant choice: Q4 XL is the highest practical quant for full 256k context on the 32GB V620. Q5 XL is about 4.3GB larger than Q4 XL while Q4 already uses about 28.1GB of 32.2GB VRAM after loading.
+- Runtime defaults: reasoning off, top-k 0, embedded MTP enabled, F16 projector enabled.
