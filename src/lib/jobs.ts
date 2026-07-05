@@ -1,0 +1,71 @@
+import { prisma } from "./db";
+import { getImageSnapshot } from "./images";
+import { getTtsSnapshot } from "./tts";
+import { getVideoSnapshot } from "./video";
+import { getWhisperSnapshot } from "./whisper";
+
+export type UnifiedJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "stopped" | "needs_review";
+export type UnifiedJobKind = "download" | "benchmark" | "tts" | "audiobook" | "whisper" | "image" | "video" | "model-training" | "voice";
+
+export type UnifiedJob = {
+  id: string;
+  sourceId: string;
+  kind: UnifiedJobKind;
+  title: string;
+  subtitle?: string | null;
+  status: UnifiedJobStatus;
+  progressPercent?: number | null;
+  progressLabel?: string | null;
+  etaSeconds?: number | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  outputUrl?: string | null;
+  error?: string | null;
+  model?: string | null;
+};
+
+export type JobsSummary = { total: number; active: number; queued: number; failed: number; completed: number };
+
+function normalizeStatus(status: string): UnifiedJobStatus {
+  if (status === "complete") return "completed";
+  if (status === "training") return "running";
+  if (["queued", "running", "completed", "failed", "cancelled", "stopped", "needs_review"].includes(status)) return status as UnifiedJobStatus;
+  return "running";
+}
+
+function isActive(status: UnifiedJobStatus): boolean { return status === "queued" || status === "running"; }
+function sortDate(job: UnifiedJob): string { return job.updatedAt ?? job.finishedAt ?? job.startedAt ?? job.createdAt ?? ""; }
+
+export async function getUnifiedJobs(): Promise<{ jobs: UnifiedJob[]; summary: JobsSummary }> {
+  const jobs: UnifiedJob[] = [];
+  const [downloads, benchmarks, tts, images, videos, whisper] = await Promise.all([
+    prisma.downloadJob.findMany({ orderBy: { updatedAt: "desc" }, take: 50 }).catch(() => []),
+    prisma.benchmarkRun.findMany({ orderBy: { createdAt: "desc" }, take: 30 }).catch(() => []),
+    getTtsSnapshot().catch(() => null),
+    getImageSnapshot().catch(() => null),
+    getVideoSnapshot().catch(() => null),
+    getWhisperSnapshot().catch(() => null),
+  ]);
+
+  for (const job of downloads) {
+    jobs.push({ id: `download:${job.id}`, sourceId: job.id, kind: "download", title: job.fileName, subtitle: job.repoId, status: normalizeStatus(job.status), progressPercent: Number(job.totalBytes) > 0 ? Math.round((Number(job.bytesDownloaded) / Number(job.totalBytes)) * 1000) / 10 : null, progressLabel: `${Number(job.bytesDownloaded).toLocaleString()} / ${Number(job.totalBytes).toLocaleString()} bytes`, createdAt: job.createdAt.toISOString(), updatedAt: job.updatedAt.toISOString(), error: job.error });
+  }
+  for (const run of benchmarks) {
+    jobs.push({ id: `benchmark:${run.id}`, sourceId: run.id, kind: "benchmark", title: `Benchmark: ${run.modelName}`, subtitle: `${run.promptTokensPerSecond.toFixed(1)} prompt tok/s, ${run.generationTokensPerSecond.toFixed(1)} decode tok/s`, status: "completed", progressPercent: 100, createdAt: run.createdAt.toISOString(), finishedAt: run.createdAt.toISOString(), model: run.modelName });
+  }
+  if (tts) {
+    for (const job of tts.voiceJobs) jobs.push({ id: `voice:${job.id}`, sourceId: job.id, kind: "voice", title: job.name ? `Voice: ${job.name}` : "Voice generation", subtitle: job.kind === "voice_import" ? "Imported reference voice" : "Prompt-designed reference voice", status: normalizeStatus(job.status), progressPercent: job.progress_percent, progressLabel: job.progress_label, etaSeconds: job.eta_seconds, createdAt: job.created_at, updatedAt: job.updated_at, startedAt: job.started_at, finishedAt: job.finished_at, error: job.error });
+    for (const model of tts.models) jobs.push({ id: `model-training:${model.id}`, sourceId: model.id, kind: "model-training", title: `Voice model: ${model.name}`, subtitle: model.speaker_name ?? model.model_path, status: normalizeStatus(model.status), progressPercent: model.status === "ready" ? 100 : model.progress_percent, progressLabel: model.progress_label, etaSeconds: model.eta_seconds, createdAt: model.created_at, updatedAt: model.updated_at, startedAt: model.started_at, finishedAt: model.finished_at, error: model.error });
+    for (const job of tts.synthesisJobs) { const status = normalizeStatus(job.status); jobs.push({ id: `tts:${job.id}`, sourceId: job.id, kind: "tts", title: job.model_name ? `Speech: ${job.model_name}` : "Speech synthesis", subtitle: `${job.text_chars.toLocaleString()} characters`, status, progressPercent: job.progress_percent, progressLabel: job.progress_label, etaSeconds: job.eta_seconds, createdAt: job.created_at, updatedAt: job.updated_at, startedAt: job.started_at, finishedAt: job.finished_at, outputUrl: status === "completed" ? `/api/tts/synthesis/audio?id=${encodeURIComponent(job.id)}&download=1` : null, error: job.error, model: job.model_name }); }
+    for (const job of tts.audiobookJobs) { const status = normalizeStatus(job.status); jobs.push({ id: `audiobook:${job.id}`, sourceId: job.id, kind: "audiobook", title: job.title, subtitle: `${job.completed_chunks}/${job.total_chunks} chunks - ${job.source_filename}`, status, progressPercent: job.progress_percent, progressLabel: job.progress_label, createdAt: job.created_at, updatedAt: job.updated_at, startedAt: job.started_at, finishedAt: job.finished_at, outputUrl: `/api/tts/audiobook/audio?id=${encodeURIComponent(job.id)}&download=1`, error: job.error, model: job.model_name }); }
+  }
+  if (images) for (const job of images.jobs) { const status = normalizeStatus(job.status); jobs.push({ id: `image:${job.id}`, sourceId: job.id, kind: "image", title: job.profile_name ?? job.profile, subtitle: job.prompt, status, progressPercent: status === "completed" ? 100 : isActive(status) ? 35 : null, createdAt: job.created_at, updatedAt: job.completed_at ?? job.started_at ?? job.created_at, startedAt: job.started_at, finishedAt: job.completed_at, outputUrl: status === "completed" ? `/api/images/output?id=${encodeURIComponent(job.id)}` : null, error: job.error, model: job.profile_name ?? job.profile }); }
+  if (videos) for (const job of videos.jobs) { const status = normalizeStatus(job.status); jobs.push({ id: `video:${job.id}`, sourceId: job.id, kind: "video", title: job.profile_name ?? job.profile ?? "Video generation", subtitle: job.prompt, status, progressPercent: job.progress_percent ?? (status === "completed" ? 100 : null), progressLabel: job.progress_label ?? job.progress_stage, createdAt: job.created_at, updatedAt: job.completed_at ?? job.started_at ?? job.created_at, startedAt: job.started_at, finishedAt: job.completed_at, outputUrl: status === "completed" ? `/api/video/output?id=${encodeURIComponent(job.id)}` : null, error: job.error, model: job.profile_name ?? job.profile }); }
+  if (whisper) for (const job of whisper.jobs) { const status = normalizeStatus(job.status); jobs.push({ id: `whisper:${job.id}`, sourceId: job.id, kind: "whisper", title: `Transcript: ${job.filename}`, subtitle: `${job.model} - ${job.task}`, status, progressPercent: job.progress_percent ?? (status === "completed" ? 100 : null), progressLabel: job.progress_label, etaSeconds: job.eta_seconds, createdAt: job.created_at, updatedAt: job.completed_at ?? job.started_at ?? job.created_at, startedAt: job.started_at, finishedAt: job.completed_at, outputUrl: status === "completed" ? `/api/whisper/output?id=${encodeURIComponent(job.id)}&download=1` : null, error: job.error, model: job.model }); }
+
+  jobs.sort((a, b) => sortDate(b).localeCompare(sortDate(a)));
+  const summary = jobs.reduce<JobsSummary>((acc, job) => { acc.total += 1; if (job.status === "queued") acc.queued += 1; if (job.status === "failed") acc.failed += 1; if (job.status === "completed") acc.completed += 1; if (isActive(job.status)) acc.active += 1; return acc; }, { total: 0, active: 0, queued: 0, failed: 0, completed: 0 });
+  return { jobs, summary };
+}

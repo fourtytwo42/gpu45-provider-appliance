@@ -47,7 +47,12 @@ export function ResearchConsole() {
     setHistory({ searches, pages, jobs });
   }
 
-  useEffect(() => { void refreshHistory().catch(() => undefined); }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void refreshHistory().catch(() => undefined);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   async function searchWebAction(formData: FormData) {
     await run(async () => {
