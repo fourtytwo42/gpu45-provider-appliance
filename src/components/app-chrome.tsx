@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, BriefcaseBusiness, Cpu, Database, FileSearch, FileText, Film, Gauge, HardDriveDownload, ImageIcon, KeyRound, Logs, Mic2, RadioTower, Settings2, SquareTerminal, Thermometer, Wrench, Zap } from "lucide-react";
+import { Activity, Bot, BriefcaseBusiness, Cpu, Database, FileSearch, FileText, Film, Gauge, HardDriveDownload, ImageIcon, KeyRound, Library, Logs, Mic2, RadioTower, Settings2, SquareTerminal, Thermometer, Wrench, Zap } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatNumber } from "@/lib/format";
 import type { LiveTelemetry } from "@/lib/types";
@@ -13,7 +13,7 @@ import { StatusBadge } from "./status-badge";
 type JobsSummary = { active: number; queued: number; failed: number; completed: number; total: number };
 
 const navGroups = [
-  { label: "Command Center", items: [{ href: "/", label: "Overview", icon: Gauge }, { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness }] },
+  { label: "Command Center", items: [{ href: "/", label: "Overview", icon: Gauge }, { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness }, { href: "/outputs", label: "Outputs", icon: Library }] },
   { label: "LLM Provider", items: [{ href: "/models", label: "Models", icon: HardDriveDownload }, { href: "/benchmarks", label: "Benchmarks", icon: SquareTerminal }, { href: "/keys", label: "Keys", icon: KeyRound }] },
   { label: "Audio Studio", items: [{ href: "/tts", label: "TTS & Audiobooks", icon: Mic2 }, { href: "/whisper", label: "Whisper", icon: FileText }] },
   { label: "Media Studio", items: [{ href: "/images", label: "Images", icon: ImageIcon }, { href: "/video", label: "Video", icon: Film }] },
