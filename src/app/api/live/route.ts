@@ -1,4 +1,4 @@
-import { collectLiveTelemetry } from "@/lib/collectors";
+import { collectLiveTelemetry } from "@/lib/live-telemetry";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate --config prisma.config.ts && next build",
+    "build": "prisma generate --config prisma.config.ts && next build --webpack",
     "start": "next start",
     "worker": "tsx src/worker.ts",
     "lint": "eslint",
