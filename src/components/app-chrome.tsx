@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, BriefcaseBusiness, Cpu, Database, FileSearch, FileText, Film, Gauge, HardDriveDownload, ImageIcon, KeyRound, Library, Logs, Mic2, RadioTower, Settings2, SquareTerminal, Thermometer, Wrench, Zap } from "lucide-react";
+import { Activity, Bot, BriefcaseBusiness, Cpu, Database, FileSearch, FileText, Film, Gauge, HardDriveDownload, ImageIcon, KeyRound, Library, Logs, Mic2, RadioTower, ScrollText, Settings2, SquareTerminal, Thermometer, Wrench, Zap } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatNumber } from "@/lib/format";
 import type { LiveTelemetry } from "@/lib/types";
@@ -18,7 +18,7 @@ const navGroups = [
   { label: "Audio Studio", items: [{ href: "/tts", label: "TTS & Audiobooks", icon: Mic2 }, { href: "/whisper", label: "Whisper", icon: FileText }] },
   { label: "Media Studio", items: [{ href: "/images", label: "Images", icon: ImageIcon }, { href: "/video", label: "Video", icon: Film }] },
   { label: "Research", items: [{ href: "/research", label: "Search & Scrape", icon: FileSearch }] },
-  { label: "System", items: [{ href: "/logs", label: "Logs", icon: Logs }, { href: "/settings", label: "Settings", icon: Settings2 }] },
+  { label: "System", items: [{ href: "/timeline", label: "Timeline", icon: ScrollText }, { href: "/logs", label: "Logs", icon: Logs }, { href: "/settings", label: "Settings", icon: Settings2 }] },
 ];
 
 function shortModelName(model?: string): string {
