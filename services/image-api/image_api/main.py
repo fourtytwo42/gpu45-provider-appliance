@@ -24,6 +24,7 @@ JOBS_PATH = DATA_DIR / "jobs.json"
 MODEL_BASE = Path(os.environ.get("IMAGE_MODEL_BASE", "/models/image-gen/models"))
 LLM_SERVICE = os.environ.get("IMAGE_LLM_SERVICE", "llama-openai.service")
 RESTART_LLM = os.environ.get("IMAGE_RESTART_LLM", "true").lower() == "true"
+GPU_PEER_SERVICES = [service for service in os.environ.get("IMAGE_GPU_PEER_SERVICES", "qwen3-tts-api.service,wan2-video-api.service").replace(",", " ").split() if service]
 DEVICE = os.environ.get("IMAGE_DEVICE", "cuda")
 DTYPE = torch.bfloat16
 
@@ -111,6 +112,8 @@ PROFILES = {
         "default_width": 1024,
         "default_height": 1024,
         "guidance_scale": 4.0,
+        "cpu_offload": True,
+        "sequential_cpu_offload": True,
     },
 }
 
@@ -179,17 +182,50 @@ def profile_snapshot() -> list[dict]:
     return items
 
 
-def run_cmd(args: list[str]) -> None:
-    subprocess.run(args, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def run_cmd(args: list[str], *, check: bool = True) -> bool:
+    result = subprocess.run(args, check=False, capture_output=True, text=True)
+    if check and result.returncode != 0:
+        stderr = (result.stderr or result.stdout or "").strip()
+        command = " ".join(args)
+        raise RuntimeError(f"Command failed ({result.returncode}): {command} {stderr}".strip())
+    if result.returncode != 0:
+        stderr = (result.stderr or result.stdout or "").strip()
+        command = " ".join(args)
+        print(f"Command failed ({result.returncode}): {command} {stderr}".strip(), flush=True)
+    return result.returncode == 0
+
+
+def service_is_active(service: str) -> bool:
+    return subprocess.run(["systemctl", "is-active", "--quiet", service], check=False).returncode == 0
+
+
+def systemctl(action: str, service: str, *, check: bool = True) -> bool:
+    return run_cmd(["sudo", "systemctl", action, service], check=check)
 
 
 def stop_llm() -> None:
-    run_cmd(["sudo", "systemctl", "stop", LLM_SERVICE])
+    systemctl("stop", LLM_SERVICE)
 
 
 def start_llm() -> None:
     if RESTART_LLM:
-        run_cmd(["sudo", "systemctl", "start", LLM_SERVICE])
+        systemctl("start", LLM_SERVICE, check=False)
+
+
+def stop_gpu_peer_services() -> list[str]:
+    stopped: list[str] = []
+    for service in GPU_PEER_SERVICES:
+        if service == LLM_SERVICE:
+            continue
+        if service_is_active(service):
+            systemctl("stop", service)
+            stopped.append(service)
+    return stopped
+
+
+def start_gpu_peer_services(services: list[str]) -> None:
+    for service in services:
+        systemctl("start", service, check=False)
 
 
 def gpu_metrics() -> dict:
@@ -309,7 +345,9 @@ def load_pipeline(profile_id: str):
             from diffusers import AutoPipelineForText2Image
             pipe = AutoPipelineForText2Image.from_pretrained(str(path), torch_dtype=DTYPE, variant="fp16")
 
-        if profile.get("cpu_offload") and hasattr(pipe, "enable_model_cpu_offload"):
+        if profile.get("sequential_cpu_offload") and hasattr(pipe, "enable_sequential_cpu_offload"):
+            pipe.enable_sequential_cpu_offload()
+        elif profile.get("cpu_offload") and hasattr(pipe, "enable_model_cpu_offload"):
             pipe.enable_model_cpu_offload()
         else:
             pipe = pipe.to(DEVICE)
@@ -345,11 +383,19 @@ def generate_job(job_id: str) -> None:
     started = time.time()
     peak_vram = 0
     peak_temp = None
+    stopped_peer_services: list[str] = []
     try:
         job = update_job(job_id, status="running", started_at=now_iso(), progress_percent=0, progress_label="Starting image job", progress_step=0, progress_total=None, eta_seconds=None, elapsed_seconds=0, updated_at=now_iso())
         profile = PROFILES[job["profile"]]
-        update_progress(job_id, 2, "Stopping LLM to free VRAM", started=started)
+        update_progress(job_id, 2, "Stopping other GPU services", started=started)
+        stopped_peer_services = stop_gpu_peer_services()
+        update_progress(job_id, 4, "Stopping LLM to free VRAM", started=started)
         stop_llm()
+        try:
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
         update_progress(job_id, 5, "Loading image model", started=started)
         pipe = load_pipeline(job["profile"])
         update_progress(job_id, 10, "Image model loaded", step=0, total_steps=job["steps"], started=started)
@@ -413,6 +459,7 @@ def generate_job(job_id: str) -> None:
         update_job(job_id, status="failed", completed_at=now_iso(), duration_seconds=round(time.time() - started, 2), error=str(exc), progress_label="Failed", updated_at=now_iso())
     finally:
         unload_pipelines()
+        start_gpu_peer_services(stopped_peer_services)
         start_llm()
 
 

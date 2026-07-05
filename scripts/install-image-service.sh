@@ -41,6 +41,7 @@ Environment=IMAGE_API_DATA=$DATA_DIR
 Environment=IMAGE_MODEL_BASE=$DATA_DIR/models
 Environment=IMAGE_DEVICE=cuda
 Environment=IMAGE_LLM_SERVICE=llama-openai.service
+Environment=IMAGE_GPU_PEER_SERVICES=qwen3-tts-api.service,wan2-video-api.service
 Environment=IMAGE_RESTART_LLM=true
 Environment=HSA_OVERRIDE_GFX_VERSION=10.3.0
 Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -53,7 +54,7 @@ WantedBy=multi-user.target
 UNIT
 
 cat >/etc/sudoers.d/gpu45-image-api <<SUDOERS
-hendo420 ALL=(root) NOPASSWD: /usr/bin/systemctl stop llama-openai.service, /usr/bin/systemctl start llama-openai.service
+hendo420 ALL=(root) NOPASSWD: /usr/bin/systemctl stop llama-openai.service, /usr/bin/systemctl start llama-openai.service, /usr/bin/systemctl stop qwen3-tts-api.service, /usr/bin/systemctl start qwen3-tts-api.service, /usr/bin/systemctl stop wan2-video-api.service, /usr/bin/systemctl start wan2-video-api.service
 SUDOERS
 chmod 0440 /etc/sudoers.d/gpu45-image-api
 
