@@ -212,6 +212,51 @@ def gpu_metrics() -> dict:
         return {"vram_mb": None, "junction_c": None}
 
 
+def update_progress(
+    job_id: str,
+    percent: float,
+    label: str,
+    *,
+    step: int | None = None,
+    total_steps: int | None = None,
+    started: float | None = None,
+) -> None:
+    updates = {
+        "progress_percent": round(max(0.0, min(100.0, percent)), 1),
+        "progress_label": label,
+        "progress_step": step,
+        "progress_total": total_steps,
+        "updated_at": now_iso(),
+    }
+    if started and percent > 0:
+        elapsed = max(0.0, time.time() - started)
+        updates["elapsed_seconds"] = round(elapsed, 2)
+        if percent < 99:
+            updates["eta_seconds"] = round(max(0.0, elapsed * ((100.0 - percent) / percent)), 2)
+        else:
+            updates["eta_seconds"] = 0
+    update_job(job_id, **updates)
+
+
+def make_step_callback(job_id: str, total_steps: int, started: float):
+    total = max(1, int(total_steps))
+
+    def callback(_pipeline, step: int, _timestep, callback_kwargs: dict):
+        completed = min(total, int(step) + 1)
+        percent = 10.0 + (completed / total) * 85.0
+        update_progress(
+            job_id,
+            percent,
+            f"Denoising step {completed}/{total}",
+            step=completed,
+            total_steps=total,
+            started=started,
+        )
+        return callback_kwargs
+
+    return callback
+
+
 def download_profile(profile_id: str) -> dict:
     if profile_id not in PROFILES:
         raise KeyError(profile_id)
@@ -301,10 +346,13 @@ def generate_job(job_id: str) -> None:
     peak_vram = 0
     peak_temp = None
     try:
-        job = update_job(job_id, status="running", started_at=now_iso())
+        job = update_job(job_id, status="running", started_at=now_iso(), progress_percent=0, progress_label="Starting image job", progress_step=0, progress_total=None, eta_seconds=None, elapsed_seconds=0, updated_at=now_iso())
         profile = PROFILES[job["profile"]]
+        update_progress(job_id, 2, "Stopping LLM to free VRAM", started=started)
         stop_llm()
+        update_progress(job_id, 5, "Loading image model", started=started)
         pipe = load_pipeline(job["profile"])
+        update_progress(job_id, 10, "Image model loaded", step=0, total_steps=job["steps"], started=started)
         seed = job["seed"] if job["seed"] >= 0 else random.randint(0, 2**31 - 1)
         generator_device = "cpu" if profile.get("cpu_offload") else DEVICE
         generator = torch.Generator(device=generator_device).manual_seed(seed)
@@ -324,7 +372,18 @@ def generate_job(job_id: str) -> None:
             peak_vram = max(peak_vram, metrics["vram_mb"])
         if metrics["junction_c"] is not None:
             peak_temp = max(peak_temp or 0, metrics["junction_c"])
-        image = pipe(**kwargs).images[0]
+        kwargs["callback_on_step_end"] = make_step_callback(job_id, job["steps"], started)
+        kwargs["callback_on_step_end_tensor_inputs"] = []
+        try:
+            image = pipe(**kwargs).images[0]
+        except TypeError as exc:
+            if "callback_on_step_end" not in str(exc):
+                raise
+            kwargs.pop("callback_on_step_end", None)
+            kwargs.pop("callback_on_step_end_tensor_inputs", None)
+            update_progress(job_id, 15, "Running image model without step callbacks", started=started)
+            image = pipe(**kwargs).images[0]
+        update_progress(job_id, 96, "Saving image", step=job["steps"], total_steps=job["steps"], started=started)
         metrics = gpu_metrics()
         if metrics["vram_mb"]:
             peak_vram = max(peak_vram, metrics["vram_mb"])
@@ -343,9 +402,15 @@ def generate_job(job_id: str) -> None:
             peak_vram_mb=peak_vram or None,
             peak_junction_c=peak_temp,
             seed=seed,
+            progress_percent=100,
+            progress_label="Completed",
+            progress_step=job["steps"],
+            progress_total=job["steps"],
+            eta_seconds=0,
+            updated_at=now_iso(),
         )
     except Exception as exc:
-        update_job(job_id, status="failed", completed_at=now_iso(), duration_seconds=round(time.time() - started, 2), error=str(exc))
+        update_job(job_id, status="failed", completed_at=now_iso(), duration_seconds=round(time.time() - started, 2), error=str(exc), progress_label="Failed", updated_at=now_iso())
     finally:
         unload_pipelines()
         start_llm()
@@ -399,7 +464,14 @@ def create_job(body: CreateJobBody, background_tasks: BackgroundTasks):
         "guidance_scale": guidance,
         "seed": body.seed,
         "status": "queued",
+        "progress_percent": 0,
+        "progress_label": "Queued",
+        "progress_step": 0,
+        "progress_total": body.steps,
+        "eta_seconds": None,
+        "elapsed_seconds": 0,
         "created_at": now_iso(),
+        "updated_at": now_iso(),
     }
     jobs = load_jobs()
     jobs.append(job)

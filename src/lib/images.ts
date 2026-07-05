@@ -32,6 +32,13 @@ export type ImageJob = {
   created_at: string;
   started_at?: string | null;
   completed_at?: string | null;
+  updated_at?: string | null;
+  progress_percent?: number | null;
+  progress_label?: string | null;
+  progress_step?: number | null;
+  progress_total?: number | null;
+  eta_seconds?: number | null;
+  elapsed_seconds?: number | null;
   output_path?: string | null;
   output_name?: string | null;
   duration_seconds?: number | null;

@@ -19,6 +19,20 @@ function metric(value: number | null | undefined, suffix: string): string {
   return typeof value === "number" ? `${value}${suffix}` : "n/a";
 }
 
+function formatEta(seconds: number | null | undefined): string {
+  if (typeof seconds !== "number") return "eta n/a";
+  if (seconds < 60) return `${Math.max(0, Math.round(seconds))}s left`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.round(seconds % 60);
+  return `${minutes}m ${remainder.toString().padStart(2, "0")}s left`;
+}
+
+function progressValue(job: ImageJob): number | null {
+  if (typeof job.progress_percent === "number") return Math.max(0, Math.min(100, job.progress_percent));
+  if (job.status === "completed") return 100;
+  return null;
+}
+
 export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapshot }) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [state, setState] = useState<RunState>("idle");
@@ -247,6 +261,23 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
                   </button>
                 </div>
                 <p className="line-clamp-2 min-h-10 text-sm text-slate-200">{job.prompt}</p>
+                {progressValue(job) !== null ? (
+                  <div className="grid gap-1">
+                    <div className="flex items-center justify-between gap-3 text-[11px] text-slate-400">
+                      <span className="truncate">{job.progress_label ?? "Progress"}</span>
+                      <span className="font-mono text-slate-300">{progressValue(job)?.toFixed(progressValue(job)! % 1 === 0 ? 0 : 1)}%</span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                      <div className="h-full rounded-full bg-violet-300" style={{ width: `${progressValue(job)}%` }} />
+                    </div>
+                    {(job.status === "running" || job.status === "queued") ? (
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                        <span>{job.progress_step && job.progress_total ? `${job.progress_step}/${job.progress_total} steps` : job.status}</span>
+                        <span>{formatEta(job.eta_seconds)}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="grid grid-cols-3 gap-2 text-center text-[11px] text-slate-400">
                   <div className="border border-white/10 bg-white/[0.03] px-1 py-1">{job.width}x{job.height}</div>
                   <div className="border border-white/10 bg-white/[0.03] px-1 py-1">{job.steps} steps</div>
