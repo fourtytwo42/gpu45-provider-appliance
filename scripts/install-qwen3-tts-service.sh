@@ -43,6 +43,8 @@ cat >/etc/systemd/system/qwen3-tts-api.service <<UNIT
 Description=Qwen3-TTS API for GPU45 appliance
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=12
 
 [Service]
 Type=simple
@@ -61,7 +63,7 @@ Environment=QWEN_TTS_RESTART_LLM_AFTER=true
 Environment=QWEN_TTS_TRAINING_EXCLUSIVE_LLM=true
 ExecStart=$VENV_DIR/bin/python -m tts_api
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

@@ -4,6 +4,7 @@ JSON store and file paths for voices and models.
 import json
 import os
 import re
+import time
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -126,7 +127,52 @@ def _write_json_atomic(path: str, value: Any) -> None:
     tmp_path = f"{path}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(value, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp_path, path)
+
+
+def _backup_json(path: str, reason: str) -> str:
+    backup_path = f"{path}.corrupt-{int(time.time())}-{reason}"
+    try:
+        import shutil
+        shutil.copy2(path, backup_path)
+    except OSError:
+        pass
+    return backup_path
+
+
+def _load_json_list(path: str) -> List[Dict[str, Any]]:
+    if not os.path.exists(path):
+        return []
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            value = json.load(f)
+        return value if isinstance(value, list) else []
+    except json.JSONDecodeError as exc:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read()
+            value, end = json.JSONDecoder().raw_decode(raw)
+        except (OSError, json.JSONDecodeError):
+            backup_path = _backup_json(path, "unreadable")
+            print(f"Warning: backed up unreadable JSON store {path} to {backup_path}")
+            return []
+
+        if isinstance(value, list):
+            trailing = raw[end:].strip()
+            backup_path = _backup_json(path, "trailing-data")
+            _write_json_atomic(path, value)
+            print(
+                "Warning: repaired JSON store "
+                f"{path}; backed up to {backup_path}; removed {len(trailing)} trailing chars"
+            )
+            return value
+
+        backup_path = _backup_json(path, "not-list")
+        print(f"Warning: backed up non-list JSON store {path} to {backup_path}: {exc}")
+        return []
 
 
 def slug_from_name(name: str) -> str:
@@ -136,11 +182,7 @@ def slug_from_name(name: str) -> str:
 
 
 def load_voices() -> List[Dict[str, Any]]:
-    path = voices_json_path()
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return _load_json_list(voices_json_path())
 
 
 def save_voices(voices: List[Dict[str, Any]]) -> None:
@@ -149,11 +191,7 @@ def save_voices(voices: List[Dict[str, Any]]) -> None:
 
 
 def load_models() -> List[Dict[str, Any]]:
-    path = models_json_path()
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return _load_json_list(models_json_path())
 
 
 def save_models(models: List[Dict[str, Any]]) -> None:
@@ -162,11 +200,7 @@ def save_models(models: List[Dict[str, Any]]) -> None:
 
 
 def load_voice_jobs() -> List[Dict[str, Any]]:
-    path = voice_jobs_json_path()
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return _load_json_list(voice_jobs_json_path())
 
 
 def save_voice_jobs(jobs: List[Dict[str, Any]]) -> None:
@@ -206,11 +240,7 @@ def delete_voice_job(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def load_synthesis_jobs() -> List[Dict[str, Any]]:
-    path = synthesis_jobs_json_path()
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return _load_json_list(synthesis_jobs_json_path())
 
 
 def save_synthesis_jobs(jobs: List[Dict[str, Any]]) -> None:
@@ -256,11 +286,7 @@ def delete_synthesis_job(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def load_audiobook_jobs() -> List[Dict[str, Any]]:
-    path = audiobook_jobs_json_path()
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return _load_json_list(audiobook_jobs_json_path())
 
 
 def save_audiobook_jobs(jobs: List[Dict[str, Any]]) -> None:
