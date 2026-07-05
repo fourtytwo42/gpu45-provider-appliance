@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Copy, Cpu, Database, Fan, Gauge, HardDrive, KeyRound, Server, Thermometer, Zap } from "lucide-react";
+import { Activity, AlertTriangle, BriefcaseBusiness, CheckCircle2, Copy, Cpu, Database, Fan, Gauge, HardDrive, KeyRound, Layers3, Server, Thermometer, Zap } from "lucide-react";
 import { OperationalChart } from "./operational-chart";
 import { InstrumentGauge } from "./instrument-gauge";
 import { StatusPill } from "./status-pill";
@@ -9,6 +9,9 @@ import { formatBytes, formatNumber, formatPercent } from "@/lib/format";
 import type { DashboardSnapshot, LiveTelemetry, MetricSeries } from "@/lib/types";
 
 const MAX_POINTS = 180;
+
+type JobsSummary = { active: number; queued: number; failed: number; completed: number; total: number };
+type JobsPayload = { summary: JobsSummary; jobs: Array<{ id: string; title: string; status: string; kind: string; error?: string | null }> };
 
 function append(series: MetricSeries, timestamp: string, value: number | null): MetricSeries {
   if (value === null || !Number.isFinite(value)) return series;
@@ -47,6 +50,7 @@ export function LiveOverview({ initial, endpoint }: { initial: DashboardSnapshot
   const [live, setLive] = useState<LiveTelemetry>({ collectedAt: initial.collectedAt, provider: initial.provider, system: initial.system });
   const [charts, setCharts] = useState(initial.charts);
   const [connected, setConnected] = useState(false);
+  const [jobsPayload, setJobsPayload] = useState<JobsPayload | null>(null);
   useEffect(() => {
     const source = new EventSource("/api/live");
     source.addEventListener("telemetry", (event) => {
@@ -56,13 +60,57 @@ export function LiveOverview({ initial, endpoint }: { initial: DashboardSnapshot
     source.onerror = () => setConnected(false);
     return () => source.close();
   }, []);
+  useEffect(() => {
+    let cancelled = false;
+    async function loadJobs() {
+      try {
+        const response = await fetch("/api/jobs", { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = await response.json() as JobsPayload;
+        if (!cancelled) setJobsPayload(payload);
+      } catch {
+        if (!cancelled) setJobsPayload(null);
+      }
+    }
+    void loadJobs();
+    const timer = window.setInterval(() => void loadJobs(), 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
   const s = live.system;
   const vramFree = s.vramTotalBytes !== null && s.vramUsedBytes !== null ? s.vramTotalBytes - s.vramUsedBytes : null;
   const vramPercent = s.vramUsedBytes !== null && s.vramTotalBytes ? (s.vramUsedBytes / s.vramTotalBytes) * 100 : null;
+  const activeJobs = jobsPayload?.summary.active ?? 0;
+  const queuedJobs = jobsPayload?.summary.queued ?? 0;
+  const failedJobs = jobsPayload?.summary.failed ?? 0;
+  const codexReady = live.provider.status === "idle" || live.provider.status === "generating";
+  const gpuOwner = live.provider.activeRequests > 0 ? "LLM inference" : activeJobs > 0 ? "background job" : "idle";
+  const latestIssue = jobsPayload?.jobs.find((job) => job.status === "failed" || job.error);
   return <div className="space-y-4">
     <section className="flex flex-wrap items-center justify-between gap-4 border border-white/10 bg-[#0a1119] px-4 py-3">
       <div className="min-w-0"><div className="flex items-center gap-2"><StatusPill status={live.provider.status}>{live.provider.status}</StatusPill><span className="truncate font-mono text-sm text-white">{live.provider.model}</span></div><div className="mt-1 text-xs text-slate-500">{live.provider.providerUrl}</div></div>
       <div className="flex items-center gap-2 text-xs"><span className={`h-2 w-2 ${connected ? "bg-emerald-400" : "bg-rose-400"}`} /><span className="text-slate-400">{connected ? "Live stream" : "Reconnecting"}</span><span className="font-mono text-slate-600">{new Date(live.collectedAt).toLocaleTimeString()}</span></div>
+    </section>
+    <section className="grid gap-3 lg:grid-cols-4">
+      <div className="rounded-lg border border-[#223044] bg-[#0d131c] p-4">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-[#8a98aa]"><CheckCircle2 className={codexReady ? "h-4 w-4 text-[#36fba1]" : "h-4 w-4 text-[#fbbf24]"} />Codex readiness</div>
+        <div className="mt-3 text-lg font-semibold text-white">{codexReady ? "Ready" : "Degraded"}</div>
+        <div className="mt-1 text-sm text-[#8a98aa]">{live.provider.status} on {live.provider.model}</div>
+      </div>
+      <div className="rounded-lg border border-[#223044] bg-[#0d131c] p-4">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-[#8a98aa]"><Layers3 className="h-4 w-4 text-[#21d4fd]" />GPU owner</div>
+        <div className="mt-3 text-lg font-semibold text-white">{gpuOwner}</div>
+        <div className="mt-1 text-sm text-[#8a98aa]">{activeJobs} active job{activeJobs === 1 ? "" : "s"}, {queuedJobs} queued</div>
+      </div>
+      <div className="rounded-lg border border-[#223044] bg-[#0d131c] p-4">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-[#8a98aa]"><BriefcaseBusiness className="h-4 w-4 text-[#a78bfa]" />Unified queue</div>
+        <div className="mt-3 text-lg font-semibold text-white">{jobsPayload?.summary.total ?? 0} tracked</div>
+        <div className="mt-1 text-sm text-[#8a98aa]">{failedJobs} failed / {jobsPayload?.summary.completed ?? 0} completed</div>
+      </div>
+      <div className="rounded-lg border border-[#223044] bg-[#0d131c] p-4">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-[#8a98aa]"><AlertTriangle className={failedJobs > 0 ? "h-4 w-4 text-[#fb4b6b]" : "h-4 w-4 text-[#36fba1]"} />Attention</div>
+        <div className="mt-3 truncate text-lg font-semibold text-white">{latestIssue?.title ?? "Clear"}</div>
+        <div className="mt-1 truncate text-sm text-[#8a98aa]">{latestIssue?.error ?? "No failed jobs reported"}</div>
+      </div>
     </section>
     <section className="grid gap-4 border border-white/10 bg-[#0a1119] p-4 lg:grid-cols-[1.4fr_.8fr_.8fr] lg:items-center">
       <div className="min-w-0"><div className="flex items-center gap-2 text-xs uppercase text-slate-500"><Server className="h-3.5 w-3.5 text-cyan-300" />OpenAI-compatible endpoint</div><div className="mt-2 flex items-center gap-2"><code className="min-w-0 flex-1 truncate border border-white/10 bg-[#05090e] px-3 py-2 text-sm text-cyan-100">{endpoint.endpointBase}/v1</code><button title="Copy endpoint URL" onClick={() => void navigator.clipboard.writeText(`${endpoint.endpointBase}/v1`)} className="border border-white/10 p-2.5 text-slate-300 hover:border-cyan-400/30 hover:text-cyan-200"><Copy className="h-4 w-4" /></button></div><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-slate-600"><span>POST /v1/responses</span><span>GET /v1/models</span></div></div>
