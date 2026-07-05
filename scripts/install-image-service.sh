@@ -42,6 +42,7 @@ Environment=IMAGE_MODEL_BASE=$DATA_DIR/models
 Environment=IMAGE_DEVICE=cuda
 Environment=IMAGE_LLM_SERVICE=llama-openai.service
 Environment=IMAGE_GPU_PEER_SERVICES=qwen3-tts-api.service,wan2-video-api.service
+Environment=IMAGE_TTS_RESOURCE_URL=http://127.0.0.1:8000/resource
 Environment=IMAGE_RESTART_LLM=true
 Environment=HSA_OVERRIDE_GFX_VERSION=10.3.0
 Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True

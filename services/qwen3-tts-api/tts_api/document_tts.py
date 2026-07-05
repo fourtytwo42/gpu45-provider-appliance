@@ -215,6 +215,50 @@ def request_stop(job_id: str) -> dict[str, Any]:
     return store.update_audiobook_job(job_id, stop_requested=True, progress_label="Stop requested", updated_at=utcnow()) or job
 
 
+def pause_for_resource(job_id: str, reason: str = "GPU resource handoff") -> dict[str, Any]:
+    job = reset_interrupted_chunks(job_id)
+    if job.get("status") not in ("queued", "running", "pausing"):
+        return job
+    out = stitch_completed_chunks(job_id)
+    return store.update_audiobook_job(
+        job_id,
+        status="paused",
+        paused_by_resource=True,
+        pause_reason=reason,
+        progress_label=f"Paused: {reason}",
+        current_chunk=None,
+        stop_requested=False,
+        stitched_output_path=out or job.get("stitched_output_path"),
+        updated_at=utcnow(),
+    ) or job
+
+
+def pause_active_audiobooks(reason: str = "GPU resource handoff") -> list[dict[str, Any]]:
+    paused: list[dict[str, Any]] = []
+    for job in store.load_audiobook_jobs():
+        if job.get("status") in ("queued", "running", "pausing"):
+            paused.append(pause_for_resource(str(job["id"]), reason))
+    return paused
+
+
+def prepare_resume(job_id: str) -> dict[str, Any]:
+    job = store.get_audiobook_job_by_id(job_id)
+    if not job:
+        raise KeyError("Audiobook job not found")
+    if job.get("status") != "paused":
+        return job
+    reset_interrupted_chunks(job_id)
+    return store.update_audiobook_job(
+        job_id,
+        status="queued",
+        paused_by_resource=False,
+        pause_reason=None,
+        stop_requested=False,
+        progress_label="Queued for resume",
+        updated_at=utcnow(),
+    ) or job
+
+
 def reset_interrupted_chunks(job_id: str) -> dict[str, Any]:
     jobs = store.load_audiobook_jobs()
     for job in jobs:

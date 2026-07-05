@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import time
 import uuid
+import urllib.error
+import urllib.request
 from ctypes import CDLL
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +27,7 @@ MODEL_BASE = Path(os.environ.get("IMAGE_MODEL_BASE", "/models/image-gen/models")
 LLM_SERVICE = os.environ.get("IMAGE_LLM_SERVICE", "llama-openai.service")
 RESTART_LLM = os.environ.get("IMAGE_RESTART_LLM", "true").lower() == "true"
 GPU_PEER_SERVICES = [service for service in os.environ.get("IMAGE_GPU_PEER_SERVICES", "qwen3-tts-api.service,wan2-video-api.service").replace(",", " ").split() if service]
+TTS_RESOURCE_URL = os.environ.get("IMAGE_TTS_RESOURCE_URL", "http://127.0.0.1:8000/resource")
 DEVICE = os.environ.get("IMAGE_DEVICE", "cuda")
 DTYPE = torch.bfloat16
 
@@ -212,11 +215,40 @@ def start_llm() -> None:
         systemctl("start", LLM_SERVICE, check=False)
 
 
-def stop_gpu_peer_services() -> list[str]:
+def post_json(url: str, payload: dict | None = None, *, timeout: int = 10, required: bool = False) -> dict | None:
+    data = json.dumps(payload or {}).encode("utf-8")
+    request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body) if body else {}
+    except Exception as exc:
+        message = f"HTTP POST failed: {url}: {exc}"
+        if required:
+            raise RuntimeError(message) from exc
+        print(message, flush=True)
+        return None
+
+
+def pause_tts_for_gpu(reason: str) -> dict | None:
+    if not TTS_RESOURCE_URL:
+        return None
+    return post_json(f"{TTS_RESOURCE_URL.rstrip('/')}/pause", {"reason": reason}, timeout=20, required=False)
+
+
+def resume_tts_after_gpu() -> dict | None:
+    if not TTS_RESOURCE_URL:
+        return None
+    return post_json(f"{TTS_RESOURCE_URL.rstrip('/')}/resume", {}, timeout=20, required=False)
+
+
+def stop_gpu_peer_services(reason: str) -> list[str]:
     stopped: list[str] = []
     for service in GPU_PEER_SERVICES:
         if service == LLM_SERVICE:
             continue
+        if service == "qwen3-tts-api.service" and service_is_active(service):
+            pause_tts_for_gpu(reason)
         if service_is_active(service):
             systemctl("stop", service)
             stopped.append(service)
@@ -226,6 +258,12 @@ def stop_gpu_peer_services() -> list[str]:
 def start_gpu_peer_services(services: list[str]) -> None:
     for service in services:
         systemctl("start", service, check=False)
+    if "qwen3-tts-api.service" in services:
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            if resume_tts_after_gpu() is not None:
+                break
+            time.sleep(1)
 
 
 def gpu_metrics() -> dict:
@@ -388,7 +426,7 @@ def generate_job(job_id: str) -> None:
         job = update_job(job_id, status="running", started_at=now_iso(), progress_percent=0, progress_label="Starting image job", progress_step=0, progress_total=None, eta_seconds=None, elapsed_seconds=0, updated_at=now_iso())
         profile = PROFILES[job["profile"]]
         update_progress(job_id, 2, "Stopping other GPU services", started=started)
-        stopped_peer_services = stop_gpu_peer_services()
+        stopped_peer_services = stop_gpu_peer_services(f"Image generation job {job_id}")
         update_progress(job_id, 4, "Stopping LLM to free VRAM", started=started)
         stop_llm()
         try:

@@ -52,6 +52,10 @@ class SynthesisJobBody(BaseModel):
     model_id: str = Field(..., description="Ready CustomVoice model to use")
 
 
+class ResourcePauseBody(BaseModel):
+    reason: str = Field(default="GPU resource handoff", description="Why TTS should pause resumable work")
+
+
 def _utcnow() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
@@ -732,6 +736,72 @@ def delete_synthesis_job(job_id: str):
     if job.get("status") in ("queued", "running"):
         raise HTTPException(status_code=409, detail="Synthesis job is still running")
     store.delete_synthesis_job(job_id)
+
+
+@app.post("/resource/pause")
+def pause_for_resource(body: ResourcePauseBody):
+    """Pause resumable TTS work before another service takes the GPU."""
+    reason = (body.reason or "GPU resource handoff").strip()
+    paused_synthesis = []
+    jobs = store.load_synthesis_jobs()
+    changed = False
+    for job in jobs:
+        if job.get("status") in ("queued", "running"):
+            job.update(
+                status="paused",
+                paused_by_resource=True,
+                pause_reason=reason,
+                progress_label=f"Paused: {reason}",
+                eta_seconds=None,
+                updated_at=_utcnow(),
+            )
+            paused_synthesis.append(job)
+            changed = True
+    if changed:
+        store.save_synthesis_jobs(jobs)
+    paused_audiobooks = document_tts.pause_active_audiobooks(reason)
+    return {
+        "paused": bool(paused_synthesis or paused_audiobooks),
+        "synthesis_job_ids": [job.get("id") for job in paused_synthesis],
+        "audiobook_job_ids": [job.get("id") for job in paused_audiobooks],
+    }
+
+
+@app.post("/resource/resume", status_code=202)
+def resume_resource_paused(background_tasks: BackgroundTasks):
+    """Resume TTS work that was paused by /resource/pause."""
+    resumed_synthesis = []
+    jobs = store.load_synthesis_jobs()
+    changed = False
+    for job in jobs:
+        if job.get("status") == "paused" and job.get("paused_by_resource"):
+            job.update(
+                status="queued",
+                paused_by_resource=False,
+                pause_reason=None,
+                progress_label="Queued for resume",
+                eta_seconds=_estimate_synthesis_seconds(str(job.get("model_id") or ""), str(job.get("text") or "")),
+                updated_at=_utcnow(),
+            )
+            resumed_synthesis.append(dict(job))
+            changed = True
+    if changed:
+        store.save_synthesis_jobs(jobs)
+    for job in resumed_synthesis:
+        background_tasks.add_task(_run_synthesis_job, str(job["id"]), SynthesisJobBody(text=str(job.get("text") or ""), model_id=str(job.get("model_id") or "")))
+
+    resumed_audiobooks = []
+    for job in store.load_audiobook_jobs():
+        if job.get("status") == "paused" and job.get("paused_by_resource"):
+            prepared = document_tts.prepare_resume(str(job["id"]))
+            resumed_audiobooks.append(prepared)
+            background_tasks.add_task(document_tts.run_audiobook_job, str(job["id"]))
+
+    return {
+        "resumed": bool(resumed_synthesis or resumed_audiobooks),
+        "synthesis_job_ids": [job.get("id") for job in resumed_synthesis],
+        "audiobook_job_ids": [job.get("id") for job in resumed_audiobooks],
+    }
 
 
 # Audiobooks / long document TTS
