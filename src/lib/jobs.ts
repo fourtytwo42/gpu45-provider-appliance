@@ -1,11 +1,13 @@
 import { prisma } from "./db";
-import { getImageSnapshot } from "./images";
-import { getTtsSnapshot } from "./tts";
-import { getVideoSnapshot } from "./video";
-import { getWhisperSnapshot } from "./whisper";
+import { deleteDownloadJob } from "./downloads";
+import { deleteImageJob, getImageSnapshot } from "./images";
+import { deleteTtsAudiobook, deleteTtsModel, deleteTtsSynthesisJob, deleteTtsVoiceJob, getTtsSnapshot, stopTtsAudiobook } from "./tts";
+import { cancelVideoJob, deleteVideoJob, getVideoSnapshot } from "./video";
+import { deleteWhisperJob, getWhisperSnapshot } from "./whisper";
 
 export type UnifiedJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "stopped" | "needs_review";
 export type UnifiedJobKind = "download" | "benchmark" | "tts" | "audiobook" | "whisper" | "image" | "video" | "model-training" | "voice";
+export type UnifiedJobAction = "cancel" | "delete" | "retry" | "download";
 
 export type UnifiedJob = {
   id: string;
@@ -24,6 +26,9 @@ export type UnifiedJob = {
   outputUrl?: string | null;
   error?: string | null;
   model?: string | null;
+  actions?: UnifiedJobAction[];
+  actionLabels?: Partial<Record<UnifiedJobAction, string>>;
+  resourceImpact?: string | null;
 };
 
 export type JobsSummary = { total: number; active: number; queued: number; failed: number; completed: number };
@@ -37,6 +42,22 @@ function normalizeStatus(status: string): UnifiedJobStatus {
 
 function isActive(status: UnifiedJobStatus): boolean { return status === "queued" || status === "running"; }
 function sortDate(job: UnifiedJob): string { return job.updatedAt ?? job.finishedAt ?? job.startedAt ?? job.createdAt ?? ""; }
+
+function actionsFor(kind: UnifiedJobKind, status: UnifiedJobStatus, hasOutput = false): UnifiedJobAction[] {
+  const actions: UnifiedJobAction[] = [];
+  if (hasOutput) actions.push("download");
+  if (kind === "audiobook" && (status === "running" || status === "queued")) actions.push("cancel");
+  if (kind === "video" && (status === "running" || status === "queued")) actions.push("cancel");
+  if (["download", "tts", "audiobook", "whisper", "image", "video", "model-training", "voice"].includes(kind) && status !== "running") actions.push("delete");
+  return actions;
+}
+
+function withActions(job: UnifiedJob): UnifiedJob {
+  const actions = actionsFor(job.kind, job.status, Boolean(job.outputUrl));
+  const actionLabels: UnifiedJob["actionLabels"] = { cancel: "Cancel", delete: "Delete", download: "Open output", retry: "Retry" };
+  return { ...job, actions, actionLabels };
+}
+
 
 export async function getUnifiedJobs(): Promise<{ jobs: UnifiedJob[]; summary: JobsSummary }> {
   const jobs: UnifiedJob[] = [];
@@ -65,7 +86,31 @@ export async function getUnifiedJobs(): Promise<{ jobs: UnifiedJob[]; summary: J
   if (videos) for (const job of videos.jobs) { const status = normalizeStatus(job.status); jobs.push({ id: `video:${job.id}`, sourceId: job.id, kind: "video", title: job.profile_name ?? job.profile ?? "Video generation", subtitle: job.prompt, status, progressPercent: job.progress_percent ?? (status === "completed" ? 100 : null), progressLabel: job.progress_label ?? job.progress_stage, createdAt: job.created_at, updatedAt: job.completed_at ?? job.started_at ?? job.created_at, startedAt: job.started_at, finishedAt: job.completed_at, outputUrl: status === "completed" ? `/api/video/output?id=${encodeURIComponent(job.id)}` : null, error: job.error, model: job.profile_name ?? job.profile }); }
   if (whisper) for (const job of whisper.jobs) { const status = normalizeStatus(job.status); jobs.push({ id: `whisper:${job.id}`, sourceId: job.id, kind: "whisper", title: `Transcript: ${job.filename}`, subtitle: `${job.model} - ${job.task}`, status, progressPercent: job.progress_percent ?? (status === "completed" ? 100 : null), progressLabel: job.progress_label, etaSeconds: job.eta_seconds, createdAt: job.created_at, updatedAt: job.completed_at ?? job.started_at ?? job.created_at, startedAt: job.started_at, finishedAt: job.completed_at, outputUrl: status === "completed" ? `/api/whisper/output?id=${encodeURIComponent(job.id)}&download=1` : null, error: job.error, model: job.model }); }
 
-  jobs.sort((a, b) => sortDate(b).localeCompare(sortDate(a)));
-  const summary = jobs.reduce<JobsSummary>((acc, job) => { acc.total += 1; if (job.status === "queued") acc.queued += 1; if (job.status === "failed") acc.failed += 1; if (job.status === "completed") acc.completed += 1; if (isActive(job.status)) acc.active += 1; return acc; }, { total: 0, active: 0, queued: 0, failed: 0, completed: 0 });
-  return { jobs, summary };
+  const normalizedJobs = jobs.map(withActions);
+  normalizedJobs.sort((a, b) => sortDate(b).localeCompare(sortDate(a)));
+  const summary = normalizedJobs.reduce<JobsSummary>((acc, job) => { acc.total += 1; if (job.status === "queued") acc.queued += 1; if (job.status === "failed") acc.failed += 1; if (job.status === "completed") acc.completed += 1; if (isActive(job.status)) acc.active += 1; return acc; }, { total: 0, active: 0, queued: 0, failed: 0, completed: 0 });
+  return { jobs: normalizedJobs, summary };
 }
+
+export async function performUnifiedJobAction(id: string, action: UnifiedJobAction): Promise<{ ok: boolean; message: string }> {
+  const [kind, sourceId] = id.split(":", 2) as [UnifiedJobKind | undefined, string | undefined];
+  if (!kind || !sourceId) return { ok: false, message: "Invalid job id." };
+  if (action === "download") return { ok: true, message: "Open the output link directly." };
+
+  if (kind === "download" && action === "delete") {
+    const ok = await deleteDownloadJob(sourceId);
+    return { ok, message: ok ? "Download queue record deleted." : "Active or unknown download cannot be deleted." };
+  }
+  if (kind === "tts" && action === "delete") { await deleteTtsSynthesisJob(sourceId); return { ok: true, message: "Speech job deleted." }; }
+  if (kind === "audiobook" && action === "cancel") { await stopTtsAudiobook(sourceId); return { ok: true, message: "Audiobook stop requested." }; }
+  if (kind === "audiobook" && action === "delete") { await deleteTtsAudiobook(sourceId); return { ok: true, message: "Audiobook deleted." }; }
+  if (kind === "voice" && action === "delete") { await deleteTtsVoiceJob(sourceId); return { ok: true, message: "Voice job deleted." }; }
+  if (kind === "model-training" && action === "delete") { await deleteTtsModel(sourceId); return { ok: true, message: "Voice model deleted." }; }
+  if (kind === "whisper" && action === "delete") { await deleteWhisperJob(sourceId); return { ok: true, message: "Transcript job deleted." }; }
+  if (kind === "image" && action === "delete") { await deleteImageJob(sourceId); return { ok: true, message: "Image job deleted." }; }
+  if (kind === "video" && action === "cancel") { await cancelVideoJob(sourceId); return { ok: true, message: "Video cancellation requested." }; }
+  if (kind === "video" && action === "delete") { await deleteVideoJob(sourceId); return { ok: true, message: "Video job deleted." }; }
+
+  return { ok: false, message: `${action} is not supported for ${kind} jobs.` };
+}
+
