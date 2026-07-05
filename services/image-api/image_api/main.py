@@ -101,6 +101,17 @@ PROFILES = {
         "default_height": 1024,
         "guidance_scale": 4.5,
     },
+    "qwen-image": {
+        "id": "qwen-image",
+        "name": "Qwen Image",
+        "description": "High-quality Qwen image generation model. Strong prompt following, heavier VRAM use than SDXL Turbo.",
+        "repo": "Qwen/Qwen-Image",
+        "pipeline": "qwen",
+        "default_steps": 30,
+        "default_width": 1024,
+        "default_height": 1024,
+        "guidance_scale": 4.0,
+    },
 }
 
 
