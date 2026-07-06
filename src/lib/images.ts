@@ -14,6 +14,8 @@ export type ImageProfile = {
   guidance_scale: number;
   ready: boolean;
   tested?: boolean;
+  resolution_options?: Array<{ label: string; width: number; height: number }>;
+  test_summary?: string;
   error?: string | null;
 };
 

@@ -66,110 +66,78 @@ PROFILES = {
     "sdxl-turbo": {
         "id": "sdxl-turbo",
         "name": "SDXL Turbo",
-        "description": "Fast baseline image model. Best for quick previews and service validation.",
+        "description": "Fast tested preview model. Coherent output at 512, 768, and 1024 on this appliance.",
         "repo": "stabilityai/sdxl-turbo",
         "pipeline": "auto",
         "default_steps": 4,
         "default_width": 1024,
         "default_height": 1024,
         "guidance_scale": 0.0,
+        "tested": True,
+        "resolution_options": [
+            {"label": "512 x 512", "width": 512, "height": 512},
+            {"label": "768 x 768", "width": 768, "height": 768},
+            {"label": "1024 x 1024", "width": 1024, "height": 1024},
+        ],
+        "test_summary": "512: 9.0s / 8.1GB, 768: 7.9s / 12.5GB, 1024: 10.3s / 10.0GB.",
     },
     "sd-turbo": {
         "id": "sd-turbo",
         "name": "SD Turbo",
-        "description": "Very fast 512px Stable Diffusion Turbo path for quick drafts.",
+        "description": "Very fast draft model. Tested stable at 512 and 768.",
         "repo": "stabilityai/sd-turbo",
         "pipeline": "auto",
         "default_steps": 2,
         "default_width": 512,
         "default_height": 512,
         "guidance_scale": 0.0,
-    },
-    "sdxl-base": {
-        "id": "sdxl-base",
-        "name": "SDXL Base 1.0",
-        "description": "Reliable higher-quality baseline. Slower than Turbo, generally stronger detail.",
-        "repo": "stabilityai/stable-diffusion-xl-base-1.0",
-        "pipeline": "sdxl",
-        "default_steps": 25,
-        "default_width": 1024,
-        "default_height": 1024,
-        "guidance_scale": 7.0,
+        "tested": True,
+        "resolution_options": [
+            {"label": "512 x 512", "width": 512, "height": 512},
+            {"label": "768 x 768", "width": 768, "height": 768},
+        ],
+        "test_summary": "512: 3.9s / 5.1GB, 768: 6.1s / 8.0GB.",
     },
     "ssd-1b": {
         "id": "ssd-1b",
         "name": "Segmind SSD-1B",
-        "description": "Compact SDXL-derived model. Good middle ground between speed and quality.",
+        "description": "Compact SDXL-derived model. Tested stable through 1024; output is softer than SDXL Turbo but usable.",
         "repo": "segmind/SSD-1B",
         "pipeline": "sdxl",
         "default_steps": 20,
         "default_width": 1024,
         "default_height": 1024,
         "guidance_scale": 7.0,
-    },
-    "flux-schnell": {
-        "id": "flux-schnell",
-        "name": "FLUX.1 Schnell",
-        "description": "Fast open Flux model. Strong prompt following when ROCm Diffusers support works.",
-        "repo": "black-forest-labs/FLUX.1-schnell",
-        "pipeline": "flux",
-        "default_steps": 4,
-        "default_width": 1024,
-        "default_height": 1024,
-        "guidance_scale": 0.0,
-    },
-    "sd35-medium": {
-        "id": "sd35-medium",
-        "name": "Stable Diffusion 3.5 Medium",
-        "description": "Smaller SD3.5 path. Often more practical than SD3.5 Large on local hardware.",
-        "repo": "stabilityai/stable-diffusion-3.5-medium",
-        "pipeline": "sd3",
-        "default_steps": 28,
-        "default_width": 1024,
-        "default_height": 1024,
-        "guidance_scale": 4.5,
-    },
-    "qwen-image": {
-        "id": "qwen-image",
-        "name": "Qwen Image",
-        "description": "High-quality Qwen image generation model. Strong prompt following, heavier VRAM use than SDXL Turbo.",
-        "repo": "Qwen/Qwen-Image",
-        "pipeline": "qwen",
-        "default_steps": 30,
-        "default_width": 1024,
-        "default_height": 1024,
-        "guidance_scale": 4.0,
-        "cpu_offload": True,
-    },
-    "qwen-image-gguf-q4": {
-        "id": "qwen-image-gguf-q4",
-        "name": "Qwen Image GGUF Q4_K_M",
-        "description": "Experimental quantized Qwen Image path. Q4 is too tight for 1024 on this 32 GB ROCm setup; use Q3 for 1024px.",
-        "repo": "city96/Qwen-Image-gguf",
-        "pipeline": "qwen-gguf",
-        "base_repo": "callgg/qi-decoder",
-        "gguf_file": "qwen-image-Q4_K_M.gguf",
-        "default_steps": 8,
-        "default_width": 512,
-        "default_height": 512,
-        "guidance_scale": 4.0,
-        "max_width": 768,
-        "max_height": 768,
+        "tested": True,
+        "resolution_options": [
+            {"label": "512 x 512", "width": 512, "height": 512},
+            {"label": "768 x 768", "width": 768, "height": 768},
+            {"label": "1024 x 1024", "width": 1024, "height": 1024},
+        ],
+        "test_summary": "512: 7.9s / 7.2GB, 768: 12.3s / 10.0GB, 1024: 24.0s / 7.9GB at 4-step smoke settings.",
     },
     "qwen-image-gguf-q3": {
         "id": "qwen-image-gguf-q3",
         "name": "Qwen Image GGUF Q3_K_M",
-        "description": "Recommended quantized Qwen Image path for 1024px generation on this 32 GB ROCm appliance.",
+        "description": "Highest prompt-following path that currently survives on this appliance. Tested safe only at 512; 768 and 1024 crash/OOM the image service.",
         "repo": "city96/Qwen-Image-gguf",
         "pipeline": "qwen-gguf",
         "base_repo": "callgg/qi-decoder",
         "gguf_file": "qwen-image-Q3_K_M.gguf",
-        "default_steps": 20,
-        "default_width": 1024,
-        "default_height": 1024,
+        "default_steps": 8,
+        "default_width": 512,
+        "default_height": 512,
         "guidance_scale": 4.0,
+        "max_width": 512,
+        "max_height": 512,
+        "tested": True,
+        "resolution_options": [
+            {"label": "512 x 512", "width": 512, "height": 512},
+        ],
+        "test_summary": "512: 139.1s / 27.0GB. 768 and 1024 are disabled because they restarted the image API.",
     },
 }
+
 
 
 class CreateJobBody(BaseModel):
@@ -602,12 +570,19 @@ def create_job(body: CreateJobBody, background_tasks: BackgroundTasks):
     if body.profile not in PROFILES:
         raise HTTPException(status_code=400, detail=f"Unknown profile: {body.profile}")
     profile = PROFILES[body.profile]
+    resolution_options = profile.get("resolution_options") or []
+    if resolution_options and not any(int(option["width"]) == body.width and int(option["height"]) == body.height for option in resolution_options):
+        allowed = ", ".join(f"{option['width']}x{option['height']}" for option in resolution_options)
+        raise HTTPException(
+            status_code=400,
+            detail=f"{profile['name']} supports only tested sizes on this appliance: {allowed}.",
+        )
     max_width = profile.get("max_width")
     max_height = profile.get("max_height")
     if (max_width and body.width > int(max_width)) or (max_height and body.height > int(max_height)):
         raise HTTPException(
             status_code=400,
-            detail=f"{profile['name']} is limited to {max_width}x{max_height} on this appliance. Use Qwen Image GGUF Q3_K_M for 1024px.",
+            detail=f"{profile['name']} is limited to {max_width}x{max_height} on this appliance.",
         )
     job_id = uuid.uuid4().hex[:12]
     guidance = body.guidance_scale

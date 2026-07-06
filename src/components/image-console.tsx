@@ -49,6 +49,10 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
     };
   });
   const selectedProfileInfo = useMemo(() => snapshot.profiles.find((profile) => profile.id === selectedProfile), [selectedProfile, snapshot.profiles]);
+  const resolutionOptions = selectedProfileInfo?.resolution_options?.length
+    ? selectedProfileInfo.resolution_options
+    : [{ label: `${settings.width} x ${settings.height}`, width: settings.width, height: settings.height }];
+  const selectedResolution = `${settings.width}x${settings.height}`;
   const activeJob = useMemo(() => snapshot.jobs.find((job) => job.status === "running" || job.status === "queued"), [snapshot.jobs]);
 
   async function refresh(): Promise<void> {
@@ -187,14 +191,23 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
           ) : null}
           <textarea name="prompt" required rows={6} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-violet-400/60" placeholder="A realistic photo of a compact AI appliance on a workbench, tiny status LEDs, shallow depth of field, crisp details." />
           <textarea name="negative_prompt" rows={3} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-violet-400/60" placeholder="blurry, low quality, watermark, text, distorted" />
-          <div className="grid gap-3 sm:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-4">
             <label className="grid gap-1 text-xs text-slate-400">
-              Width
-              <input name="width" type="number" min={256} max={1536} step={64} value={settings.width} onChange={(event) => setSettings((current) => ({ ...current, width: Number(event.target.value) }))} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" />
-            </label>
-            <label className="grid gap-1 text-xs text-slate-400">
-              Height
-              <input name="height" type="number" min={256} max={1536} step={64} value={settings.height} onChange={(event) => setSettings((current) => ({ ...current, height: Number(event.target.value) }))} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" />
+              Size
+              <select
+                value={selectedResolution}
+                onChange={(event) => {
+                  const [width, height] = event.target.value.split("x").map(Number);
+                  setSettings((current) => ({ ...current, width, height }));
+                }}
+                className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
+              >
+                {resolutionOptions.map((option) => (
+                  <option key={`${option.width}x${option.height}`} value={`${option.width}x${option.height}`}>{option.label}</option>
+                ))}
+              </select>
+              <input type="hidden" name="width" value={settings.width} />
+              <input type="hidden" name="height" value={settings.height} />
             </label>
             <label className="grid gap-1 text-xs text-slate-400">
               Steps
@@ -230,6 +243,10 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
                 </span>
               </div>
               <p className="text-sm text-slate-300">{profile.description}</p>
+              {profile.resolution_options?.length ? (
+                <p className="text-xs text-cyan-200">Tested sizes: {profile.resolution_options.map((option) => `${option.width}x${option.height}`).join(", ")}</p>
+              ) : null}
+              {profile.test_summary ? <p className="text-xs text-slate-500">{profile.test_summary}</p> : null}
               {profile.error ? <p className="text-xs text-red-200">{profile.error}</p> : null}
               <button disabled={state === "working" || profile.ready} className="inline-flex items-center justify-center gap-2 border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50" onClick={() => void downloadModel(profile.id)}>
                 <Download className="h-4 w-4" />
