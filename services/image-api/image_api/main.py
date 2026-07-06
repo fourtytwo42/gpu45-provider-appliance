@@ -29,6 +29,7 @@ LLM_SERVICE = os.environ.get("IMAGE_LLM_SERVICE", "llama-openai.service")
 RESTART_LLM = os.environ.get("IMAGE_RESTART_LLM", "true").lower() == "true"
 GPU_PEER_SERVICES = [service for service in os.environ.get("IMAGE_GPU_PEER_SERVICES", "qwen3-tts-api.service,wan2-video-api.service").replace(",", " ").split() if service]
 TTS_RESOURCE_URL = os.environ.get("IMAGE_TTS_RESOURCE_URL", "http://127.0.0.1:8000/resource")
+RECOVERY_START_SERVICES = [service for service in os.environ.get("IMAGE_RECOVERY_START_SERVICES", "qwen3-tts-api.service").replace(",", " ").split() if service]
 DEVICE = os.environ.get("IMAGE_DEVICE", "cuda")
 DTYPE = torch.bfloat16
 
@@ -50,8 +51,17 @@ async def lifespan(_app: FastAPI):
                 changed = True
         if changed:
             save_jobs(jobs)
+            print("Recovered interrupted image jobs after service restart.", flush=True)
     except Exception as exc:
         print(f"Failed to recover interrupted image jobs: {exc}", flush=True)
+    try:
+        start_gpu_peer_services(RECOVERY_START_SERVICES)
+    except Exception as exc:
+        print(f"Failed to restart image peer services during recovery: {exc}", flush=True)
+    try:
+        start_llm()
+    except Exception as exc:
+        print(f"Failed to restart LLM during image API recovery: {exc}", flush=True)
     yield
 
 
