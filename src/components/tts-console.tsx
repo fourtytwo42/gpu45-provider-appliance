@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BookOpen, Clock, Download, Mic2, PauseCircle, Play, RefreshCw, RotateCcw, Sparkles, Trash2, Upload, Wand2 } from "lucide-react";
 import { SectionCard } from "./section-card";
-import type { TtsAudiobookJob, TtsModel, TtsSnapshot, TtsSynthesisJob, TtsVoice, TtsVoiceJob } from "@/lib/tts";
-import { ttsAudiobookAudioUrl, ttsSampleUrl, ttsSynthesisAudioUrl } from "@/lib/tts";
+import type { TtsAudiobookJob, TtsModel, TtsPresentationJob, TtsSnapshot, TtsSynthesisJob, TtsVoice, TtsVoiceJob } from "@/lib/tts";
+import { ttsAudiobookAudioUrl, ttsPresentationOutputUrl, ttsPresentationSlideAudioUrl, ttsSampleUrl, ttsSynthesisAudioUrl } from "@/lib/tts";
 import { cn } from "@/lib/cn";
 
 type Status = "idle" | "working" | "error";
@@ -54,6 +54,10 @@ function audiobookProgressValue(job: TtsAudiobookJob): number {
   return Math.max(0, Math.min(100, Number(job.progress_percent ?? 0)));
 }
 
+function presentationProgressValue(job: TtsPresentationJob): number {
+  return Math.max(0, Math.min(100, Number(job.progress_percent ?? 0)));
+}
+
 export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [status, setStatus] = useState<Status>("idle");
@@ -79,6 +83,12 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
       .sort((a, b) => String(b.updated_at ?? b.created_at).localeCompare(String(a.updated_at ?? a.created_at)))
   ), [snapshot.audiobookJobs]);
   const activeAudiobookJobs = useMemo(() => audiobookJobs.filter((job) => job.status === "queued" || job.status === "running"), [audiobookJobs]);
+  const presentationJobs = useMemo(() => (
+    snapshot.presentationJobs
+      .slice()
+      .sort((a, b) => String(b.updated_at ?? b.created_at).localeCompare(String(a.updated_at ?? a.created_at)))
+  ), [snapshot.presentationJobs]);
+  const activePresentationJobs = useMemo(() => presentationJobs.filter((job) => job.status === "queued" || job.status === "running"), [presentationJobs]);
 
   const reconcileSynthesisStatus = useCallback((next: TtsSnapshot, id = activeSynthesisId): void => {
     if (!id) return;
@@ -122,12 +132,12 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
   }, [refresh]);
 
   useEffect(() => {
-    if (activeSynthesisJobs.length === 0 && activeAudiobookJobs.length === 0) return undefined;
+    if (activeSynthesisJobs.length === 0 && activeAudiobookJobs.length === 0 && activePresentationJobs.length === 0) return undefined;
     const timer = window.setInterval(() => {
       void refresh().catch(() => undefined);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [activeSynthesisJobs.length, activeAudiobookJobs.length, refresh]);
+  }, [activeSynthesisJobs.length, activeAudiobookJobs.length, activePresentationJobs.length, refresh]);
 
   async function createVoice(formData: FormData): Promise<void> {
     await run(async () => {
@@ -250,6 +260,36 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
       await parseJson(response);
       setMessage(action === "stopAudiobook" ? "Stop requested. Current chunk may finish first." : action === "resumeAudiobook" ? "Audiobook resumed." : "Audiobook deleted.");
     }, action === "stopAudiobook" ? "Stopping audiobook." : action === "resumeAudiobook" ? "Resuming audiobook." : "Deleting audiobook.");
+  }
+
+
+  async function createPresentation(formData: FormData): Promise<void> {
+    setStatus("working");
+    setMessage("Uploading PowerPoint and queueing slide narration.");
+    try {
+      const modelId = String(formData.get("model_id") ?? "");
+      if (!modelId) throw new Error("Choose a trained voice model before narrating a PowerPoint.");
+      const response = await fetch("/api/tts", { method: "POST", body: formData });
+      await parseJson(response);
+      setMessage("PowerPoint narration queued. Slide audio appears as each slide completes.");
+      await refresh();
+      setStatus("idle");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "PowerPoint narration upload failed");
+    }
+  }
+
+  async function controlPresentation(action: "stopPresentation" | "resumePresentation" | "deletePresentation", id: string): Promise<void> {
+    await run(async () => {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, id }),
+      });
+      await parseJson(response);
+      setMessage(action === "stopPresentation" ? "Stop requested. Current slide may finish first." : action === "resumePresentation" ? "Presentation narration resumed." : "Presentation job deleted.");
+    }, action === "stopPresentation" ? "Stopping presentation narration." : action === "resumePresentation" ? "Resuming presentation narration." : "Deleting presentation job.");
   }
 
   return (
@@ -531,6 +571,81 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
           })}
         </div>
       </SectionCard>
+
+      <SectionCard title="PowerPoint Narration" description="Upload a PPTX with speaker notes and create a narrated autoplay deck using a trained voice model.">
+        <form action={(formData) => void createPresentation(formData)} className="grid gap-3">
+          <input type="hidden" name="action" value="createPresentation" />
+          <input name="title" className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60" placeholder="optional narrated deck title" />
+          <select name="model_id" required className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
+            <option value="">Choose trained voice model</option>
+            {readyModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+          </select>
+          <input
+            name="file"
+            type="file"
+            required
+            accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-200 file:mr-3 file:border-0 file:bg-cyan-400/10 file:px-3 file:py-1 file:text-cyan-100"
+          />
+          <button disabled={status === "working" || readyModels.length === 0} className="inline-flex items-center justify-center gap-2 border border-violet-400/40 bg-violet-400/10 px-4 py-2 text-sm font-medium text-violet-100 hover:bg-violet-400/20 disabled:opacity-50">
+            <Upload className="h-4 w-4" />
+            Create Narrated PPTX
+          </button>
+          <p className="text-xs text-slate-500">V1 accepts .pptx only. Save legacy .ppt files as .pptx before uploading.</p>
+        </form>
+        <div className="mt-4 grid gap-3">
+          {presentationJobs.length === 0 ? <p className="text-sm text-slate-400">No narrated PowerPoint jobs yet.</p> : null}
+          {presentationJobs.map((job) => {
+            const narratedSlides = job.slides.filter((slide) => slide.status === "completed" || slide.status === "flagged");
+            const canStop = job.status === "queued" || job.status === "running";
+            const canResume = job.status === "stopped" || job.status === "failed" || job.status === "needs_review" || job.status === "paused";
+            const hasOutput = Boolean(job.output_path || job.output_bytes || narratedSlides.length > 0);
+            const version = `${job.completed_slides}-${job.updated_at ?? ""}`;
+            return (
+              <div key={job.id} className={cn("border p-3", job.status === "failed" || job.status === "needs_review" ? "border-amber-400/30 bg-amber-500/10" : "border-white/10 bg-black/20")}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-white">{job.title}</div>
+                    <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-400">
+                      <span>{job.status}</span>
+                      <span>{job.completed_slides}/{job.total_slides} slides</span>
+                      <span>{job.narration_slides} narrated</span>
+                      <span>{job.model_name ?? job.model_id}</span>
+                      <span>{job.source_filename}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {canStop ? <button type="button" className="inline-flex items-center gap-1 border border-amber-400/30 px-2 py-1 text-xs text-amber-100 hover:bg-amber-400/10" onClick={() => void controlPresentation("stopPresentation", job.id)}><PauseCircle className="h-3.5 w-3.5" />Stop</button> : null}
+                    {canResume ? <button type="button" className="inline-flex items-center gap-1 border border-cyan-400/30 px-2 py-1 text-xs text-cyan-100 hover:bg-cyan-400/10" onClick={() => void controlPresentation("resumePresentation", job.id)}><RotateCcw className="h-3.5 w-3.5" />Resume</button> : null}
+                    {hasOutput ? <a className="inline-flex items-center gap-1 border border-emerald-400/30 px-2 py-1 text-xs text-emerald-100 hover:bg-emerald-400/10" href={ttsPresentationOutputUrl(job.id, { download: true, version })}><Download className="h-3.5 w-3.5" />PPTX</a> : null}
+                    {!canStop ? <button type="button" className="border border-red-400/30 px-2 py-1 text-xs text-red-100 hover:bg-red-400/10" onClick={() => void controlPresentation("deletePresentation", job.id)}><Trash2 className="inline h-3.5 w-3.5" /></button> : null}
+                  </div>
+                </div>
+                <div className="mt-3 h-2 border border-white/10 bg-black/30">
+                  <div className="h-full bg-violet-300 transition-all" style={{ width: `${presentationProgressValue(job)}%` }} />
+                </div>
+                <div className="mt-1 flex justify-between text-xs text-slate-400"><span>{job.progress_label}</span><span>{presentationProgressValue(job).toFixed(1)}%</span></div>
+                {job.error ? <p className="mt-2 text-sm text-red-200">{job.error}</p> : null}
+                {narratedSlides.length > 0 ? (
+                  <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    {narratedSlides.map((slide) => (
+                      <div key={slide.index} className={cn("border p-2", slide.status === "flagged" ? "border-amber-400/30 bg-amber-500/10" : "border-white/10 bg-black/20")}>
+                        <div className="flex items-center justify-between gap-2 text-xs text-slate-300">
+                          <span>Slide {slide.slide_number}</span>
+                          <span>{slide.audio_duration_seconds ? `${slide.audio_duration_seconds}s` : slide.status}</span>
+                        </div>
+                        {slide.quality?.ok === false ? <p className="mt-1 text-xs text-amber-200">Flagged: {slide.quality.reasons?.join(", ")}</p> : null}
+                        <audio className="mt-2 w-full" controls src={ttsPresentationSlideAudioUrl(job.id, slide.index, { version })} />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </SectionCard>
+
 
       <SectionCard title="Voices" description="Prompt-designed reference voices.">
         <div className="grid gap-3">

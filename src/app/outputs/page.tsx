@@ -7,7 +7,7 @@ import type { OutputKind } from "@/lib/outputs";
 
 export const dynamic = "force-dynamic";
 
-const icons = { audio: FileAudio, audiobook: FileAudio, transcript: FileText, image: ImageIcon, video: Film, benchmark: TerminalSquare, download: Download };
+const icons = { audio: FileAudio, audiobook: FileAudio, transcript: FileText, image: ImageIcon, video: Film, benchmark: TerminalSquare, download: Download, presentation: FileAudio };
 
 function labelDate(value?: string | null): string {
   if (!value) return "";

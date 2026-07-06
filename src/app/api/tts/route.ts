@@ -1,8 +1,10 @@
 import {
   createTtsAudiobook,
+  createTtsPresentation,
   createTtsSynthesisJob,
   createTtsVoice,
   deleteTtsModel,
+  deleteTtsPresentation,
   deleteTtsAudiobook,
   deleteTtsSynthesisJob,
   deleteTtsVoice,
@@ -12,7 +14,9 @@ import {
   renameTtsModel,
   renameTtsVoice,
   resumeTtsAudiobook,
+  resumeTtsPresentation,
   stopTtsAudiobook,
+  stopTtsPresentation,
   synthesizeTts,
   trainTtsModel,
 } from "@/lib/tts";
@@ -35,6 +39,10 @@ export async function POST(request: Request): Promise<Response> {
       }
       if (action === "createAudiobook") {
         const job = await createTtsAudiobook(formData);
+        return Response.json({ ok: true, job }, { status: 202 });
+      }
+      if (action === "createPresentation") {
+        const job = await createTtsPresentation(formData);
         return Response.json({ ok: true, job }, { status: 202 });
       }
       return Response.json({ error: "Unknown TTS multipart action." }, { status: 400 });
@@ -111,6 +119,21 @@ export async function POST(request: Request): Promise<Response> {
 
     if (action === "deleteAudiobook") {
       await deleteTtsAudiobook(String(body.id ?? ""));
+      return Response.json({ ok: true });
+    }
+
+    if (action === "stopPresentation") {
+      const job = await stopTtsPresentation(String(body.id ?? ""));
+      return Response.json({ ok: true, job });
+    }
+
+    if (action === "resumePresentation") {
+      const job = await resumeTtsPresentation(String(body.id ?? ""));
+      return Response.json({ ok: true, job }, { status: 202 });
+    }
+
+    if (action === "deletePresentation") {
+      await deleteTtsPresentation(String(body.id ?? ""));
       return Response.json({ ok: true });
     }
 

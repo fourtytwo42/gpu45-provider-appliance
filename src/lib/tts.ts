@@ -98,6 +98,51 @@ export type TtsAudiobookJob = {
   updated_at: string;
 };
 
+
+export type TtsPresentationSlide = {
+  index: number;
+  slide_number: number;
+  status: "pending" | "running" | "completed" | "failed" | "flagged" | "empty";
+  text?: string;
+  text_chars: number;
+  output_path?: string;
+  output_bytes?: number;
+  audio_url?: string;
+  audio_duration_seconds?: number;
+  quality?: { ok?: boolean; reasons?: string[]; duration_seconds?: number; chunks?: number } | null;
+  error?: string;
+  started_at?: string;
+  finished_at?: string;
+  updated_at?: string;
+};
+
+export type TtsPresentationJob = {
+  id: string;
+  kind: "presentation";
+  status: "queued" | "running" | "stopped" | "completed" | "failed" | "needs_review" | "paused";
+  title: string;
+  source_filename: string;
+  model_id: string;
+  model_name?: string;
+  total_slides: number;
+  narration_slides: number;
+  completed_slides: number;
+  failed_slides: number;
+  current_slide?: number | null;
+  progress_label: string;
+  progress_percent: number;
+  stop_requested?: boolean;
+  output_url?: string;
+  output_path?: string;
+  output_bytes?: number;
+  slides: TtsPresentationSlide[];
+  error?: string;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  updated_at: string;
+};
+
 export type TtsSynthesisJob = {
   id: string;
   kind: "synthesis";
@@ -129,6 +174,7 @@ export type TtsSnapshot = {
   models: TtsModel[];
   synthesisJobs: TtsSynthesisJob[];
   audiobookJobs: TtsAudiobookJob[];
+  presentationJobs: TtsPresentationJob[];
   error?: string;
 };
 
@@ -165,7 +211,8 @@ export async function getTtsSnapshot(): Promise<TtsSnapshot> {
     const voiceJobs = await fetchJson<TtsVoiceJob[]>("/voice-jobs").catch(() => []);
     const synthesisJobs = await fetchJson<TtsSynthesisJob[]>("/synthesis-jobs").catch(() => []);
     const audiobookJobs = await fetchJson<TtsAudiobookJob[]>("/audiobooks").catch(() => []);
-    return { healthy: true, serviceUrl, voices, voiceJobs, models, synthesisJobs, audiobookJobs };
+    const presentationJobs = await fetchJson<TtsPresentationJob[]>("/presentations").catch(() => []);
+    return { healthy: true, serviceUrl, voices, voiceJobs, models, synthesisJobs, audiobookJobs, presentationJobs };
   } catch (error) {
     return {
       healthy: false,
@@ -175,6 +222,7 @@ export async function getTtsSnapshot(): Promise<TtsSnapshot> {
       models: [],
       synthesisJobs: [],
       audiobookJobs: [],
+      presentationJobs: [],
       error: error instanceof Error ? error.message : "TTS service unavailable",
     };
   }
@@ -223,6 +271,42 @@ export async function deleteTtsAudiobook(id: string): Promise<void> {
 export async function fetchTtsAudiobookAudio(id: string, chunk?: number): Promise<Response> {
   const path = typeof chunk === "number" ? `/audiobooks/${encodeURIComponent(id)}/chunks/${chunk}/audio` : `/audiobooks/${encodeURIComponent(id)}/audio`;
   const response = await fetch(ttsUrl(path), { cache: "no-store" });
+  if (!response.ok) throw new Error(await response.text());
+  return response;
+}
+
+
+export async function createTtsPresentation(formData: FormData): Promise<TtsPresentationJob> {
+  const response = await fetch(ttsUrl("/presentations"), {
+    method: "POST",
+    body: formData,
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return await response.json() as TtsPresentationJob;
+}
+
+export async function stopTtsPresentation(id: string): Promise<TtsPresentationJob> {
+  return await fetchJson<TtsPresentationJob>(`/presentations/${encodeURIComponent(id)}/stop`, { method: "POST" });
+}
+
+export async function resumeTtsPresentation(id: string): Promise<TtsPresentationJob> {
+  return await fetchJson<TtsPresentationJob>(`/presentations/${encodeURIComponent(id)}/resume`, { method: "POST" });
+}
+
+export async function deleteTtsPresentation(id: string): Promise<void> {
+  const response = await fetch(ttsUrl(`/presentations/${encodeURIComponent(id)}`), { method: "DELETE", cache: "no-store" });
+  if (!response.ok) throw new Error(await response.text());
+}
+
+export async function fetchTtsPresentationOutput(id: string): Promise<Response> {
+  const response = await fetch(ttsUrl(`/presentations/${encodeURIComponent(id)}/output`), { cache: "no-store" });
+  if (!response.ok) throw new Error(await response.text());
+  return response;
+}
+
+export async function fetchTtsPresentationSlideAudio(id: string, slide: number): Promise<Response> {
+  const response = await fetch(ttsUrl(`/presentations/${encodeURIComponent(id)}/slides/${slide}/audio`), { cache: "no-store" });
   if (!response.ok) throw new Error(await response.text());
   return response;
 }
@@ -308,4 +392,19 @@ export function ttsAudiobookAudioUrl(id: string, options: { chunk?: number; down
   if (options.download) params.set("download", "1");
   if (options.version !== undefined) params.set("v", String(options.version));
   return `/api/tts/audiobook/audio?${params.toString()}`;
+}
+
+
+export function ttsPresentationOutputUrl(id: string, options: { download?: boolean; version?: number | string } = {}): string {
+  const params = new URLSearchParams({ id });
+  if (options.download) params.set("download", "1");
+  if (options.version !== undefined) params.set("v", String(options.version));
+  return `/api/tts/presentation/output?${params.toString()}`;
+}
+
+export function ttsPresentationSlideAudioUrl(id: string, slide: number, options: { download?: boolean; version?: number | string } = {}): string {
+  const params = new URLSearchParams({ id, slide: String(slide) });
+  if (options.download) params.set("download", "1");
+  if (options.version !== undefined) params.set("v", String(options.version));
+  return `/api/tts/presentation/output?${params.toString()}`;
 }
