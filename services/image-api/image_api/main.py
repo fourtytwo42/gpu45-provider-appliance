@@ -29,7 +29,7 @@ LLM_SERVICE = os.environ.get("IMAGE_LLM_SERVICE", "llama-openai.service")
 RESTART_LLM = os.environ.get("IMAGE_RESTART_LLM", "true").lower() == "true"
 GPU_PEER_SERVICES = [service for service in os.environ.get("IMAGE_GPU_PEER_SERVICES", "qwen3-tts-api.service,wan2-video-api.service").replace(",", " ").split() if service]
 TTS_RESOURCE_URL = os.environ.get("IMAGE_TTS_RESOURCE_URL", "http://127.0.0.1:8000/resource")
-RECOVERY_START_SERVICES = [service for service in os.environ.get("IMAGE_RECOVERY_START_SERVICES", "qwen3-tts-api.service").replace(",", " ").split() if service]
+RECOVERY_START_SERVICES = [service for service in os.environ.get("IMAGE_RECOVERY_START_SERVICES", "").replace(",", " ").split() if service]
 DEVICE = os.environ.get("IMAGE_DEVICE", "cuda")
 DTYPE = torch.bfloat16
 
