@@ -18,7 +18,7 @@ apt-get install -y python3 python3-venv python3-pip git
 python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
 "$VENV_DIR/bin/python" -m pip install --index-url https://download.pytorch.org/whl/rocm6.4 torch torchvision
-"$VENV_DIR/bin/python" -m pip install fastapi "uvicorn[standard]" pillow accelerate safetensors transformers sentencepiece protobuf huggingface-hub diffusers
+"$VENV_DIR/bin/python" -m pip install fastapi "uvicorn[standard]" pillow accelerate safetensors transformers sentencepiece protobuf huggingface-hub diffusers gguf
 
 mkdir -p "$IMAGE_ROOT" "$DATA_DIR"
 rsync -a --delete "$APP_ROOT/services/image-api/image_api/" "$IMAGE_ROOT/image_api/"

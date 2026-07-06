@@ -116,7 +116,32 @@ PROFILES = {
         "default_height": 1024,
         "guidance_scale": 4.0,
         "cpu_offload": True,
-        "sequential_cpu_offload": True,
+    },
+    "qwen-image-gguf-q4": {
+        "id": "qwen-image-gguf-q4",
+        "name": "Qwen Image GGUF Q4_K_M",
+        "description": "Quantized Qwen Image transformer. Higher quality than Q3, but too tight for 1024 on this 32 GB ROCm setup.",
+        "repo": "city96/Qwen-Image-gguf",
+        "pipeline": "qwen-gguf",
+        "base_repo": "callgg/qi-decoder",
+        "gguf_file": "qwen-image-Q4_K_M.gguf",
+        "default_steps": 20,
+        "default_width": 1024,
+        "default_height": 1024,
+        "guidance_scale": 4.0,
+    },
+    "qwen-image-gguf-q3": {
+        "id": "qwen-image-gguf-q3",
+        "name": "Qwen Image GGUF Q3_K_M",
+        "description": "Recommended quantized Qwen Image path for 1024px generation on this 32 GB ROCm appliance.",
+        "repo": "city96/Qwen-Image-gguf",
+        "pipeline": "qwen-gguf",
+        "base_repo": "callgg/qi-decoder",
+        "gguf_file": "qwen-image-Q3_K_M.gguf",
+        "default_steps": 20,
+        "default_width": 1024,
+        "default_height": 1024,
+        "guidance_scale": 4.0,
     },
 }
 
@@ -173,6 +198,8 @@ def profile_dir(profile_id: str) -> Path:
 
 def profile_ready(profile: dict) -> bool:
     path = profile_dir(profile["id"])
+    if profile.get("gguf_file"):
+        return (path / profile["gguf_file"]).is_file()
     return path.is_dir() and any(path.glob("*.json"))
 
 
@@ -337,10 +364,12 @@ def download_profile(profile_id: str) -> dict:
     profile = PROFILES[profile_id]
     path = profile_dir(profile_id)
     path.mkdir(parents=True, exist_ok=True)
+    allow_patterns = [profile["gguf_file"]] if profile.get("gguf_file") else None
     snapshot_download(
         repo_id=profile["repo"],
         local_dir=str(path),
         local_dir_use_symlinks=False,
+        allow_patterns=allow_patterns,
     )
     return {"ok": True, "profile": profile_id, "path": str(path)}
 
@@ -376,6 +405,17 @@ def load_pipeline(profile_id: str):
         elif pipeline_type == "qwen":
             from diffusers import QwenImagePipeline
             pipe = QwenImagePipeline.from_pretrained(str(path), torch_dtype=DTYPE)
+        elif pipeline_type == "qwen-gguf":
+            from diffusers import DiffusionPipeline, GGUFQuantizationConfig, QwenImageTransformer2DModel
+            gguf_path = path / profile["gguf_file"]
+            transformer = QwenImageTransformer2DModel.from_single_file(
+                str(gguf_path),
+                quantization_config=GGUFQuantizationConfig(compute_dtype=DTYPE),
+                torch_dtype=DTYPE,
+                config=profile["base_repo"],
+                subfolder="transformer",
+            )
+            pipe = DiffusionPipeline.from_pretrained(profile["base_repo"], transformer=transformer, torch_dtype=DTYPE)
         elif pipeline_type == "sdxl":
             from diffusers import StableDiffusionXLPipeline
             pipe = StableDiffusionXLPipeline.from_pretrained(str(path), torch_dtype=DTYPE, use_safetensors=True)
@@ -447,10 +487,15 @@ def generate_job(job_id: str) -> None:
             "num_inference_steps": job["steps"],
             "generator": generator,
         }
-        if job.get("negative_prompt") and profile["pipeline"] not in {"flux", "qwen"}:
-            kwargs["negative_prompt"] = job["negative_prompt"]
-        if job.get("guidance_scale") is not None:
-            kwargs["guidance_scale"] = job["guidance_scale"]
+        if profile["pipeline"] == "qwen-gguf":
+            kwargs["negative_prompt"] = job.get("negative_prompt") or " "
+            if job.get("guidance_scale") is not None:
+                kwargs["true_cfg_scale"] = job["guidance_scale"]
+        else:
+            if job.get("negative_prompt") and profile["pipeline"] not in {"flux", "qwen"}:
+                kwargs["negative_prompt"] = job["negative_prompt"]
+            if job.get("guidance_scale") is not None:
+                kwargs["guidance_scale"] = job["guidance_scale"]
         metrics = gpu_metrics()
         if metrics["vram_mb"]:
             peak_vram = max(peak_vram, metrics["vram_mb"])
