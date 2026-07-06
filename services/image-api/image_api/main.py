@@ -8,6 +8,7 @@ import time
 import uuid
 import urllib.error
 import urllib.request
+from contextlib import asynccontextmanager
 from ctypes import CDLL
 from datetime import datetime
 from pathlib import Path
@@ -31,7 +32,30 @@ TTS_RESOURCE_URL = os.environ.get("IMAGE_TTS_RESOURCE_URL", "http://127.0.0.1:80
 DEVICE = os.environ.get("IMAGE_DEVICE", "cuda")
 DTYPE = torch.bfloat16
 
-app = FastAPI(title="GPU45 Image API")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    now = now_iso()
+    try:
+        jobs = load_jobs()
+        changed = False
+        for job in jobs:
+            if job.get("status") in {"queued", "running"}:
+                job.update(
+                    status="failed",
+                    progress_label="Interrupted",
+                    error="Image service restarted before this job finished.",
+                    completed_at=now,
+                    updated_at=now,
+                )
+                changed = True
+        if changed:
+            save_jobs(jobs)
+    except Exception as exc:
+        print(f"Failed to recover interrupted image jobs: {exc}", flush=True)
+    yield
+
+
+app = FastAPI(title="GPU45 Image API", lifespan=lifespan)
 _jobs_lock = Lock()
 _model_lock = Lock()
 _pipeline_cache: dict[str, object] = {}
@@ -120,15 +144,17 @@ PROFILES = {
     "qwen-image-gguf-q4": {
         "id": "qwen-image-gguf-q4",
         "name": "Qwen Image GGUF Q4_K_M",
-        "description": "Quantized Qwen Image transformer. Higher quality than Q3, but too tight for 1024 on this 32 GB ROCm setup.",
+        "description": "Experimental quantized Qwen Image path. Q4 is too tight for 1024 on this 32 GB ROCm setup; use Q3 for 1024px.",
         "repo": "city96/Qwen-Image-gguf",
         "pipeline": "qwen-gguf",
         "base_repo": "callgg/qi-decoder",
         "gguf_file": "qwen-image-Q4_K_M.gguf",
-        "default_steps": 20,
-        "default_width": 1024,
-        "default_height": 1024,
+        "default_steps": 8,
+        "default_width": 512,
+        "default_height": 512,
         "guidance_scale": 4.0,
+        "max_width": 768,
+        "max_height": 768,
     },
     "qwen-image-gguf-q3": {
         "id": "qwen-image-gguf-q3",
@@ -576,6 +602,13 @@ def create_job(body: CreateJobBody, background_tasks: BackgroundTasks):
     if body.profile not in PROFILES:
         raise HTTPException(status_code=400, detail=f"Unknown profile: {body.profile}")
     profile = PROFILES[body.profile]
+    max_width = profile.get("max_width")
+    max_height = profile.get("max_height")
+    if (max_width and body.width > int(max_width)) or (max_height and body.height > int(max_height)):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{profile['name']} is limited to {max_width}x{max_height} on this appliance. Use Qwen Image GGUF Q3_K_M for 1024px.",
+        )
     job_id = uuid.uuid4().hex[:12]
     guidance = body.guidance_scale
     if guidance is None:
