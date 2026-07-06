@@ -15,10 +15,12 @@ MODELS_JSON = "models.json"
 VOICE_JOBS_JSON = "voice_jobs.json"
 SYNTHESIS_JOBS_JSON = "synthesis_jobs.json"
 AUDIOBOOK_JOBS_JSON = "audiobook_jobs.json"
+PRESENTATION_JOBS_JSON = "presentation_jobs.json"
 VOICES_DIR = "voices"
 MODELS_DIR = "models"
 AUDIO_DIR = "audio"
 AUDIOBOOKS_DIR = "audiobooks"
+PRESENTATIONS_DIR = "presentations"
 PARAGRAPH_WAV = "paragraph.wav"
 SAMPLE_WAV = "sample.wav"
 CHECKPOINT_DIR = "checkpoint"
@@ -56,6 +58,12 @@ def _audiobooks_dir() -> str:
     return d
 
 
+def _presentations_dir() -> str:
+    d = os.path.join(API_DATA_DIR, PRESENTATIONS_DIR)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def voices_json_path() -> str:
     return os.path.join(_data_dir(), VOICES_JSON)
 
@@ -76,6 +84,10 @@ def audiobook_jobs_json_path() -> str:
     return os.path.join(_data_dir(), AUDIOBOOK_JOBS_JSON)
 
 
+def presentation_jobs_json_path() -> str:
+    return os.path.join(_data_dir(), PRESENTATION_JOBS_JSON)
+
+
 def audiobook_dir(job_id: str) -> str:
     d = os.path.join(_audiobooks_dir(), job_id)
     os.makedirs(d, exist_ok=True)
@@ -84,6 +96,12 @@ def audiobook_dir(job_id: str) -> str:
 
 def voice_dir(voice_id: str) -> str:
     d = os.path.join(_voices_dir(), voice_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def presentation_dir(job_id: str) -> str:
+    d = os.path.join(_presentations_dir(), job_id)
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -346,6 +364,70 @@ def delete_audiobook_job(job_id: str) -> Optional[Dict[str, Any]]:
         if os.path.isdir(d):
             shutil.rmtree(d, ignore_errors=True)
         save_audiobook_jobs(kept)
+    return deleted
+
+
+def load_presentation_jobs() -> List[Dict[str, Any]]:
+    return _load_json_list(presentation_jobs_json_path())
+
+
+def save_presentation_jobs(jobs: List[Dict[str, Any]]) -> None:
+    path = presentation_jobs_json_path()
+    _write_json_atomic(path, jobs)
+
+
+def get_presentation_job_by_id(job_id: str) -> Optional[Dict[str, Any]]:
+    for job in load_presentation_jobs():
+        if job.get("id") == job_id:
+            return job
+    return None
+
+
+def update_presentation_job(job_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    jobs = load_presentation_jobs()
+    for job in jobs:
+        if job.get("id") == job_id:
+            job.update(kwargs)
+            save_presentation_jobs(jobs)
+            return job
+    return None
+
+
+def update_presentation_slide(job_id: str, index: int, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    jobs = load_presentation_jobs()
+    for job in jobs:
+        if job.get("id") != job_id:
+            continue
+        for slide in job.get("slides", []):
+            if int(slide.get("index", -1)) == int(index):
+                slide.update(kwargs)
+                processed = sum(1 for s in job.get("slides", []) if s.get("status") in ("completed", "empty", "flagged"))
+                failed = sum(1 for s in job.get("slides", []) if s.get("status") == "failed")
+                total = max(1, int(job.get("total_slides") or len(job.get("slides", [])) or 1))
+                job["completed_slides"] = processed
+                job["failed_slides"] = failed
+                job["progress_percent"] = round((processed / total) * 100, 1)
+                job["updated_at"] = kwargs.get("updated_at", job.get("updated_at"))
+                save_presentation_jobs(jobs)
+                return slide
+    return None
+
+
+def delete_presentation_job(job_id: str) -> Optional[Dict[str, Any]]:
+    jobs = load_presentation_jobs()
+    kept = []
+    deleted = None
+    for job in jobs:
+        if job.get("id") == job_id:
+            deleted = job
+            continue
+        kept.append(job)
+    if deleted is not None:
+        import shutil
+        d = os.path.join(_presentations_dir(), job_id)
+        if os.path.isdir(d):
+            shutil.rmtree(d, ignore_errors=True)
+        save_presentation_jobs(kept)
     return deleted
 
 

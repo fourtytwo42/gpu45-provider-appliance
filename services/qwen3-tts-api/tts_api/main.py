@@ -21,6 +21,7 @@ from tts_api import voices as voices_module
 from tts_api import models as models_module
 from tts_api import synthesize as synthesize_module
 from tts_api import document_tts
+from tts_api import presentation_tts
 
 
 # Request/response schemas
@@ -143,6 +144,24 @@ async def lifespan(app: FastAPI):
             audiobook_changed = True
     if audiobook_changed:
         store.save_audiobook_jobs(audiobook_jobs)
+    presentation_jobs = store.load_presentation_jobs()
+    presentation_changed = False
+    for job in presentation_jobs:
+        if job.get("status") in ("queued", "running"):
+            for slide in job.get("slides", []):
+                if slide.get("status") == "running":
+                    slide.update(status="pending", updated_at=now)
+                    slide.pop("started_at", None)
+            job.update(
+                status="stopped",
+                progress_label="Interrupted by service restart",
+                current_slide=None,
+                stop_requested=False,
+                updated_at=now,
+            )
+            presentation_changed = True
+    if presentation_changed:
+        store.save_presentation_jobs(presentation_jobs)
     yield
     # Optional: clear model cache on shutdown
     pass
@@ -760,10 +779,12 @@ def pause_for_resource(body: ResourcePauseBody):
     if changed:
         store.save_synthesis_jobs(jobs)
     paused_audiobooks = document_tts.pause_active_audiobooks(reason)
+    paused_presentations = presentation_tts.pause_active_presentations(reason)
     return {
-        "paused": bool(paused_synthesis or paused_audiobooks),
+        "paused": bool(paused_synthesis or paused_audiobooks or paused_presentations),
         "synthesis_job_ids": [job.get("id") for job in paused_synthesis],
         "audiobook_job_ids": [job.get("id") for job in paused_audiobooks],
+        "presentation_job_ids": [job.get("id") for job in paused_presentations],
     }
 
 
@@ -797,10 +818,18 @@ def resume_resource_paused(background_tasks: BackgroundTasks):
             resumed_audiobooks.append(prepared)
             background_tasks.add_task(document_tts.run_audiobook_job, str(job["id"]))
 
+    resumed_presentations = []
+    for job in store.load_presentation_jobs():
+        if job.get("status") == "paused" and job.get("paused_by_resource"):
+            prepared = presentation_tts.prepare_resume(str(job["id"]))
+            resumed_presentations.append(prepared)
+            background_tasks.add_task(presentation_tts.run_presentation_job, str(job["id"]))
+
     return {
-        "resumed": bool(resumed_synthesis or resumed_audiobooks),
+        "resumed": bool(resumed_synthesis or resumed_audiobooks or resumed_presentations),
         "synthesis_job_ids": [job.get("id") for job in resumed_synthesis],
         "audiobook_job_ids": [job.get("id") for job in resumed_audiobooks],
+        "presentation_job_ids": [job.get("id") for job in resumed_presentations],
     }
 
 
@@ -915,6 +944,110 @@ def delete_audiobook(job_id: str):
     if job.get("status") in ("queued", "running"):
         raise HTTPException(status_code=409, detail="Stop the audiobook job before deleting it")
     store.delete_audiobook_job(job_id)
+
+
+# PowerPoint narration
+@app.post("/presentations", status_code=202)
+async def create_presentation(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    model_id: str = Form(...),
+    title: str | None = Form(None),
+):
+    suffix = Path(file.filename or "upload.pptx").suffix or ".pptx"
+    with tempfile.NamedTemporaryFile(prefix="tts-presentation-upload-", suffix=suffix, delete=False) as target:
+        shutil.copyfileobj(file.file, target)
+        source_path = target.name
+    try:
+        job = presentation_tts.create_presentation_job(
+            source_path=source_path,
+            source_filename=file.filename or "upload.pptx",
+            model_id=model_id,
+            title=title,
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        try:
+            os.remove(source_path)
+        except OSError:
+            pass
+    background_tasks.add_task(presentation_tts.run_presentation_job, job["id"])
+    return job
+
+
+@app.get("/presentations")
+def list_presentations():
+    return store.load_presentation_jobs()
+
+
+@app.get("/presentations/{job_id}")
+def get_presentation(job_id: str):
+    job = store.get_presentation_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Presentation job not found")
+    return job
+
+
+@app.post("/presentations/{job_id}/stop")
+def stop_presentation(job_id: str):
+    try:
+        return presentation_tts.request_stop(job_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/presentations/{job_id}/resume", status_code=202)
+def resume_presentation(job_id: str, background_tasks: BackgroundTasks):
+    job = store.get_presentation_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Presentation job not found")
+    if job.get("status") in ("queued", "running"):
+        raise HTTPException(status_code=409, detail="Presentation job is already running")
+    presentation_tts.reset_interrupted_slides(job_id)
+    store.update_presentation_job(job_id, status="queued", stop_requested=False, progress_label="Queued for resume", updated_at=_utcnow())
+    background_tasks.add_task(presentation_tts.run_presentation_job, job_id)
+    return store.get_presentation_job_by_id(job_id)
+
+
+@app.get("/presentations/{job_id}/slides/{index}/audio")
+def get_presentation_slide_audio(job_id: str, index: int):
+    job = store.get_presentation_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Presentation job not found")
+    slide = next((s for s in job.get("slides", []) if int(s.get("index", -1)) == int(index)), None)
+    if not slide:
+        raise HTTPException(status_code=404, detail="Presentation slide not found")
+    path = slide.get("output_path")
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Presentation slide audio not found")
+    return FileResponse(path, media_type="audio/mpeg", filename=f"{job_id}_slide_{index + 1:05d}.mp3")
+
+
+@app.get("/presentations/{job_id}/output")
+def get_presentation_output(job_id: str):
+    job = store.get_presentation_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Presentation job not found")
+    path = job.get("output_path")
+    if not path or not os.path.isfile(path):
+        try:
+            path = presentation_tts.build_pptx_output(job_id)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"No narrated presentation is available yet: {e}")
+    return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation", filename=f"narrated_{job_id}.pptx")
+
+
+@app.delete("/presentations/{job_id}", status_code=204)
+def delete_presentation(job_id: str):
+    job = store.get_presentation_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Presentation job not found")
+    if job.get("status") in ("queued", "running"):
+        raise HTTPException(status_code=409, detail="Stop the presentation job before deleting it")
+    store.delete_presentation_job(job_id)
 
 
 # Synthesize
