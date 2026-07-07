@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import io
 import os
@@ -26,37 +26,122 @@ SUPPORTED_EXTENSIONS = {".epub", ".pdf", ".docx", ".txt", ".md", ".html", ".htm"
 TARGET_CHUNK_CHARS = 450
 
 
+CONTENT_START_RE = re.compile(
+    r"(?im)^\s*(?:prologue|chapter\s+(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b|"
+    r"epilogue|part\s+(?:\d+|[ivxlcdm]+)\b|volume\s+\d+\s+(?:prologue|chapter))"
+)
+SKIP_EPUB_DOC_RE = re.compile(
+    r"(?i)(?:^|[/_-])(?:nav|toc|table[-_ ]?of[-_ ]?contents|contents|index|cover|titlepage|title[-_ ]?page|"
+    r"copyright|credits|insert|newsletter|about[-_ ]?the[-_ ]?author|landmarks)(?:\.|[/_-]|$)"
+)
+TOC_HEADING_RE = re.compile(r"(?im)^\s*(?:table of contents|contents|index)\s*$")
+VOLUME_RE = re.compile(r"(?i)\bvolume\s*[-_ ]*([0-9]+|[ivxlcdm]+)\b")
+
+
 def utcnow() -> str:
     return datetime.utcnow().isoformat() + "Z"
+
+
+def _epub_item_text(item: Any) -> str:
+    soup = BeautifulSoup(item.get_content(), "html.parser")
+    for tag in soup(["script", "style", "nav"]):
+        tag.decompose()
+    return normalize_text(soup.get_text("\n"))
+
+
+def _looks_like_front_matter(name: str, text: str) -> bool:
+    if SKIP_EPUB_DOC_RE.search(name or ""):
+        return True
+    if TOC_HEADING_RE.search(text[:2000]) and not CONTENT_START_RE.search(text[:4000]):
+        return True
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) >= 8:
+        sample = lines[:30]
+        short_lines = sum(1 for line in sample if len(line) <= 80)
+        chapterish = sum(1 for line in sample if re.search(r"(?i)^(?:prologue|chapter|epilogue|side story|extra chapter|interlude)\b", line))
+        if chapterish >= 4 and short_lines >= min(len(sample), 12):
+            return True
+    return False
+
+
+def _strip_leading_front_matter(text: str) -> str:
+    text = normalize_text(text)
+    if not text:
+        return ""
+    match = CONTENT_START_RE.search(text)
+    if not match:
+        return text
+    prefix = text[:match.start()]
+    if TOC_HEADING_RE.search(prefix) or len(prefix) > 1200:
+        return text[match.start():].strip()
+    return text
+
+
+def extract_epub_text(path: str) -> str:
+    book = epub.read_epub(path)
+    parts: list[str] = []
+    started = False
+    seen_ids: set[str] = set()
+    ordered_items: list[Any] = []
+    for entry in book.spine:
+        item_id = entry[0] if isinstance(entry, tuple) else entry
+        item = book.get_item_with_id(item_id)
+        if item is not None:
+            ordered_items.append(item)
+            seen_ids.add(item.get_id())
+    for item in book.get_items_of_type(ITEM_DOCUMENT):
+        if item.get_id() not in seen_ids:
+            ordered_items.append(item)
+    for item in ordered_items:
+        if item.get_type() != ITEM_DOCUMENT:
+            continue
+        name = item.get_name() or ""
+        text = _epub_item_text(item)
+        if not text:
+            continue
+        if not started:
+            stripped = _strip_leading_front_matter(text)
+            if _looks_like_front_matter(name, text) and stripped == text:
+                continue
+            text = stripped
+            if not text:
+                continue
+            started = True
+        parts.append(text)
+    return "\n\n".join(parts).strip()
+
+
+def audiobook_intro_text(title: str, source_filename: str) -> str:
+    base = (title or Path(source_filename).stem or "Audiobook").strip()
+    base = re.sub(r"[_]+", " ", base)
+    base = re.sub(r"\s+-\s+", ", ", base)
+    base = re.sub(r"\s+", " ", base).strip()
+    volume_match = VOLUME_RE.search(base)
+    if volume_match:
+        raw_volume = volume_match.group(1)
+        volume = raw_volume.upper() if raw_volume.lower() in {"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"} else raw_volume
+        title_text = VOLUME_RE.sub("", base).strip(" ,-_")
+        return f"{title_text}. Volume {volume}." if title_text else f"Volume {volume}."
+    return f"{base}."
 
 
 def extract_text(path: str, filename: str | None = None) -> str:
     ext = Path(filename or path).suffix.lower()
     if ext == ".pdf":
         reader = PdfReader(path)
-        return "\n\n".join((page.extract_text() or "").strip() for page in reader.pages).strip()
+        return _strip_leading_front_matter("\n\n".join((page.extract_text() or "").strip() for page in reader.pages).strip())
     if ext == ".docx":
         doc = Document(path)
-        return "\n\n".join(p.text.strip() for p in doc.paragraphs if p.text.strip()).strip()
+        return _strip_leading_front_matter("\n\n".join(p.text.strip() for p in doc.paragraphs if p.text.strip()).strip())
     if ext == ".epub":
-        book = epub.read_epub(path)
-        parts: list[str] = []
-        for item in book.get_items_of_type(ITEM_DOCUMENT):
-            soup = BeautifulSoup(item.get_content(), "html.parser")
-            for tag in soup(["script", "style", "nav"]):
-                tag.decompose()
-            text = soup.get_text("\n")
-            text = normalize_text(text)
-            if text:
-                parts.append(text)
-        return "\n\n".join(parts).strip()
+        return extract_epub_text(path)
     if ext in (".html", ".htm"):
         raw = Path(path).read_text(encoding="utf-8", errors="ignore")
         soup = BeautifulSoup(raw, "html.parser")
         for tag in soup(["script", "style", "nav"]):
             tag.decompose()
-        return normalize_text(soup.get_text("\n"))
-    return normalize_text(Path(path).read_text(encoding="utf-8", errors="ignore"))
+        return _strip_leading_front_matter(normalize_text(soup.get_text("\n")))
+    return _strip_leading_front_matter(normalize_text(Path(path).read_text(encoding="utf-8", errors="ignore")))
 
 
 def normalize_text(text: str) -> str:
@@ -159,15 +244,20 @@ def create_audiobook_job(source_path: str, source_filename: str, model_id: str, 
     text = extract_text(source_path, source_filename)
     if not text:
         raise ValueError("No readable text found in uploaded document")
+    text = _strip_leading_front_matter(text)
     chunks_text = split_text(text)
     if not chunks_text:
         raise ValueError("No synthesizable chunks were created")
+    intro_text = audiobook_intro_text((title or Path(source_filename).stem or "Audiobook").strip(), source_filename)
+    chunks_text = [intro_text, *chunks_text]
     job_id = store.generate_id()
     os.makedirs(os.path.join(store.audiobook_dir(job_id), "chunks"), exist_ok=True)
     chunks = [
         {
             "index": i,
             "status": "pending",
+            "role": "intro" if i == 0 else "content",
+            "pause_after_ms": 1000 if i == 0 else 500,
             "text": chunk,
             "text_chars": len(chunk),
             "output_path": _chunk_audio_path(job_id, i),
@@ -185,6 +275,8 @@ def create_audiobook_job(source_path: str, source_filename: str, model_id: str, 
         "model_id": model_id,
         "model_name": model.get("name"),
         "split_strategy": "sentence",
+        "front_matter_policy": "skip_index_start_at_first_section",
+        "intro_text": intro_text,
         "target_chunk_chars": TARGET_CHUNK_CHARS,
         "total_chunks": len(chunks),
         "completed_chunks": 0,
@@ -292,7 +384,6 @@ def stitch_completed_chunks(job_id: str) -> str | None:
     if not job:
         return None
     audio = AudioSegment.empty()
-    silence = AudioSegment.silent(duration=500)
     added = 0
     for chunk in job.get("chunks", []):
         if chunk.get("status") != "completed":
@@ -301,7 +392,9 @@ def stitch_completed_chunks(job_id: str) -> str | None:
         if not path or not os.path.exists(path):
             continue
         if added > 0:
-            audio += silence
+            previous = job.get("chunks", [])[added - 1] if added - 1 < len(job.get("chunks", [])) else {}
+            pause_ms = int(previous.get("pause_after_ms") or 500)
+            audio += AudioSegment.silent(duration=max(0, pause_ms))
         audio += AudioSegment.from_file(path, format="mp3")
         added += 1
     if added == 0:
