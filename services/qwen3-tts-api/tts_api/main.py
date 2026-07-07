@@ -687,6 +687,8 @@ def _run_synthesis_job(job_id: str, body: SynthesisJobBody) -> None:
             finished_at=_utcnow(),
             updated_at=_utcnow(),
         )
+    finally:
+        synthesize_module.unload_cached_models()
 
 
 @app.post("/synthesis-jobs", status_code=202)

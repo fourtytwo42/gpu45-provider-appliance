@@ -318,7 +318,10 @@ def run_audiobook_job(job_id: str) -> None:
     if not job:
         return
     with tts_vram_guard("audiobook", device=DEVICE):
-        _run_audiobook_job_inner(job_id, started, job)
+        try:
+            _run_audiobook_job_inner(job_id, started, job)
+        finally:
+            synthesize_module.unload_cached_models()
 
 
 def _run_audiobook_job_inner(job_id: str, started: float, job: dict[str, Any]) -> None:

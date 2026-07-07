@@ -4,6 +4,7 @@ Returns WAV bytes or (samples, sample_rate) for streaming to response.
 """
 from typing import Optional, Tuple
 
+import gc
 import torch
 import soundfile as sf
 import io
@@ -18,6 +19,19 @@ from tts_api.resource_guard import tts_vram_guard
 # Simple in-memory cache: one VoiceDesign model, one CustomVoice model by path.
 _voice_design_model: Optional[Qwen3TTSModel] = None
 _custom_voice_models: dict = {}  # model_path -> Qwen3TTSModel
+
+
+def unload_cached_models() -> None:
+    global _voice_design_model, _custom_voice_models
+    _voice_design_model = None
+    _custom_voice_models.clear()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        try:
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
 
 
 def _get_voice_design_model() -> Qwen3TTSModel:

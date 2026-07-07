@@ -362,7 +362,10 @@ def run_presentation_job(job_id: str) -> None:
     if not job:
         return
     with tts_vram_guard("presentation", device=DEVICE):
-        _run_presentation_job_inner(job_id, started)
+        try:
+            _run_presentation_job_inner(job_id, started)
+        finally:
+            synthesize_module.unload_cached_models()
 
 
 def _run_presentation_job_inner(job_id: str, started: float) -> None:
