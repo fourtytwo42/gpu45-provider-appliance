@@ -909,6 +909,23 @@ def resume_audiobook(job_id: str, background_tasks: BackgroundTasks):
     return store.get_audiobook_job_by_id(job_id)
 
 
+@app.post("/audiobooks/{job_id}/chunks/{index}/regenerate", status_code=202)
+def regenerate_audiobook_chunk(job_id: str, index: int, background_tasks: BackgroundTasks):
+    before = store.get_audiobook_job_by_id(job_id)
+    if not before:
+        raise HTTPException(status_code=404, detail="Audiobook job not found")
+    was_active = before.get("status") in ("queued", "running")
+    try:
+        job = document_tts.regenerate_audiobook_chunk(job_id, index)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not was_active:
+        background_tasks.add_task(document_tts.run_audiobook_job, job_id)
+    return job
+
+
 @app.get("/audiobooks/{job_id}/chunks/{index}/audio")
 def get_audiobook_chunk_audio(job_id: str, index: int):
     job = store.get_audiobook_job_by_id(job_id)

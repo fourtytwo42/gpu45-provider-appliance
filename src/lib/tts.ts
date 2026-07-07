@@ -57,7 +57,13 @@ export type TtsModel = {
 
 export type TtsAudiobookChunk = {
   index: number;
-  status: "pending" | "running" | "completed" | "failed" | "flagged";
+  status: "pending" | "running" | "completed" | "failed" | "flagged" | "skipped";
+  role?: "intro" | "content" | "skipped_front_matter" | string;
+  pause_after_ms?: number;
+  regenerate_requested?: boolean;
+  regenerate_requested_at?: string;
+  regenerate_count?: number;
+  skipped_reason?: string;
   text: string;
   text_chars: number;
   output_path?: string;
@@ -261,6 +267,10 @@ export async function stopTtsAudiobook(id: string): Promise<TtsAudiobookJob> {
 
 export async function resumeTtsAudiobook(id: string): Promise<TtsAudiobookJob> {
   return await fetchJson<TtsAudiobookJob>(`/audiobooks/${encodeURIComponent(id)}/resume`, { method: "POST" });
+}
+
+export async function regenerateTtsAudiobookChunk(id: string, chunk: number): Promise<TtsAudiobookJob> {
+  return await fetchJson<TtsAudiobookJob>(`/audiobooks/${encodeURIComponent(id)}/chunks/${chunk}/regenerate`, { method: "POST" });
 }
 
 export async function deleteTtsAudiobook(id: string): Promise<void> {

@@ -68,6 +68,46 @@ class DocumentTtsTests(unittest.TestCase):
         self.assertNotIn("Chapter 11: Parted", stripped[:300])
         self.assertNotIn("Just Light Novels", stripped[:100])
 
+    def test_regenerate_completed_chunk_removes_audio_and_queues_next(self):
+        path = Path(self.tmp.name) / "book.epub"
+        make_epub(path)
+        job = document_tts.create_audiobook_job(str(path), "Fixture Book Volume 2.epub", "model-1", None)
+        chunk_path = Path(job["chunks"][1]["output_path"])
+        chunk_path.parent.mkdir(parents=True, exist_ok=True)
+        chunk_path.write_bytes(b"old audio")
+        stitched_path = Path(job["stitched_output_path"])
+        stitched_path.write_bytes(b"stitched")
+        store.update_audiobook_chunk(job["id"], 1, status="completed", output_bytes=9, quality={"ok": True}, updated_at=document_tts.utcnow())
+        updated = document_tts.regenerate_audiobook_chunk(job["id"], 1)
+        chunk = next(c for c in updated["chunks"] if c["index"] == 1)
+        self.assertEqual(updated["status"], "queued")
+        self.assertEqual(updated["regenerate_queue"], [1])
+        self.assertEqual(chunk["status"], "pending")
+        self.assertFalse(chunk_path.exists())
+        self.assertFalse(stitched_path.exists())
+        self.assertEqual(updated["completed_chunks"], 0)
+
+    def test_regenerate_rejects_skipped_front_matter(self):
+        path = Path(self.tmp.name) / "book.epub"
+        make_epub(path)
+        job = document_tts.create_audiobook_job(str(path), "Fixture Book Volume 2.epub", "model-1", None)
+        store.update_audiobook_chunk(job["id"], 1, status="skipped", role="skipped_front_matter", updated_at=document_tts.utcnow())
+        with self.assertRaises(ValueError):
+            document_tts.regenerate_audiobook_chunk(job["id"], 1)
+
+    def test_regenerate_running_chunk_keeps_current_and_queues_next(self):
+        path = Path(self.tmp.name) / "book.epub"
+        make_epub(path)
+        job = document_tts.create_audiobook_job(str(path), "Fixture Book Volume 2.epub", "model-1", None)
+        store.update_audiobook_job(job["id"], status="running")
+        store.update_audiobook_chunk(job["id"], 1, status="running", updated_at=document_tts.utcnow())
+        updated = document_tts.regenerate_audiobook_chunk(job["id"], 1)
+        chunk = next(c for c in updated["chunks"] if c["index"] == 1)
+        self.assertEqual(updated["status"], "running")
+        self.assertEqual(updated["regenerate_queue"], [1])
+        self.assertEqual(chunk["status"], "running")
+        self.assertTrue(chunk["regenerate_requested"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,7 @@ import {
   renameTtsModel,
   renameTtsVoice,
   resumeTtsAudiobook,
+  regenerateTtsAudiobookChunk,
   resumeTtsPresentation,
   stopTtsAudiobook,
   stopTtsPresentation,
@@ -114,6 +115,13 @@ export async function POST(request: Request): Promise<Response> {
 
     if (action === "resumeAudiobook") {
       const job = await resumeTtsAudiobook(String(body.id ?? ""));
+      return Response.json({ ok: true, job }, { status: 202 });
+    }
+
+    if (action === "regenerateAudiobookChunk") {
+      const chunk = Number(body.chunk);
+      if (!Number.isInteger(chunk) || chunk < 0) return Response.json({ error: "Invalid audiobook chunk index." }, { status: 400 });
+      const job = await regenerateTtsAudiobookChunk(String(body.id ?? ""), chunk);
       return Response.json({ ok: true, job }, { status: 202 });
     }
 

@@ -395,6 +395,101 @@ def reset_interrupted_chunks(job_id: str) -> dict[str, Any]:
     raise KeyError("Audiobook job not found")
 
 
+def _audiobook_chunk_by_index(job: dict[str, Any], index: int) -> dict[str, Any] | None:
+    return next((c for c in job.get("chunks", []) if int(c.get("index", -1)) == int(index)), None)
+
+
+def _remove_file(path: str | None) -> None:
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _clear_stitched_audio(job: dict[str, Any]) -> None:
+    _remove_file(job.get("stitched_output_path"))
+    job["stitched_completed_chunks"] = 0
+    job.pop("stitched_at", None)
+
+
+def _queue_regeneration(job: dict[str, Any], index: int) -> None:
+    queue = [int(value) for value in job.get("regenerate_queue", []) if int(value) != int(index)]
+    job["regenerate_queue"] = [int(index), *queue]
+
+
+def _prepare_chunk_for_regeneration(job_id: str, job: dict[str, Any], chunk: dict[str, Any]) -> None:
+    index = int(chunk.get("index", -1))
+    _remove_file(chunk.get("output_path"))
+    chunk.update(
+        status="pending",
+        output_path=_chunk_audio_path(job_id, index),
+        output_bytes=None,
+        quality=None,
+        error=None,
+        regenerate_requested=False,
+        updated_at=utcnow(),
+    )
+    chunk.pop("started_at", None)
+    chunk.pop("finished_at", None)
+
+
+def regenerate_audiobook_chunk(job_id: str, index: int) -> dict[str, Any]:
+    jobs = store.load_audiobook_jobs()
+    for job in jobs:
+        if job.get("id") != job_id:
+            continue
+        chunk = _audiobook_chunk_by_index(job, index)
+        if not chunk:
+            raise KeyError("Audiobook chunk not found")
+        if chunk.get("status") == "skipped" or chunk.get("role") == "skipped_front_matter":
+            raise ValueError("Skipped front-matter chunks cannot be regenerated")
+        if not (chunk.get("text") or "").strip():
+            raise ValueError("Audiobook chunk has no text to regenerate")
+        _queue_regeneration(job, index)
+        chunk["regenerate_requested"] = True
+        chunk["regenerate_requested_at"] = utcnow()
+        chunk["regenerate_count"] = int(chunk.get("regenerate_count") or 0) + 1
+        if chunk.get("status") != "running":
+            _prepare_chunk_for_regeneration(job_id, job, chunk)
+        _clear_stitched_audio(job)
+        completed = sum(1 for c in job.get("chunks", []) if c.get("status") == "completed")
+        failed = sum(1 for c in job.get("chunks", []) if c.get("status") == "failed")
+        total = max(1, int(job.get("total_chunks") or len(job.get("chunks", [])) or 1))
+        job.update(
+            completed_chunks=completed,
+            failed_chunks=failed,
+            progress_percent=round((completed / total) * 100, 1),
+            progress_label=f"Chunk {int(index) + 1} queued for regeneration",
+            stop_requested=False,
+            updated_at=utcnow(),
+        )
+        if job.get("status") not in ("queued", "running"):
+            job["status"] = "queued"
+        store.save_audiobook_jobs(jobs)
+        return job
+    raise KeyError("Audiobook job not found")
+
+
+def _next_regeneration_chunk(job_id: str, job: dict[str, Any]) -> dict[str, Any] | None:
+    queue = [int(value) for value in job.get("regenerate_queue", [])]
+    remaining: list[int] = []
+    selected: dict[str, Any] | None = None
+    for index in queue:
+        chunk = _audiobook_chunk_by_index(job, index)
+        if not chunk or chunk.get("status") == "running" or chunk.get("status") == "skipped" or chunk.get("role") == "skipped_front_matter":
+            remaining.append(index)
+            continue
+        if selected is None:
+            _prepare_chunk_for_regeneration(job_id, job, chunk)
+            selected = chunk
+        else:
+            remaining.append(index)
+    if selected is not None:
+        job["regenerate_queue"] = remaining
+    return selected
+
+
 def stitch_completed_chunks(job_id: str) -> str | None:
     job = store.get_audiobook_job_by_id(job_id)
     if not job:
@@ -445,7 +540,9 @@ def _run_audiobook_job_inner(job_id: str, started: float, job: dict[str, Any]) -
                 store.update_audiobook_job(job_id, status="stopped", progress_label="Stopped", stitched_output_path=out or job.get("stitched_output_path"), updated_at=utcnow())
                 return
             chunks = job.get("chunks", [])
-            next_chunk = next((c for c in chunks if c.get("status") in ("pending", "failed")), None)
+            next_chunk = _next_regeneration_chunk(job_id, job) or next((c for c in chunks if c.get("status") in ("pending", "failed")), None)
+            if next_chunk is not None and job.get("regenerate_queue") is not None:
+                store.update_audiobook_job(job_id, regenerate_queue=job.get("regenerate_queue"), updated_at=utcnow())
             if not next_chunk:
                 out = stitch_completed_chunks(job_id)
                 elapsed = monotonic() - started
