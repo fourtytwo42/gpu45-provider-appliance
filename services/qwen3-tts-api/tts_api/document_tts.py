@@ -35,6 +35,11 @@ SKIP_EPUB_DOC_RE = re.compile(
     r"copyright|credits|insert|newsletter|about[-_ ]?the[-_ ]?author|landmarks)(?:\.|[/_-]|$)"
 )
 TOC_HEADING_RE = re.compile(r"(?im)^\s*(?:table of contents|contents|index)\s*$")
+DENSE_TOC_ENTRY_RE = re.compile(
+    r"(?i)\b(?:prologue|chapter\s+(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b|"
+    r"extra chapter|side story|epilogue|character design concept gallery|newsletter)"
+)
+DOWNLOAD_SPAM_RE = re.compile(r"(?i)(?:download\s+all|fav\s+light\s+novels|just\s+light\s+novels)")
 VOLUME_RE = re.compile(r"(?i)\bvolume\s*[-_ ]*([0-9]+|[ivxlcdm]+)\b")
 
 
@@ -68,11 +73,22 @@ def _strip_leading_front_matter(text: str) -> str:
     text = normalize_text(text)
     if not text:
         return ""
-    match = CONTENT_START_RE.search(text)
+    head = text[:3000]
+    dense_matches = list(DENSE_TOC_ENTRY_RE.finditer(head))
+    if dense_matches and DOWNLOAD_SPAM_RE.search(text[:dense_matches[0].start()]):
+        return text[dense_matches[0].start():].strip()
+    if len(dense_matches) >= 4:
+        # Some EPUBs place a plain text TOC at the front of the first content
+        # document, then repeat Prologue/Chapter 1 where narration really starts.
+        repeated_start = next((m for m in dense_matches[1:] if m.group(0).strip().lower().startswith("prologue")), None)
+        if repeated_start is not None:
+            return text[repeated_start.start():].strip()
+    matches = list(CONTENT_START_RE.finditer(head))
+    match = matches[0] if matches else CONTENT_START_RE.search(text)
     if not match:
         return text
     prefix = text[:match.start()]
-    if TOC_HEADING_RE.search(prefix) or len(prefix) > 1200:
+    if TOC_HEADING_RE.search(prefix) or DOWNLOAD_SPAM_RE.search(prefix) or len(prefix) > 1200:
         return text[match.start():].strip()
     return text
 

@@ -61,6 +61,13 @@ class DocumentTtsTests(unittest.TestCase):
         self.assertTrue(job["chunks"][1]["text"].startswith("Prologue"), job["chunks"][1]["text"])
         self.assertEqual(job["front_matter_policy"], "skip_index_start_at_first_section")
 
+    def test_embedded_text_toc_strips_to_repeated_prologue(self):
+        text = """Prologue Chapter 1: Is This Another World? Chapter 2: The Creeped-Out Maid Chapter 3: A Textbook of Magic Chapter 4: Master Chapter 5: Swords and Sorcery Chapter 6: Reasons for Respect Chapter 7: Friends Chapter 8: Obliviousness Chapter 9: Emergency Family Meeting Chapter 10: Stunted Growth Chapter 11: Parted Extra Chapter: The Mother of the Greyrat Family Character Design Concept Gallery Newsletter Download all your Fav Light Novels from Just Light Novels Prologue I was a thirty-four-year-old man with no job and nowhere to live."""
+        stripped = document_tts._strip_leading_front_matter(text)
+        self.assertTrue(stripped.startswith("Prologue I was"), stripped[:160])
+        self.assertNotIn("Chapter 11: Parted", stripped[:300])
+        self.assertNotIn("Just Light Novels", stripped[:100])
+
 
 if __name__ == "__main__":
     unittest.main()
