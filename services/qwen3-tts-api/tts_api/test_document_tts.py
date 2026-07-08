@@ -123,9 +123,21 @@ class DocumentTtsTests(unittest.TestCase):
 
     def test_inline_chapter_title_gets_own_pause_chunk(self):
         chunks = document_tts.split_text("Chapter 1: The Con Artist Who Claimed to Be a God I was dreaming. The sky shifted around me.")
-        self.assertEqual(chunks[0], "Chapter 1: The Con Artist Who Claimed to Be a God")
-        self.assertEqual(chunks[1], "I was dreaming. The sky shifted around me.")
+        self.assertEqual(chunks[0], "Chapter 1")
+        self.assertEqual(chunks[1], "The Con Artist Who Claimed to Be a God")
+        self.assertEqual(chunks[2], "I was dreaming. The sky shifted around me.")
         self.assertTrue(document_tts.is_section_heading_text(chunks[0]))
+        self.assertTrue(document_tts.is_chapter_title_chunk(chunks[1], chunks[0]))
+
+    def test_chapter_title_chunk_gets_one_second_pause(self):
+        path = Path(self.tmp.name) / "chapter-title.txt"
+        path.write_text("Chapter 1: A Clean Start I was awake. The room was quiet.")
+        job = document_tts.create_audiobook_job(str(path), "chapter-title.txt", "model-1", "Chapter Title Test")
+        self.assertEqual(job["chunks"][1]["text"], "Chapter 1")
+        self.assertEqual(job["chunks"][1]["pause_after_ms"], 1000)
+        self.assertEqual(job["chunks"][2]["text"], "A Clean Start")
+        self.assertEqual(job["chunks"][2]["pause_after_ms"], 1000)
+        self.assertTrue(job["chunks"][3]["text"].startswith("I was awake."))
 
 
 if __name__ == "__main__":

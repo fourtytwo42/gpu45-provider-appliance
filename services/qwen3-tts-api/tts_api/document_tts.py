@@ -51,6 +51,10 @@ INLINE_SECTION_START_RE = re.compile(
     r"chapter\s+(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b|"
     r"part\s+(?:\d+|[ivxlcdm]+)\b)(?P<colon>\s*:\s*)?"
 )
+SECTION_HEADING_PARTS_RE = re.compile(
+    r"(?i)^(?P<label>chapter\s+(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b|"
+    r"part\s+(?:\d+|[ivxlcdm]+)\b|extra chapter|side story)\s*:\s*(?P<title>.+)$"
+)
 BODY_START_RE = re.compile(
     r"\s+(?=(?:I|My|We|He|She|They|It|This|That|There)\s+"
     r"(?:was|were|am|had|have|could|would|did|felt|saw|heard|thought|knew|found|went|looked|turned|opened|started|began|made|said|asked|took|kept|remembered|realized|didn)\b|"
@@ -213,6 +217,17 @@ def split_sentences(text: str) -> list[str]:
     return sentences
 
 
+def _split_heading_parts(heading: str) -> list[str]:
+    heading = normalize_text(heading)
+    match = SECTION_HEADING_PARTS_RE.match(heading)
+    if not match:
+        return [heading]
+    title = match.group("title").strip()
+    if len(title) < 3:
+        return [heading]
+    return [match.group("label").strip(), title]
+
+
 def _split_section_heading_prefix(sentence: str) -> list[str]:
     sentence = sentence.strip()
     match = INLINE_SECTION_START_RE.match(sentence)
@@ -227,16 +242,30 @@ def _split_section_heading_prefix(sentence: str) -> list[str]:
     search_start = max(label_end + 8, match.end("colon") + 8)
     body_match = BODY_START_RE.search(sentence, search_start)
     if not body_match:
-        return [sentence]
+        first_sentence = re.search(r"[.!?][\"')\]]*(?=\s+|$)", sentence, search_start)
+        if first_sentence:
+            heading = sentence[: first_sentence.start()].strip()
+            body = sentence[first_sentence.start() + 1 :].strip()
+            if len(heading) >= 8 and len(body) >= 8:
+                return [*_split_heading_parts(heading), body]
+        return _split_heading_parts(sentence)
     heading = sentence[:body_match.start()].strip()
     body = sentence[body_match.start():].strip()
     if len(heading) < 8 or len(body) < 8:
         return [sentence]
-    return [heading, body]
+    return [*_split_heading_parts(heading), body]
 
 
 def is_section_heading_text(text: str) -> bool:
     return bool(SECTION_HEADING_RE.match(normalize_text(text or "")))
+
+
+def is_chapter_title_chunk(text: str, previous_text: str | None = None) -> bool:
+    if not previous_text:
+        return False
+    previous = normalize_text(previous_text)
+    current = normalize_text(text or "")
+    return bool(current and SECTION_HEADING_RE.match(previous) and not SECTION_HEADING_RE.match(current))
 
 
 def split_text(text: str, target_chars: int = TARGET_CHUNK_CHARS) -> list[str]:
@@ -247,7 +276,8 @@ def split_text(text: str, target_chars: int = TARGET_CHUNK_CHARS) -> list[str]:
     for sentence in split_sentences(text):
         sentences.extend(part for part in _split_section_heading_prefix(sentence) if part)
     for sentence in sentences:
-        if is_section_heading_text(sentence):
+        previous_piece = chunks[-1] if chunks else current
+        if is_section_heading_text(sentence) or is_chapter_title_chunk(sentence, previous_piece):
             if current.strip():
                 chunks.append(current.strip())
             chunks.append(sentence.strip())
@@ -324,20 +354,24 @@ def create_audiobook_job(source_path: str, source_filename: str, model_id: str, 
     chunks_text = [intro_text, *chunks_text]
     job_id = store.generate_id()
     os.makedirs(os.path.join(store.audiobook_dir(job_id), "chunks"), exist_ok=True)
-    chunks = [
-        {
-            "index": i,
-            "status": "pending",
-            "role": "intro" if i == 0 else "content",
-            "pause_after_ms": 1000 if i == 0 or is_section_heading_text(chunk) else 500,
-            "text": chunk,
-            "text_chars": len(chunk),
-            "output_path": _chunk_audio_path(job_id, i),
-            "audio_url": f"/audiobooks/{job_id}/chunks/{i}/audio",
-            "quality": None,
-        }
-        for i, chunk in enumerate(chunks_text)
-    ]
+    chunks = []
+    previous_chunk_text: str | None = None
+    for i, chunk in enumerate(chunks_text):
+        pause_after_ms = 1000 if i == 0 or is_section_heading_text(chunk) or is_chapter_title_chunk(chunk, previous_chunk_text) else 500
+        chunks.append(
+            {
+                "index": i,
+                "status": "pending",
+                "role": "intro" if i == 0 else "content",
+                "pause_after_ms": pause_after_ms,
+                "text": chunk,
+                "text_chars": len(chunk),
+                "output_path": _chunk_audio_path(job_id, i),
+                "audio_url": f"/audiobooks/{job_id}/chunks/{i}/audio",
+                "quality": None,
+            }
+        )
+        previous_chunk_text = chunk
     job = {
         "id": job_id,
         "kind": "audiobook",
