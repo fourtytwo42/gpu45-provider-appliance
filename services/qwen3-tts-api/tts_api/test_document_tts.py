@@ -139,6 +139,12 @@ class DocumentTtsTests(unittest.TestCase):
         self.assertEqual(job["chunks"][2]["pause_after_ms"], 1000)
         self.assertTrue(job["chunks"][3]["text"].startswith("I was awake."))
 
+    def test_chapter_split_fallback_uses_search_position_not_regex_flags(self):
+        chunks = document_tts.split_text("Chapter 2: Hard Lessons The wagon rolled north. I listened quietly.")
+        self.assertEqual(chunks[0], "Chapter 2")
+        self.assertEqual(chunks[1], "Hard Lessons")
+        self.assertEqual(chunks[2], "The wagon rolled north. I listened quietly.")
+
 
 if __name__ == "__main__":
     unittest.main()

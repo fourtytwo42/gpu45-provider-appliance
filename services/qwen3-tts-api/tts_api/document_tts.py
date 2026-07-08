@@ -58,8 +58,10 @@ SECTION_HEADING_PARTS_RE = re.compile(
 BODY_START_RE = re.compile(
     r"\s+(?=(?:I|My|We|He|She|They|It|This|That|There)\s+"
     r"(?:was|were|am|had|have|could|would|did|felt|saw|heard|thought|knew|found|went|looked|turned|opened|started|began|made|said|asked|took|kept|remembered|realized|didn)\b|"
+    r"(?:The|A|An)\s+\w+\s+(?:was|were|had|felt|looked|turned|opened|started|began|made|said|asked|took|kept|rolled|moved|shifted|stood|sat|lay)\b|"
     r"(?:In|On|At|By|When|After|Before|As)\s+(?:the|a|an|my|I|we|he|she|they)\b)"
 )
+FIRST_SENTENCE_END_RE = re.compile(r"[.!?][\"')\]]*(?=\s+|$)")
 
 
 def utcnow() -> str:
@@ -242,7 +244,7 @@ def _split_section_heading_prefix(sentence: str) -> list[str]:
     search_start = max(label_end + 8, match.end("colon") + 8)
     body_match = BODY_START_RE.search(sentence, search_start)
     if not body_match:
-        first_sentence = re.search(r"[.!?][\"')\]]*(?=\s+|$)", sentence, search_start)
+        first_sentence = FIRST_SENTENCE_END_RE.search(sentence, search_start)
         if first_sentence:
             heading = sentence[: first_sentence.start()].strip()
             body = sentence[first_sentence.start() + 1 :].strip()
