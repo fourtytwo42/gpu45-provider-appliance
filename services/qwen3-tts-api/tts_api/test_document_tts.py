@@ -108,6 +108,17 @@ class DocumentTtsTests(unittest.TestCase):
         self.assertEqual(chunk["status"], "running")
         self.assertTrue(chunk["regenerate_requested"])
 
+    def test_embedded_chapter_index_strips_to_repeated_chapter_after_spam(self):
+        text = """Chapter 1: The Con Artist Who Claimed to Be a God Chapter 2: The Superd Chapter 3: A Master’s Secrets Chapter 4: The Foundations of Trust Chapter 5: Three Days to the Nearest Town Chapter 6: Infiltration and Impersonation Chapter 7: The Adventurers’ Guild Chapter 8: The Adventurers’ Inn Chapter 9: The First Job: The Value of a Life Chapter 10: The First Job Completed Chapter 11: A Smooth Start Chapter 12: Children and Warriors Chapter 13: Failure, Chaos, and Resolve Chapter 14: The Beginning of Our Journey Extra Chapter: The Princess of Asura and the Angel Newsletter Download all your Fav Light Novels from Just Light Novels Chapter 1: The Con Artist Who Claimed to Be a God I was dreaming."""
+        stripped = document_tts._strip_leading_front_matter(text)
+        self.assertTrue(stripped.startswith("Chapter 1: The Con Artist Who Claimed to Be a God I was dreaming"), stripped[:180])
+        self.assertNotIn("Chapter 14: The Beginning", stripped[:300])
+        self.assertNotIn("Just Light Novels", stripped[:120])
+
+    def test_normalize_removes_spaces_before_punctuation(self):
+        normalized = document_tts.normalize_text("I was flying . The world shifted !")
+        self.assertEqual(normalized, "I was flying. The world shifted!")
+
 
 if __name__ == "__main__":
     unittest.main()

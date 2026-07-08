@@ -75,6 +75,11 @@ def _strip_leading_front_matter(text: str) -> str:
         return ""
     head = text[:3000]
     dense_matches = list(DENSE_TOC_ENTRY_RE.finditer(head))
+    spam_match = DOWNLOAD_SPAM_RE.search(head)
+    if spam_match:
+        after_spam = next((m for m in dense_matches if m.start() > spam_match.end()), None)
+        if after_spam is not None:
+            return text[after_spam.start():].strip()
     if dense_matches and DOWNLOAD_SPAM_RE.search(text[:dense_matches[0].start()]):
         return text[dense_matches[0].start():].strip()
     if len(dense_matches) >= 4:
@@ -163,6 +168,7 @@ def extract_text(path: str, filename: str | None = None) -> str:
 def normalize_text(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"(?m)^\s*Page\s+\d+\s*$", "", text)
     return text.strip()
