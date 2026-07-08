@@ -58,7 +58,9 @@ class DocumentTtsTests(unittest.TestCase):
         self.assertEqual(job["chunks"][0]["pause_after_ms"], 1000)
         self.assertEqual(job["chunks"][0]["text"], "Fixture Book. Volume 2.")
         self.assertEqual(job["chunks"][1]["role"], "content")
-        self.assertTrue(job["chunks"][1]["text"].startswith("Prologue"), job["chunks"][1]["text"])
+        self.assertEqual(job["chunks"][1]["text"], "Prologue")
+        self.assertEqual(job["chunks"][1]["pause_after_ms"], 1000)
+        self.assertTrue(job["chunks"][2]["text"].startswith("This is the first real narrative"), job["chunks"][2]["text"])
         self.assertEqual(job["front_matter_policy"], "skip_index_start_at_first_section")
 
     def test_embedded_text_toc_strips_to_repeated_prologue(self):
@@ -118,6 +120,12 @@ class DocumentTtsTests(unittest.TestCase):
     def test_normalize_removes_spaces_before_punctuation(self):
         normalized = document_tts.normalize_text("I was flying . The world shifted !")
         self.assertEqual(normalized, "I was flying. The world shifted!")
+
+    def test_inline_chapter_title_gets_own_pause_chunk(self):
+        chunks = document_tts.split_text("Chapter 1: The Con Artist Who Claimed to Be a God I was dreaming. The sky shifted around me.")
+        self.assertEqual(chunks[0], "Chapter 1: The Con Artist Who Claimed to Be a God")
+        self.assertEqual(chunks[1], "I was dreaming. The sky shifted around me.")
+        self.assertTrue(document_tts.is_section_heading_text(chunks[0]))
 
 
 if __name__ == "__main__":

@@ -41,6 +41,21 @@ DENSE_TOC_ENTRY_RE = re.compile(
 )
 DOWNLOAD_SPAM_RE = re.compile(r"(?i)(?:download\s+all|fav\s+light\s+novels|just\s+light\s+novels)")
 VOLUME_RE = re.compile(r"(?i)\bvolume\s*[-_ ]*([0-9]+|[ivxlcdm]+)\b")
+SECTION_HEADING_RE = re.compile(
+    r"(?i)^(?:prologue|epilogue|extra chapter(?:\s*:.+)?|side story(?:\s*:.+)?|"
+    r"chapter\s+(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b(?:\s*:.+)?|"
+    r"part\s+(?:\d+|[ivxlcdm]+)\b(?:\s*:.+)?)$"
+)
+INLINE_SECTION_START_RE = re.compile(
+    r"(?i)^(?P<label>prologue|epilogue|extra chapter|side story|"
+    r"chapter\s+(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b|"
+    r"part\s+(?:\d+|[ivxlcdm]+)\b)(?P<colon>\s*:\s*)?"
+)
+BODY_START_RE = re.compile(
+    r"\s+(?=(?:I|My|We|He|She|They|It|This|That|There)\s+"
+    r"(?:was|were|am|had|have|could|would|did|felt|saw|heard|thought|knew|found|went|looked|turned|opened|started|began|made|said|asked|took|kept|remembered|realized|didn)\b|"
+    r"(?:In|On|At|By|When|After|Before|As)\s+(?:the|a|an|my|I|we|he|she|they)\b)"
+)
 
 
 def utcnow() -> str:
@@ -198,11 +213,46 @@ def split_sentences(text: str) -> list[str]:
     return sentences
 
 
+def _split_section_heading_prefix(sentence: str) -> list[str]:
+    sentence = sentence.strip()
+    match = INLINE_SECTION_START_RE.match(sentence)
+    if not match:
+        return [sentence]
+    label_end = match.end()
+    if not match.group("colon"):
+        rest = sentence[label_end:].strip()
+        if rest:
+            return [sentence[:label_end].strip(), rest]
+        return [sentence]
+    search_start = max(label_end + 8, match.end("colon") + 8)
+    body_match = BODY_START_RE.search(sentence, search_start)
+    if not body_match:
+        return [sentence]
+    heading = sentence[:body_match.start()].strip()
+    body = sentence[body_match.start():].strip()
+    if len(heading) < 8 or len(body) < 8:
+        return [sentence]
+    return [heading, body]
+
+
+def is_section_heading_text(text: str) -> bool:
+    return bool(SECTION_HEADING_RE.match(normalize_text(text or "")))
+
+
 def split_text(text: str, target_chars: int = TARGET_CHUNK_CHARS) -> list[str]:
     target_chars = max(240, min(int(target_chars or TARGET_CHUNK_CHARS), 1200))
     chunks: list[str] = []
     current = ""
+    sentences: list[str] = []
     for sentence in split_sentences(text):
+        sentences.extend(part for part in _split_section_heading_prefix(sentence) if part)
+    for sentence in sentences:
+        if is_section_heading_text(sentence):
+            if current.strip():
+                chunks.append(current.strip())
+            chunks.append(sentence.strip())
+            current = ""
+            continue
         if not current:
             current = sentence
             continue
@@ -279,7 +329,7 @@ def create_audiobook_job(source_path: str, source_filename: str, model_id: str, 
             "index": i,
             "status": "pending",
             "role": "intro" if i == 0 else "content",
-            "pause_after_ms": 1000 if i == 0 else 500,
+            "pause_after_ms": 1000 if i == 0 or is_section_heading_text(chunk) else 500,
             "text": chunk,
             "text_chars": len(chunk),
             "output_path": _chunk_audio_path(job_id, i),
