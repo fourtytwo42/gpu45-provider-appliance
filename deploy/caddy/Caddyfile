@@ -17,6 +17,6 @@ https://gpu45.local, https://192.168.50.189 {
 }
 
 # Authenticated LAN fallback for embedded clients that cannot trust the appliance CA.
-http://gpu45.local, http://192.168.50.189 {
+http://gpu45.local, http://192.168.50.189, http://192-168-50-189.nip.io {
   import gpu45_console
 }
