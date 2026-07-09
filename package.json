@@ -8,13 +8,16 @@
     "start": "next start",
     "worker": "tsx src/worker.ts",
     "lint": "eslint",
+    "pretest": "prisma generate --config prisma.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "qa": "npm run lint && npm run test && npm run test:e2e",
+    "typecheck": "prisma generate --config prisma.config.ts && tsc --noEmit",
     "db:generate": "prisma generate --config prisma.config.ts",
     "db:push": "tsx src/scripts/init-db.ts",
-    "db:studio": "prisma studio --config prisma.config.ts"
+    "db:studio": "prisma studio --config prisma.config.ts",
+    "release:deploy": "sudo bash scripts/deploy-release.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

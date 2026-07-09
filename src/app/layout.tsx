@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 import { AppChrome } from "@/components/app-chrome";
+import { getApplianceVersion } from "@/lib/version";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -27,7 +28,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${spaceGrotesk.variable} ${ibmMono.variable} h-full antialiased`}>
       <body className="min-h-full">
-        <AppChrome>{children}</AppChrome>
+        <AppChrome version={getApplianceVersion()}>{children}</AppChrome>
       </body>
     </html>
   );

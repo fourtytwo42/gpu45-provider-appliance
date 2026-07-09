@@ -7,6 +7,7 @@ import { Activity, Bot, BriefcaseBusiness, Cpu, Database, FileSearch, FileText, 
 import { cn } from "@/lib/cn";
 import { formatBytes, formatNumber } from "@/lib/format";
 import type { LiveTelemetry } from "@/lib/types";
+import type { ApplianceVersion } from "@/lib/version";
 import { MetricTile } from "./metric-tile";
 import { StatusBadge } from "./status-badge";
 
@@ -98,7 +99,7 @@ function TopStatusBar() {
   );
 }
 
-export function AppChrome({ children }: { children: React.ReactNode }) {
+export function AppChrome({ children, version }: { children: React.ReactNode; version: ApplianceVersion }) {
   const pathname = usePathname();
   const activeGroup = useMemo(() => navGroups.find((group) => group.items.some((item) => item.href === pathname || (item.href !== "/" && pathname.startsWith(item.href))))?.label ?? "Command Center", [pathname]);
   return (
@@ -123,7 +124,10 @@ export function AppChrome({ children }: { children: React.ReactNode }) {
                 </div>
               ))}
             </nav>
-            <div className="hidden border-t border-[#223044] p-3 text-xs text-[#617083] lg:block"><div className="flex items-center gap-2"><RadioTower className="h-3.5 w-3.5 text-[#36fba1]" /> Persistent bare-metal console</div></div>
+            <div className="hidden border-t border-[#223044] p-3 text-xs text-[#617083] lg:block">
+              <div className="flex items-center gap-2"><RadioTower className="h-3.5 w-3.5 text-[#36fba1]" /> Persistent bare-metal console</div>
+              <div className="mt-1 truncate font-mono text-[10px]" title={version.commit}>v{version.version} · {version.commit.slice(0, 12)}</div>
+            </div>
           </div>
         </aside>
         <div className="min-w-0"><TopStatusBar /><main className="mx-auto w-full max-w-[1680px] px-3 py-4 lg:px-5">{children}</main></div>
