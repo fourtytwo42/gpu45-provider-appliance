@@ -54,6 +54,9 @@ if [[ "$(sqlite3 "$database_path" "PRAGMA integrity_check;")" != "ok" ]]; then
   echo "Persistent database integrity check failed" >&2
   exit 1
 fi
+mkdir -p "$data_dir/migration-backups"
+sqlite3 "$database_path" ".backup '$data_dir/migration-backups/appliance-$short_commit.db'"
+find "$data_dir/migration-backups" -type f -name 'appliance-*.db' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | xargs -r rm -f --
 
 if [[ ! -f /etc/gpu45/appliance.env ]]; then
   if [[ -f "$repo_root/.env.local" ]]; then
@@ -76,6 +79,14 @@ git -C "$repo_root" archive "$commit" | tar -x -C "$release_dir"
 cd "$release_dir"
 npm ci
 DATABASE_URL="file:$database_path" npm run build
+
+if [[ ! -f "$data_dir/.telemetry-retention-v2" ]]; then
+  systemctl stop gpu45-provider-appliance-worker.service gpu45-provider-appliance.service || true
+  if ! bash "$release_dir/scripts/migrate-telemetry-retention.sh" "$database_path"; then
+    systemctl start gpu45-provider-appliance-worker.service gpu45-provider-appliance.service || true
+    exit 1
+  fi
+fi
 
 cat > /etc/gpu45/release.env <<EOF
 GPU45_RELEASE_COMMIT=$commit

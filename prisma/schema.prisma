@@ -89,6 +89,36 @@ model EndpointSetting {
   updatedAt      DateTime @updatedAt
 }
 
+model MetricMinute {
+  id        String   @id @default(cuid())
+  kind      String
+  series    String
+  average   Float
+  minimum   Float
+  maximum   Float
+  samples   Int
+  unit      String
+  bucketAt  DateTime
+
+  @@unique([kind, series, bucketAt])
+  @@index([kind, bucketAt])
+}
+
+model MetricHour {
+  id        String   @id @default(cuid())
+  kind      String
+  series    String
+  average   Float
+  minimum   Float
+  maximum   Float
+  samples   Int
+  unit      String
+  bucketAt  DateTime
+
+  @@unique([kind, series, bucketAt])
+  @@index([kind, bucketAt])
+}
+
 model AdminUser {
   id             String         @id @default(cuid())
   username       String         @unique

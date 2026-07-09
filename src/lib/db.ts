@@ -34,6 +34,20 @@ function ensureSqliteSchema(): void {
       capturedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS MetricSample_kind_capturedAt_idx ON MetricSample(kind, capturedAt);
+    CREATE TABLE IF NOT EXISTS MetricMinute (
+      id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL, series TEXT NOT NULL,
+      average REAL NOT NULL, minimum REAL NOT NULL, maximum REAL NOT NULL,
+      samples INTEGER NOT NULL, unit TEXT NOT NULL, bucketAt DATETIME NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS MetricMinute_kind_series_bucketAt_key ON MetricMinute(kind, series, bucketAt);
+    CREATE INDEX IF NOT EXISTS MetricMinute_kind_bucketAt_idx ON MetricMinute(kind, bucketAt);
+    CREATE TABLE IF NOT EXISTS MetricHour (
+      id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL, series TEXT NOT NULL,
+      average REAL NOT NULL, minimum REAL NOT NULL, maximum REAL NOT NULL,
+      samples INTEGER NOT NULL, unit TEXT NOT NULL, bucketAt DATETIME NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS MetricHour_kind_series_bucketAt_key ON MetricHour(kind, series, bucketAt);
+    CREATE INDEX IF NOT EXISTS MetricHour_kind_bucketAt_idx ON MetricHour(kind, bucketAt);
 
     CREATE TABLE IF NOT EXISTS ProviderState (
       id TEXT PRIMARY KEY NOT NULL,

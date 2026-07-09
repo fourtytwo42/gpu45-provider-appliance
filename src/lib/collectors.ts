@@ -760,9 +760,36 @@ export async function persistLiveTelemetry(telemetry: LiveTelemetry): Promise<vo
 }
 
 export async function pruneTelemetry(): Promise<void> {
-  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  await aggregateTelemetry();
+  const rawCutoff = new Date(Date.now() - 6 * 60 * 60 * 1000);
+  const minuteCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const hourCutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
   await Promise.all([
-    prisma.metricSample.deleteMany({ where: { capturedAt: { lt: cutoff } } }),
-    prisma.providerState.deleteMany({ where: { capturedAt: { lt: cutoff } } }),
+    prisma.metricSample.deleteMany({ where: { capturedAt: { lt: rawCutoff } } }),
+    prisma.providerState.deleteMany({ where: { capturedAt: { lt: rawCutoff } } }),
+    prisma.metricMinute.deleteMany({ where: { bucketAt: { lt: minuteCutoff } } }),
+    prisma.metricHour.deleteMany({ where: { bucketAt: { lt: hourCutoff } } }),
   ]);
+  await prisma.$executeRawUnsafe("PRAGMA wal_checkpoint(PASSIVE)");
+  await prisma.$executeRawUnsafe("PRAGMA optimize");
+  await prisma.$executeRawUnsafe("PRAGMA incremental_vacuum(2000)");
+}
+
+export async function aggregateTelemetry(): Promise<void> {
+  await prisma.$executeRawUnsafe(`
+    INSERT OR REPLACE INTO MetricMinute(id,kind,series,average,minimum,maximum,samples,unit,bucketAt)
+    SELECT lower(hex(randomblob(16))), kind, series, avg(value), min(value), max(value), count(*), unit,
+           strftime('%Y-%m-%dT%H:%M:00.000Z', capturedAt)
+    FROM MetricSample
+    WHERE datetime(capturedAt) >= datetime('now', '-7 days')
+    GROUP BY kind, series, unit, strftime('%Y-%m-%dT%H:%M', capturedAt)
+  `);
+  await prisma.$executeRawUnsafe(`
+    INSERT OR REPLACE INTO MetricHour(id,kind,series,average,minimum,maximum,samples,unit,bucketAt)
+    SELECT lower(hex(randomblob(16))), kind, series, avg(value), min(value), max(value), count(*), unit,
+           strftime('%Y-%m-%dT%H:00:00.000Z', capturedAt)
+    FROM MetricSample
+    WHERE datetime(capturedAt) >= datetime('now', '-365 days')
+    GROUP BY kind, series, unit, strftime('%Y-%m-%dT%H', capturedAt)
+  `);
 }

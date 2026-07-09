@@ -7,10 +7,12 @@ let tickCount = 0;
 
 async function tick(): Promise<void> {
   const telemetry = await collectLiveTelemetry();
-  await persistLiveTelemetry(telemetry);
   tickCount += 1;
+  if (tickCount % 3 === 0) {
+    await persistLiveTelemetry(telemetry);
+    console.log(`[collector] saved telemetry at ${telemetry.collectedAt}`);
+  }
   if (tickCount % 720 === 0) await pruneTelemetry();
-  console.log(`[collector] saved telemetry at ${telemetry.collectedAt}`);
 }
 
 let downloadRunning = false;
@@ -33,7 +35,7 @@ async function main(): Promise<void> {
 
   const recovered = await recoverInterruptedDownloads();
   if (recovered > 0) console.log(`[download] requeued ${recovered} interrupted job(s)`);
-  await Promise.all([tick(), downloadTick()]);
+  await Promise.all([tick(), downloadTick(), pruneTelemetry()]);
   setInterval(() => {
     void tick().catch((error) => {
       console.error("[collector] tick failed", error);
