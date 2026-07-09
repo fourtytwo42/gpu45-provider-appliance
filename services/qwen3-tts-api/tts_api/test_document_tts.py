@@ -1,7 +1,10 @@
+import io
 import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+import soundfile as sf
 from ebooklib import epub
 
 from tts_api import document_tts, store
@@ -144,6 +147,23 @@ class DocumentTtsTests(unittest.TestCase):
         self.assertEqual(chunks[0], "Chapter 2")
         self.assertEqual(chunks[1], "Hard Lessons")
         self.assertEqual(chunks[2], "The wagon rolled north. I listened quietly.")
+
+    def test_quality_flags_audio_that_is_too_long_for_text(self):
+        sample_rate = 16000
+        duration_seconds = 35
+        t = np.linspace(0, duration_seconds, sample_rate * duration_seconds, endpoint=False)
+        samples = (0.03 * np.sin(2 * np.pi * 220 * t)).astype("float32")
+        buffer = io.BytesIO()
+        sf.write(buffer, samples, sample_rate, format="WAV")
+        quality = document_tts.analyze_wav_quality(buffer.getvalue(), sample_rate, "Short line.")
+        self.assertFalse(quality["ok"])
+        self.assertIn("too_long_for_text", quality["reasons"])
+
+    def test_expected_duration_bounds_allow_normal_book_chunks(self):
+        minimum, maximum = document_tts.expected_duration_bounds("x" * 450)
+        self.assertLessEqual(minimum, 10)
+        self.assertGreaterEqual(maximum, 100)
+        self.assertLessEqual(maximum, 120)
 
 
 if __name__ == "__main__":

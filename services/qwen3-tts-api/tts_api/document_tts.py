@@ -24,6 +24,7 @@ from tts_api.resource_guard import tts_vram_guard
 
 SUPPORTED_EXTENSIONS = {".epub", ".pdf", ".docx", ".txt", ".md", ".html", ".htm"}
 TARGET_CHUNK_CHARS = 450
+MAX_AUTO_REGENERATE_ATTEMPTS = 2
 
 
 CONTENT_START_RE = re.compile(
@@ -298,6 +299,13 @@ def split_text(text: str, target_chars: int = TARGET_CHUNK_CHARS) -> list[str]:
     return chunks
 
 
+def expected_duration_bounds(text: str) -> tuple[float, float]:
+    chars = len(normalize_text(text or ""))
+    max_duration = max(12.0, min(120.0, chars * 0.22 + 8.0))
+    min_duration = 0.35 if chars <= 80 else max(2.0, chars * 0.015)
+    return min_duration, max_duration
+
+
 def analyze_wav_quality(wav_bytes: bytes, sample_rate: int, text: str) -> dict[str, Any]:
     try:
         samples, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32")
@@ -310,11 +318,14 @@ def analyze_wav_quality(wav_bytes: bytes, sample_rate: int, text: str) -> dict[s
         peak = float(np.max(np.abs(mono))) if len(mono) else 0.0
         signs = np.signbit(mono)
         zcr = float(np.mean(signs[1:] != signs[:-1])) if len(mono) > 1 else 0.0
+        min_duration, max_duration = expected_duration_bounds(text)
         reasons: list[str] = []
         if duration < 0.35:
             reasons.append("too_short")
-        if len(text) > 80 and duration < 2.0:
+        if len(text) > 80 and duration < min_duration:
             reasons.append("too_short_for_text")
+        if duration > max_duration:
+            reasons.append("too_long_for_text")
         if rms < 0.0015 or peak < 0.01:
             reasons.append("near_silence")
         if zcr > 0.38 and rms > 0.02:
@@ -323,6 +334,8 @@ def analyze_wav_quality(wav_bytes: bytes, sample_rate: int, text: str) -> dict[s
             "ok": len(reasons) == 0,
             "reasons": reasons,
             "duration_seconds": round(duration, 3),
+            "expected_min_seconds": round(min_duration, 3),
+            "expected_max_seconds": round(max_duration, 3),
             "rms": round(rms, 6),
             "peak": round(peak, 6),
             "zero_crossing_rate": round(zcr, 6),
@@ -666,9 +679,32 @@ def _run_audiobook_job_inner(job_id: str, started: float, job: dict[str, Any]) -
                 updated_at=utcnow(),
             )
             try:
-                wav_bytes, sr = synthesize_module.synthesize(text=next_chunk["text"], model_id=job["model_id"])
-                quality = analyze_wav_quality(wav_bytes, sr, next_chunk["text"])
-                mp3_bytes = wav_to_mp3_bytes(wav_bytes)
+                attempts = int(next_chunk.get("auto_regenerate_attempts") or 0)
+                final_quality: dict[str, Any] | None = None
+                final_mp3_bytes: bytes | None = None
+                while True:
+                    wav_bytes, sr = synthesize_module.synthesize(text=next_chunk["text"], model_id=job["model_id"])
+                    quality = analyze_wav_quality(wav_bytes, sr, next_chunk["text"])
+                    final_quality = quality
+                    if quality.get("ok") or attempts >= MAX_AUTO_REGENERATE_ATTEMPTS:
+                        final_mp3_bytes = wav_to_mp3_bytes(wav_bytes)
+                        break
+                    attempts += 1
+                    store.update_audiobook_chunk(
+                        job_id,
+                        idx,
+                        status="running",
+                        auto_regenerate_attempts=attempts,
+                        last_quality=quality,
+                        updated_at=utcnow(),
+                    )
+                    store.update_audiobook_job(
+                        job_id,
+                        progress_label=f"Regenerating chunk {idx + 1}: {', '.join(quality.get('reasons', []))} ({attempts}/{MAX_AUTO_REGENERATE_ATTEMPTS})",
+                        updated_at=utcnow(),
+                    )
+                quality = final_quality or {"ok": False, "reasons": ["quality_check_failed:no_result"]}
+                mp3_bytes = final_mp3_bytes or b""
                 output_path = _chunk_audio_path(job_id, idx)
                 with open(output_path, "wb") as f:
                     f.write(mp3_bytes)
@@ -680,11 +716,12 @@ def _run_audiobook_job_inner(job_id: str, started: float, job: dict[str, Any]) -
                     output_path=output_path,
                     output_bytes=len(mp3_bytes),
                     quality=quality,
+                    auto_regenerate_attempts=attempts,
                     finished_at=utcnow(),
                     updated_at=utcnow(),
                 )
                 if status == "flagged":
-                    store.update_audiobook_job(job_id, status="needs_review", progress_label=f"Chunk {idx + 1} flagged: {', '.join(quality.get('reasons', []))}", updated_at=utcnow())
+                    store.update_audiobook_job(job_id, status="needs_review", progress_label=f"Chunk {idx + 1} flagged after auto-regeneration: {', '.join(quality.get('reasons', []))}", updated_at=utcnow())
                     return
             except Exception as exc:
                 store.update_audiobook_chunk(job_id, idx, status="failed", error=str(exc), finished_at=utcnow(), updated_at=utcnow())
