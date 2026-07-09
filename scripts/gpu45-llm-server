@@ -195,6 +195,9 @@ else
   JINJA=1
 fi
 
+# The Responses proxy is the only network-facing inference surface.
+HOST=${GPU45_BACKEND_HOST:-127.0.0.1}
+
 apply_gpu_tuning
 
 model_basename=$(basename "$MODEL_PATH")

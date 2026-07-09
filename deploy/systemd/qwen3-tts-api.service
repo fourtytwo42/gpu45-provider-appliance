@@ -2,16 +2,18 @@
 Description=Qwen3-TTS API for GPU45 appliance
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=12
 
 [Service]
 Type=simple
 User=hendo420
 Group=hendo420
 WorkingDirectory=/opt/qwen3-tts
-Environment=QWEN_TTS_API_HOST=0.0.0.0
+Environment=QWEN_TTS_API_HOST=127.0.0.1
 Environment=QWEN_TTS_API_PORT=8000
 Environment=QWEN_TTS_API_DATA=/models/qwen3-tts/api_data
-Environment=QWEN_TTS_DEVICE=cpu
+Environment=QWEN_TTS_DEVICE=cuda:0
 Environment=QWEN_TTS_VRAM_GUARD=true
 Environment=QWEN_TTS_EXCLUSIVE_GPU=true
 Environment=QWEN_TTS_MIN_FREE_VRAM_MB=8192
@@ -20,7 +22,7 @@ Environment=QWEN_TTS_RESTART_LLM_AFTER=true
 Environment=QWEN_TTS_TRAINING_EXCLUSIVE_LLM=true
 ExecStart=/opt/qwen3-tts-venv/bin/python -m tts_api
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

@@ -101,6 +101,30 @@ function ensureSqliteSchema(): void {
     );
     INSERT OR IGNORE INTO EndpointSetting (id, allowAnonymous) VALUES ('default', 1);
 
+    CREATE TABLE IF NOT EXISTS AdminUser (
+      id TEXT PRIMARY KEY NOT NULL,
+      username TEXT NOT NULL UNIQUE,
+      passwordHash TEXT NOT NULL,
+      passwordSalt TEXT NOT NULL,
+      failedAttempts INTEGER NOT NULL DEFAULT 0,
+      lockedUntil DATETIME,
+      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS AdminSession (
+      id TEXT PRIMARY KEY NOT NULL,
+      userId TEXT NOT NULL,
+      csrfToken TEXT NOT NULL,
+      expiresAt DATETIME NOT NULL,
+      revokedAt DATETIME,
+      userAgent TEXT,
+      ipAddress TEXT,
+      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT AdminSession_userId_fkey FOREIGN KEY (userId) REFERENCES AdminUser(id) ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS AdminSession_userId_expiresAt_idx ON AdminSession(userId, expiresAt);
+    CREATE INDEX IF NOT EXISTS AdminSession_expiresAt_idx ON AdminSession(expiresAt);
+
     CREATE TABLE IF NOT EXISTS LaunchProfile (
       id TEXT PRIMARY KEY NOT NULL,
       name TEXT NOT NULL UNIQUE,

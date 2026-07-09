@@ -8,7 +8,7 @@ Type=simple
 User=hendo420
 Group=hendo420
 WorkingDirectory=/opt/gpu45-image-api
-Environment=IMAGE_API_HOST=0.0.0.0
+Environment=IMAGE_API_HOST=127.0.0.1
 Environment=IMAGE_API_PORT=8030
 Environment=IMAGE_API_DATA=/models/image-gen
 Environment=IMAGE_MODEL_BASE=/models/image-gen/models

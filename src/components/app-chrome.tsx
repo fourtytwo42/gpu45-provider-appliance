@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, BriefcaseBusiness, Cpu, Database, FileSearch, FileText, Film, Gauge, HardDriveDownload, ImageIcon, KeyRound, Library, Logs, Mic2, RadioTower, ScrollText, Settings2, SquareTerminal, Thermometer, Wrench, Zap } from "lucide-react";
+import { Activity, Bot, BriefcaseBusiness, Cpu, Database, FileSearch, FileText, Film, Gauge, HardDriveDownload, ImageIcon, KeyRound, Library, LogOut, Logs, Mic2, RadioTower, ScrollText, Settings2, SquareTerminal, Thermometer, Wrench, Zap } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatNumber } from "@/lib/format";
 import type { LiveTelemetry } from "@/lib/types";
@@ -102,6 +102,7 @@ function TopStatusBar() {
 export function AppChrome({ children, version }: { children: React.ReactNode; version: ApplianceVersion }) {
   const pathname = usePathname();
   const activeGroup = useMemo(() => navGroups.find((group) => group.items.some((item) => item.href === pathname || (item.href !== "/" && pathname.startsWith(item.href))))?.label ?? "Command Center", [pathname]);
+  if (pathname === "/login") return children;
   return (
     <div className="min-h-screen bg-[#070a0f] text-[#e6edf5]">
       <div className="grid min-h-screen lg:grid-cols-[280px_minmax(0,1fr)]">
@@ -127,6 +128,7 @@ export function AppChrome({ children, version }: { children: React.ReactNode; ve
             <div className="hidden border-t border-[#223044] p-3 text-xs text-[#617083] lg:block">
               <div className="flex items-center gap-2"><RadioTower className="h-3.5 w-3.5 text-[#36fba1]" /> Persistent bare-metal console</div>
               <div className="mt-1 truncate font-mono text-[10px]" title={version.commit}>v{version.version} · {version.commit.slice(0, 12)}</div>
+              <button type="button" onClick={async () => { await fetch("/api/auth/logout", { method: "POST" }); window.location.assign("/login"); }} className="mt-3 flex w-full items-center gap-2 border border-[#223044] px-2 py-2 text-left text-[#8a98aa] hover:bg-[#121a26] hover:text-white"><LogOut className="h-3.5 w-3.5" /> Sign out</button>
             </div>
           </div>
         </aside>

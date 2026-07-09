@@ -8,7 +8,7 @@ Type=simple
 User=hendo420
 Group=hendo420
 WorkingDirectory=/opt/wan2.2
-Environment=WAN2_API_HOST=0.0.0.0
+Environment=WAN2_API_HOST=127.0.0.1
 Environment=WAN2_API_PORT=8010
 Environment=WAN2_ROOT=/opt/wan2.2
 Environment=WAN2_PYTHON=/opt/wan2-video-venv/bin/python

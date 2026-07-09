@@ -17,7 +17,8 @@
     "db:generate": "prisma generate --config prisma.config.ts",
     "db:push": "tsx src/scripts/init-db.ts",
     "db:studio": "prisma studio --config prisma.config.ts",
-    "release:deploy": "sudo bash scripts/deploy-release.sh"
+    "release:deploy": "sudo bash scripts/deploy-release.sh",
+    "admin:create": "tsx src/scripts/create-admin.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
