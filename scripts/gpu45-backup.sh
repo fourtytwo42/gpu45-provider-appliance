@@ -40,8 +40,15 @@ init_repo() {
 backup_repo() {
   local repo="$1"
   init_repo "$repo"
+  local staging=/var/lib/gpu45/backup-staging
+  rm -rf "$staging"; mkdir -p "$staging"
+  while IFS= read -r -d '' database; do
+    name="$(printf '%s' "$database" | sha256sum | cut -c1-12)-$(basename "$database")"
+    sqlite3 "$database" ".backup '$staging/$name'"
+  done < <(find /var/lib/gpu45 /models/qwen3-tts/api_data -maxdepth 2 -type f -name '*.db' -print0 2>/dev/null)
   local paths=(/var/lib/gpu45 /etc/gpu45 /opt/gpu45-provider-appliance/deploy)
   [[ -d /models/qwen3-tts/api_data/voices ]] && paths+=(/models/qwen3-tts/api_data/voices)
+  while IFS= read -r -d '' metadata; do paths+=("$metadata"); done < <(find /models/qwen3-tts/api_data -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null)
   if [[ -d /models/qwen3-tts/api_data/models ]]; then
     while IFS= read -r -d '' model_dir; do
       while IFS= read -r -d '' model_file; do paths+=("$model_file"); done < <(find "$model_dir" -maxdepth 1 -type f -print0)
@@ -52,7 +59,9 @@ backup_repo() {
       fi
     done < <(find /models/qwen3-tts/api_data/models -mindepth 1 -maxdepth 1 -type d -print0)
   fi
-  restic -r "$repo" backup --one-file-system --tag gpu45-appliance "${paths[@]}"
+  restic -r "$repo" backup --one-file-system --tag gpu45-appliance \
+    --exclude '/var/lib/gpu45/*.db' --exclude '/var/lib/gpu45/*.db-wal' --exclude '/var/lib/gpu45/*.db-shm' \
+    "${paths[@]}"
   restic -r "$repo" forget --prune --keep-daily 7 --keep-weekly 4 --keep-monthly 6
 }
 
