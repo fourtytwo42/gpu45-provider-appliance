@@ -42,7 +42,16 @@ backup_repo() {
   init_repo "$repo"
   local paths=(/var/lib/gpu45 /etc/gpu45 /opt/gpu45-provider-appliance/deploy)
   [[ -d /models/qwen3-tts/api_data/voices ]] && paths+=(/models/qwen3-tts/api_data/voices)
-  [[ -d /models/qwen3-tts/api_data/models ]] && paths+=(/models/qwen3-tts/api_data/models)
+  if [[ -d /models/qwen3-tts/api_data/models ]]; then
+    while IFS= read -r -d '' model_dir; do
+      while IFS= read -r -d '' model_file; do paths+=("$model_file"); done < <(find "$model_dir" -maxdepth 1 -type f -print0)
+      if [[ -d "$model_dir/checkpoint" ]]; then
+        while IFS= read -r checkpoint; do [[ -z "$checkpoint" ]] || paths+=("$checkpoint"); done < <(
+          find "$model_dir/checkpoint" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | head -n 2 | cut -d' ' -f2-
+        )
+      fi
+    done < <(find /models/qwen3-tts/api_data/models -mindepth 1 -maxdepth 1 -type d -print0)
+  fi
   restic -r "$repo" backup --one-file-system --tag gpu45-appliance "${paths[@]}"
   restic -r "$repo" forget --prune --keep-daily 7 --keep-weekly 4 --keep-monthly 6
 }
