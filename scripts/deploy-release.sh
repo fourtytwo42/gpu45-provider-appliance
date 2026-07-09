@@ -19,6 +19,11 @@ fi
 
 mkdir -p "$releases_root" "$data_dir" /etc/gpu45
 
+if [[ ! -f /etc/gpu45/resource-manager.env ]]; then
+  umask 077
+  printf 'GPU45_RESOURCE_MANAGER_TOKEN=%s\n' "$(openssl rand -hex 32)" > /etc/gpu45/resource-manager.env
+fi
+
 if [[ ! -f "$database_path" ]]; then
   source_db="$repo_root/prisma/dev.db"
   if [[ ! -f "$source_db" ]]; then
@@ -45,6 +50,8 @@ if [[ ! -f /etc/gpu45/appliance.env ]]; then
 fi
 sed -i '/^DATABASE_URL=/d' /etc/gpu45/appliance.env
 printf 'DATABASE_URL=file:%s\n' "$database_path" >> /etc/gpu45/appliance.env
+sed -i '/^GPU45_RESOURCE_MANAGER_TOKEN=/d' /etc/gpu45/appliance.env
+grep '^GPU45_RESOURCE_MANAGER_TOKEN=' /etc/gpu45/resource-manager.env >> /etc/gpu45/appliance.env
 chmod 600 /etc/gpu45/appliance.env
 
 rm -rf "$release_dir"
@@ -62,12 +69,14 @@ chmod 644 /etc/gpu45/release.env
 
 install -m 0644 deploy/systemd/gpu45-provider-appliance.service /etc/systemd/system/gpu45-provider-appliance.service
 install -m 0644 deploy/systemd/gpu45-provider-appliance-worker.service /etc/systemd/system/gpu45-provider-appliance-worker.service
+install -m 0644 deploy/systemd/gpu45-resource-manager.service /etc/systemd/system/gpu45-resource-manager.service
 
 if [[ -L "$current_link" ]]; then
   previous_target="$(readlink -f "$current_link")"
 fi
 ln -sfn "$release_dir" "$current_link"
 systemctl daemon-reload
+systemctl enable --now gpu45-resource-manager.service
 systemctl restart gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
 
 healthy=false

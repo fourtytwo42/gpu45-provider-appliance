@@ -10,6 +10,8 @@ const envSchema = z.object({
   GPU45_WHISPER_URL: z.string().default("http://127.0.0.1:8020"),
   GPU45_IMAGE_URL: z.string().default("http://127.0.0.1:8030"),
   GPU45_SEARXNG_URL: z.string().default("http://127.0.0.1:8888"),
+  GPU45_RESOURCE_MANAGER_URL: z.string().default("http://127.0.0.1:8040"),
+  GPU45_RESOURCE_MANAGER_TOKEN: z.string().optional(),
   GPU45_PROVIDER_SERVICE: z.string().default("llama-openai.service"),
   GPU45_FAN_SERVICE: z.string().default("gpu45-v620-fan-controller.service"),
   GPU45_PROXMOX_HOST: z.string().optional(),
@@ -46,6 +48,8 @@ export type ApplianceConfig = {
   whisperUrl: string;
   imageUrl: string;
   searxngUrl: string;
+  resourceManagerUrl: string;
+  resourceManagerToken?: string;
   providerService: string;
   fanService: string;
   proxmoxHost?: string;
@@ -80,6 +84,8 @@ export function getConfig(): ApplianceConfig {
     whisperUrl: parsedEnv.GPU45_WHISPER_URL,
     imageUrl: parsedEnv.GPU45_IMAGE_URL,
     searxngUrl: parsedEnv.GPU45_SEARXNG_URL,
+    resourceManagerUrl: parsedEnv.GPU45_RESOURCE_MANAGER_URL,
+    resourceManagerToken: parsedEnv.GPU45_RESOURCE_MANAGER_TOKEN,
     providerService: parsedEnv.GPU45_PROVIDER_SERVICE,
     fanService: parsedEnv.GPU45_FAN_SERVICE,
     proxmoxHost: parsedEnv.GPU45_PROXMOX_HOST,

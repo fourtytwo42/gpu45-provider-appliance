@@ -1,0 +1,21 @@
+[Unit]
+Description=GPU45 central GPU resource manager
+After=local-fs.target
+Before=gpu45-provider-appliance.service qwen3-tts-api.service gpu45-image-api.service wan2-video-api.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=/etc/gpu45/resource-manager.env
+ExecStart=/usr/bin/python3 /opt/gpu45/current/services/resource-manager/resource_manager.py
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gpu45
+
+[Install]
+WantedBy=multi-user.target

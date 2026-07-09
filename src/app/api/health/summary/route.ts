@@ -1,15 +1,17 @@
 import { collectDashboardSnapshot } from "@/lib/collectors";
 import { getUnifiedJobs } from "@/lib/jobs";
 import { getApplianceVersion } from "@/lib/version";
+import { getResourceState } from "@/lib/resource-manager";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(): Promise<Response> {
   try {
-    const [snapshot, jobs] = await Promise.all([
+    const [snapshot, jobs, resourceState] = await Promise.all([
       collectDashboardSnapshot(),
       getUnifiedJobs(),
+      getResourceState(),
     ]);
     const collectedAt = new Date(snapshot.collectedAt);
     const telemetryFresh = Date.now() - collectedAt.getTime() < 30_000;
@@ -32,12 +34,14 @@ export async function GET(): Promise<Response> {
         vramUsedBytes: snapshot.system.vramUsedBytes,
         vramTotalBytes: snapshot.system.vramTotalBytes,
         diskFreeBytes: snapshot.system.diskFreeBytes,
+        manager: resourceState,
       },
       jobs: jobs.summary,
       checks: {
         telemetryFresh,
         providerHealthy,
         database: true,
+        resourceManager: resourceState.status !== "offline",
       },
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
