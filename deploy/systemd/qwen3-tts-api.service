@@ -25,6 +25,7 @@ Environment=PYTHONPATH=/opt/gpu45/current/services/common
 ExecStart=/opt/qwen3-tts-venv/bin/python -m tts_api
 Restart=on-failure
 RestartSec=10
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target

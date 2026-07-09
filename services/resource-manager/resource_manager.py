@@ -79,7 +79,15 @@ def service_active(service: str) -> bool:
 
 
 def service_action(action: str, service: str) -> None:
-    subprocess.run(["systemctl", action, service], check=True, timeout=90)
+    if action != "stop":
+        subprocess.run(["systemctl", action, service], check=True, timeout=30)
+        return
+    subprocess.run(["systemctl", "stop", "--no-block", service], check=True, timeout=10)
+    deadline = time.time() + 40
+    while time.time() < deadline and service_active(service):
+        time.sleep(1)
+    if service_active(service):
+        subprocess.run(["systemctl", "kill", "--signal=SIGKILL", service], check=False, timeout=10)
 
 
 def post_local(url: str, payload: dict | None = None) -> None:

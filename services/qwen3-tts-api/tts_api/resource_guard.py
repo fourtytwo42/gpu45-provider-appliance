@@ -6,10 +6,13 @@ import glob
 import os
 import subprocess
 import time
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator
 from gpu45_resource import acquire_lease
+
+_LEASE_LOCAL = threading.local()
 
 
 def _truthy(value: str | None, default: bool) -> bool:
@@ -82,9 +85,20 @@ def tts_vram_guard(reason: str, device: str | None = None, exclusive: bool | Non
         yield
         return
 
+    depth = int(getattr(_LEASE_LOCAL, "depth", 0))
+    if depth > 0:
+        _LEASE_LOCAL.depth = depth + 1
+        try:
+            yield
+        finally:
+            _LEASE_LOCAL.depth -= 1
+        return
+
     background = reason in {"audiobook", "presentation"} or "train" in reason
     lease = acquire_lease(f"tts-{os.getpid()}-{reason}", "tts", 50 if background else 70, background, "chunk-boundary" if background else "restart")
+    _LEASE_LOCAL.depth = 1
     try:
         yield
     finally:
+        _LEASE_LOCAL.depth = 0
         lease.release()
