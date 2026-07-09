@@ -3,6 +3,8 @@ import { collectDashboardSnapshot } from "@/lib/collectors";
 import { fanCurvePresets, isSameFanCurve, toFanCurveProfile } from "@/lib/fan-presets";
 import { SectionCard } from "@/components/section-card";
 import { applyFanCurvePresetAction } from "../actions";
+import { getBackupStatus } from "@/lib/backups";
+import { BackupPanel } from "@/components/backup-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +13,7 @@ function formatCurve(points: Array<{ temperatureC: number; pwm: number }>): stri
 }
 
 export default async function SettingsPage() {
-  const snapshot = await collectDashboardSnapshot();
+  const [snapshot, backupStatus] = await Promise.all([collectDashboardSnapshot(), getBackupStatus()]);
   const activeCurve = snapshot.fanCurves.find((curve) => curve.active) ?? snapshot.fanCurves[0];
   const fanPwm = snapshot.system.fanPwm === null ? "n/a" : Math.round(snapshot.system.fanPwm);
   const fanRpm = snapshot.system.fanRpm === null ? "n/a" : `${Math.round(snapshot.system.fanRpm).toLocaleString()} RPM`;
@@ -112,6 +114,9 @@ export default async function SettingsPage() {
             <p>Every preset must command `255 PWM` at or below `86C` to keep margin under the `90C` ceiling.</p>
             <p>The controller keeps the startup burst and both GPU fan headers mapped on every preset apply.</p>
           </div>
+        </SectionCard>
+        <SectionCard title="Backups and recovery" description="Encrypted snapshots and restore verification">
+          <BackupPanel initial={backupStatus} />
         </SectionCard>
       </div>
     </div>

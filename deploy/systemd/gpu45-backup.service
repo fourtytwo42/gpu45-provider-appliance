@@ -1,0 +1,11 @@
+[Unit]
+Description=GPU45 encrypted appliance backup
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/gpu45/current/scripts/gpu45-backup.sh backup
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+ProtectHome=true

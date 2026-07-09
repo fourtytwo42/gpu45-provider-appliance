@@ -23,6 +23,22 @@ if [[ ! -f /etc/gpu45/resource-manager.env ]]; then
   umask 077
   printf 'GPU45_RESOURCE_MANAGER_TOKEN=%s\n' "$(openssl rand -hex 32)" > /etc/gpu45/resource-manager.env
 fi
+if [[ ! -f /etc/gpu45/backup-password ]]; then
+  umask 077
+  openssl rand -base64 48 > /etc/gpu45/backup-password
+fi
+if [[ ! -f /etc/gpu45/backup.env ]]; then
+  cat > /etc/gpu45/backup.env <<EOF
+RESTIC_PASSWORD_FILE=/etc/gpu45/backup-password
+GPU45_BACKUP_REPOSITORY=/models/appliance-backups/restic
+GPU45_BACKUP_TARGET=
+EOF
+  chmod 600 /etc/gpu45/backup.env
+fi
+if ! command -v restic >/dev/null 2>&1; then
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y restic
+fi
 
 if [[ ! -f "$database_path" ]]; then
   source_db="$repo_root/prisma/dev.db"
@@ -70,6 +86,9 @@ chmod 644 /etc/gpu45/release.env
 install -m 0644 deploy/systemd/gpu45-provider-appliance.service /etc/systemd/system/gpu45-provider-appliance.service
 install -m 0644 deploy/systemd/gpu45-provider-appliance-worker.service /etc/systemd/system/gpu45-provider-appliance-worker.service
 install -m 0644 deploy/systemd/gpu45-resource-manager.service /etc/systemd/system/gpu45-resource-manager.service
+for unit in gpu45-backup.service gpu45-backup.timer gpu45-backup-verify.service gpu45-backup-verify.timer gpu45-restore-drill.service gpu45-restore-drill.timer; do
+  install -m 0644 "deploy/systemd/$unit" "/etc/systemd/system/$unit"
+done
 
 if [[ -L "$current_link" ]]; then
   previous_target="$(readlink -f "$current_link")"
@@ -77,6 +96,7 @@ fi
 ln -sfn "$release_dir" "$current_link"
 systemctl daemon-reload
 systemctl enable --now gpu45-resource-manager.service
+systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer
 systemctl restart gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
 
 healthy=false

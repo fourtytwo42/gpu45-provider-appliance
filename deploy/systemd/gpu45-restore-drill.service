@@ -1,0 +1,9 @@
+[Unit]
+Description=GPU45 monthly backup restore drill
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/gpu45/current/scripts/gpu45-backup.sh restore-drill
+Nice=15
+IOSchedulingClass=idle

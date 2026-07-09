@@ -1,0 +1,9 @@
+[Unit]
+Description=GPU45 backup integrity verification
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/gpu45/current/scripts/gpu45-backup.sh verify
+Nice=15
+IOSchedulingClass=idle
