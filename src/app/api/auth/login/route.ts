@@ -9,7 +9,9 @@ export async function POST(request: Request): Promise<Response> {
     const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
     const session = await authenticateAdmin({ username: body.username, password: body.password, userAgent: request.headers.get("user-agent"), ipAddress: forwardedFor });
     const store = await cookies();
-    store.set(adminSessionCookie, session.token, { httpOnly: true, sameSite: "strict", secure: process.env.GPU45_SECURE_COOKIES !== "false", path: "/", expires: session.expiresAt });
+    const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+    const secure = forwardedProto === "https" || new URL(request.url).protocol === "https:";
+    store.set(adminSessionCookie, session.token, { httpOnly: true, sameSite: "strict", secure, path: "/", expires: session.expiresAt });
     return Response.json({ ok: true, username: session.username });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Login failed." }, { status: 401 });

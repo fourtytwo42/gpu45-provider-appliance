@@ -37,6 +37,7 @@ ufw --force reset
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow from "$trusted_subnet" to any port 22 proto tcp comment 'GPU45 SSH'
+ufw allow from "$trusted_subnet" to any port 80 proto tcp comment 'GPU45 console LAN fallback'
 ufw allow from "$trusted_subnet" to any port 443 proto tcp comment 'GPU45 console HTTPS'
 ufw allow from "$trusted_subnet" to any port 30001 proto tcp comment 'GPU45 Responses API'
 ufw --force enable

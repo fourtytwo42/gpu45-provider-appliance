@@ -1,11 +1,22 @@
-https://gpu45.local, https://192.168.50.189 {
-  tls internal
+(gpu45_console) {
   encode zstd gzip
   reverse_proxy 127.0.0.1:3010
   header {
-    Strict-Transport-Security "max-age=31536000"
     X-Content-Type-Options "nosniff"
     X-Frame-Options "DENY"
     Referrer-Policy "no-referrer"
   }
+}
+
+https://gpu45.local, https://192.168.50.189 {
+  tls internal
+  import gpu45_console
+  header {
+    Strict-Transport-Security "max-age=31536000"
+  }
+}
+
+# Authenticated LAN fallback for embedded clients that cannot trust the appliance CA.
+http://gpu45.local, http://192.168.50.189 {
+  import gpu45_console
 }
