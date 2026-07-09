@@ -39,6 +39,21 @@ class ResourceManagerTests(unittest.TestCase):
             self.assertEqual(rm.reclaim_expired(db), 1)
             self.assertEqual(db.execute("SELECT status FROM leases WHERE lease_id='stale'").fetchone()[0], "interrupted")
 
+    def test_higher_priority_preempts_only_preemptible_owner(self):
+        with rm.connect() as db:
+            db.execute(
+                "INSERT INTO leases VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("tts", "book", "tts", 50, 1, "chunk", "active", rm.now(), rm.now(), rm.now(), None, "{}"),
+            )
+            original_active, original_post = rm.service_active, rm.post_local
+            rm.service_active, rm.post_local = lambda _service: False, lambda _url, _payload=None: None
+            try:
+                self.assertTrue(rm.preempt_active(db, db.execute("SELECT * FROM leases WHERE lease_id='tts'").fetchone(), 100))
+            finally:
+                rm.service_active, rm.post_local = original_active, original_post
+            self.assertEqual(db.execute("SELECT status FROM leases WHERE lease_id='tts'").fetchone()[0], "interrupted")
+            self.assertEqual(db.execute("SELECT value FROM state WHERE key='resume_tts'").fetchone()[0], "1")
+
 
 if __name__ == "__main__":
     unittest.main()

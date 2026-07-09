@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 import threading
 import time
 import uuid
@@ -14,6 +15,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+import urllib.request
 
 DB_PATH = Path(os.environ.get("GPU45_RESOURCE_DB", "/var/lib/gpu45/resource-manager.db"))
 TOKEN = os.environ.get("GPU45_RESOURCE_MANAGER_TOKEN", "")
@@ -69,6 +71,65 @@ def event(db: sqlite3.Connection, event_type: str, lease_id: str | None, job_id:
     )
 
 
+def service_active(service: str) -> bool:
+    try:
+        return subprocess.run(["systemctl", "is-active", "--quiet", service], check=False).returncode == 0
+    except OSError:
+        return False
+
+
+def service_action(action: str, service: str) -> None:
+    subprocess.run(["systemctl", action, service], check=True, timeout=90)
+
+
+def post_local(url: str, payload: dict | None = None) -> None:
+    request = urllib.request.Request(url, data=json.dumps(payload or {}).encode(), headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(request, timeout=30):
+        pass
+
+
+def transition_before_grant(db: sqlite3.Connection, row: sqlite3.Row) -> None:
+    metadata = json.loads(row["metadata_json"] or "{}")
+    stopped = []
+    if row["kind"] != "llm" and service_active("llama-openai.service"):
+        service_action("stop", "llama-openai.service"); stopped.append("llama-openai.service")
+    metadata["stoppedServices"] = stopped
+    db.execute("UPDATE leases SET metadata_json=? WHERE lease_id=?", (json.dumps(metadata), row["lease_id"]))
+
+
+def restore_after_release(db: sqlite3.Connection, row: sqlite3.Row) -> None:
+    metadata = json.loads(row["metadata_json"] or "{}")
+    for service in metadata.get("stoppedServices", []):
+        service_action("start", service)
+    resume_tts = db.execute("SELECT value FROM state WHERE key='resume_tts'").fetchone()
+    if resume_tts and resume_tts[0] == "1":
+        service_action("start", "qwen3-tts-api.service")
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            try:
+                post_local("http://127.0.0.1:8000/resource/resume")
+                break
+            except Exception:
+                time.sleep(1)
+        db.execute("DELETE FROM state WHERE key='resume_tts'")
+
+
+def preempt_active(db: sqlite3.Connection, active: sqlite3.Row, incoming_priority: int) -> bool:
+    if not active["preemptible"] or incoming_priority <= active["priority"]:
+        return False
+    if active["kind"] == "tts":
+        try:
+            post_local("http://127.0.0.1:8000/resource/pause", {"reason": "Higher-priority Codex or foreground GPU request"})
+        except Exception:
+            pass
+        if service_active("qwen3-tts-api.service"):
+            service_action("stop", "qwen3-tts-api.service")
+        db.execute("INSERT OR REPLACE INTO state(key,value) VALUES('resume_tts','1')")
+    db.execute("UPDATE leases SET status='interrupted', released_at=? WHERE lease_id=?", (now(), active["lease_id"]))
+    event(db, "lease.preempted", active["lease_id"], active["job_id"], incomingPriority=incoming_priority)
+    return True
+
+
 def reclaim_expired(db: sqlite3.Connection) -> int:
     cutoff = time.time() - LEASE_TIMEOUT
     reclaimed = 0
@@ -97,6 +158,12 @@ def grant_next(db: sqlite3.Connection) -> sqlite3.Row | None:
     ).fetchone()
     if not queued:
         return None
+    try:
+        transition_before_grant(db, queued)
+    except Exception as exc:
+        db.execute("UPDATE leases SET status='interrupted', released_at=? WHERE lease_id=?", (now(), queued["lease_id"]))
+        event(db, "lease.transition_failed", queued["lease_id"], queued["job_id"], error=str(exc))
+        return grant_next(db)
     stamp = now()
     db.execute(
         "UPDATE leases SET status='active', acquired_at=?, heartbeat_at=? WHERE lease_id=?",
@@ -204,6 +271,9 @@ class Handler(BaseHTTPRequestHandler):
                          "queued", stamp, json.dumps(payload.get("metadata", {}))),
                     )
                     event(db, "lease.queued", lease_id, str(payload["jobId"]), priority=priority)
+                    active = db.execute("SELECT * FROM leases WHERE status='active'").fetchone()
+                    if active:
+                        preempt_active(db, active, priority)
                     owner = grant_next(db)
                     granted = bool(owner and owner["lease_id"] == lease_id)
                     self.send_json(HTTPStatus.OK if granted else HTTPStatus.ACCEPTED, {
@@ -222,6 +292,7 @@ class Handler(BaseHTTPRequestHandler):
                     if action == "release":
                         db.execute("UPDATE leases SET status='released', released_at=? WHERE lease_id=?", (now(), lease_id))
                         event(db, "lease.released", lease_id, lease["job_id"])
+                        restore_after_release(db, lease)
                         grant_next(db)
                         self.send_json(HTTPStatus.OK, {"ok": True}); return
                 self.send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})

@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from gpu45_resource import acquire_lease
 
 
 WAN_ROOT = Path(os.environ.get("WAN2_ROOT", "/opt/wan2.2"))
@@ -306,7 +307,7 @@ def run_job(job: dict[str, Any]) -> None:
     log_path = LOG_DIR / f"{job_id}.log"
     out_prefix = OUTPUT_DIR / job_id
     update_job(job_id, status="running", started_at=now())
-    systemctl("stop", LLM_SERVICE)
+    lease = None
     command = [
         PYTHON,
         "-m",
@@ -334,6 +335,7 @@ def run_job(job: dict[str, Any]) -> None:
         command.extend(["--seed", str(job["seed"])])
 
     try:
+        lease = acquire_lease(job_id, "video", 50, False, "atomic", timeout=1800)
         with log_path.open("w", encoding="utf-8") as log:
             log.write("$ " + " ".join(command) + "\n\n")
             log.flush()
@@ -349,8 +351,8 @@ def run_job(job: dict[str, Any]) -> None:
     except Exception as exc:
         update_job(job_id, status="failed", completed_at=now(), error=str(exc))
     finally:
-        if RESTART_LLM:
-            systemctl("start", LLM_SERVICE)
+        if lease is not None:
+            lease.release()
 
 
 def runner() -> None:
@@ -435,8 +437,6 @@ def cancel_job(job_id: str) -> dict[str, Any]:
                 job["completed_at"] = now()
                 job["error"] = "Cancelled by user."
                 save_jobs(jobs)
-                if RESTART_LLM:
-                    systemctl("start", LLM_SERVICE)
                 return {"ok": True, "terminated_pids": terminated}
     raise HTTPException(status_code=409, detail="Only queued or running jobs can be cancelled.")
 

@@ -97,6 +97,14 @@ chmod 644 /etc/gpu45/release.env
 install -m 0644 deploy/systemd/gpu45-provider-appliance.service /etc/systemd/system/gpu45-provider-appliance.service
 install -m 0644 deploy/systemd/gpu45-provider-appliance-worker.service /etc/systemd/system/gpu45-provider-appliance-worker.service
 install -m 0644 deploy/systemd/gpu45-resource-manager.service /etc/systemd/system/gpu45-resource-manager.service
+install -m 0644 deploy/systemd/gpu45-responses-proxy.service /etc/systemd/system/gpu45-responses-proxy.service
+install -m 0644 deploy/systemd/qwen3-tts-api.service /etc/systemd/system/qwen3-tts-api.service
+install -m 0644 deploy/systemd/gpu45-image-api.service /etc/systemd/system/gpu45-image-api.service
+install -m 0644 deploy/systemd/wan2-video-api.service /etc/systemd/system/wan2-video-api.service
+install -m 0755 deploy/usr/local/bin/gpu45-responses-proxy /usr/local/bin/gpu45-responses-proxy
+cp -a services/qwen3-tts-api/tts_api/. /opt/qwen3-tts/tts_api/
+cp -a services/image-api/image_api/. /opt/gpu45-image-api/image_api/
+cp -a services/wan2-video-api/wan_api/. /opt/wan2.2/wan_api/
 for unit in gpu45-backup.service gpu45-backup.timer gpu45-backup-verify.service gpu45-backup-verify.timer gpu45-restore-drill.service gpu45-restore-drill.timer; do
   install -m 0644 "deploy/systemd/$unit" "/etc/systemd/system/$unit"
 done
@@ -106,7 +114,8 @@ if [[ -L "$current_link" ]]; then
 fi
 ln -sfn "$release_dir" "$current_link"
 systemctl daemon-reload
-systemctl enable --now gpu45-resource-manager.service
+systemctl enable gpu45-resource-manager.service
+systemctl restart gpu45-resource-manager.service
 systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer
 systemctl restart gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
 

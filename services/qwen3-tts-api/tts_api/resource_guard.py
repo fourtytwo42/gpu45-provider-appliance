@@ -9,6 +9,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator
+from gpu45_resource import acquire_lease
 
 
 def _truthy(value: str | None, default: bool) -> bool:
@@ -81,30 +82,9 @@ def tts_vram_guard(reason: str, device: str | None = None, exclusive: bool | Non
         yield
         return
 
-    min_free_mb = int(os.environ.get("QWEN_TTS_MIN_FREE_VRAM_MB", "8192"))
-    service = os.environ.get("QWEN_TTS_LLM_SERVICE", "llama-openai.service")
-    restart_after = _truthy(os.environ.get("QWEN_TTS_RESTART_LLM_AFTER"), False)
-    exclusive_gpu = _truthy(os.environ.get("QWEN_TTS_EXCLUSIVE_GPU"), True) if exclusive is None else exclusive
-    stopped = False
-
-    state = read_vram_state()
-    should_stop = exclusive_gpu and _service_is_active(service)
-    should_stop = should_stop or (state is not None and state.free_mb < min_free_mb)
-    if should_stop:
-        detail = "exclusive GPU access requested"
-        if state is not None and state.free_mb < min_free_mb:
-            detail = f"free VRAM {state.free_mb} MiB below {min_free_mb} MiB"
-        print(
-            f"[vram-guard] {reason}: {detail}; stopping {service}",
-            flush=True,
-        )
-        _systemctl("stop", service)
-        stopped = True
-        _wait_for_free_vram(min_free_mb)
-
+    background = reason in {"audiobook", "presentation"} or "train" in reason
+    lease = acquire_lease(f"tts-{os.getpid()}-{reason}", "tts", 50 if background else 70, background, "chunk-boundary" if background else "restart")
     try:
         yield
     finally:
-        if stopped and restart_after:
-            print(f"[vram-guard] restarting {service} after {reason}", flush=True)
-            _systemctl("start", service)
+        lease.release()

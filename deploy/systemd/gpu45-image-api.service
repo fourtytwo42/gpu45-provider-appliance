@@ -19,6 +19,8 @@ Environment=IMAGE_TTS_RESOURCE_URL=http://127.0.0.1:8000/resource
 Environment=IMAGE_RESTART_LLM=true
 Environment=HSA_OVERRIDE_GFX_VERSION=10.3.0
 Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+EnvironmentFile=/etc/gpu45/resource-manager.env
+Environment=PYTHONPATH=/opt/gpu45/current/services/common
 ExecStart=/opt/gpu45-image-venv/bin/python -m image_api
 Restart=on-failure
 RestartSec=5

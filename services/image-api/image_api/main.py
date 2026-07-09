@@ -20,6 +20,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from huggingface_hub import snapshot_download
 from pydantic import BaseModel, Field
+from gpu45_resource import acquire_lease
 
 DATA_DIR = Path(os.environ.get("IMAGE_API_DATA", "/models/image-gen"))
 OUTPUT_DIR = DATA_DIR / "outputs"
@@ -54,14 +55,6 @@ async def lifespan(_app: FastAPI):
             print("Recovered interrupted image jobs after service restart.", flush=True)
     except Exception as exc:
         print(f"Failed to recover interrupted image jobs: {exc}", flush=True)
-    try:
-        start_gpu_peer_services(RECOVERY_START_SERVICES)
-    except Exception as exc:
-        print(f"Failed to restart image peer services during recovery: {exc}", flush=True)
-    try:
-        start_llm()
-    except Exception as exc:
-        print(f"Failed to restart LLM during image API recovery: {exc}", flush=True)
     yield
 
 
@@ -465,14 +458,12 @@ def generate_job(job_id: str) -> None:
     started = time.time()
     peak_vram = 0
     peak_temp = None
-    stopped_peer_services: list[str] = []
+    lease = None
     try:
         job = update_job(job_id, status="running", started_at=now_iso(), progress_percent=0, progress_label="Starting image job", progress_step=0, progress_total=None, eta_seconds=None, elapsed_seconds=0, updated_at=now_iso())
         profile = PROFILES[job["profile"]]
-        update_progress(job_id, 2, "Stopping other GPU services", started=started)
-        stopped_peer_services = stop_gpu_peer_services(f"Image generation job {job_id}")
-        update_progress(job_id, 4, "Stopping LLM to free VRAM", started=started)
-        stop_llm()
+        update_progress(job_id, 2, "Waiting for GPU ownership", started=started)
+        lease = acquire_lease(job_id, "image", 70, False, "atomic")
         try:
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
@@ -546,8 +537,8 @@ def generate_job(job_id: str) -> None:
         update_job(job_id, status="failed", completed_at=now_iso(), duration_seconds=round(time.time() - started, 2), error=str(exc), progress_label="Failed", updated_at=now_iso())
     finally:
         unload_pipelines()
-        start_gpu_peer_services(stopped_peer_services)
-        start_llm()
+        if lease is not None:
+            lease.release()
 
 
 @app.get("/")

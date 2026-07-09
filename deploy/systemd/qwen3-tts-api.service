@@ -20,6 +20,8 @@ Environment=QWEN_TTS_MIN_FREE_VRAM_MB=8192
 Environment=QWEN_TTS_LLM_SERVICE=llama-openai.service
 Environment=QWEN_TTS_RESTART_LLM_AFTER=true
 Environment=QWEN_TTS_TRAINING_EXCLUSIVE_LLM=true
+EnvironmentFile=/etc/gpu45/resource-manager.env
+Environment=PYTHONPATH=/opt/gpu45/current/services/common
 ExecStart=/opt/qwen3-tts-venv/bin/python -m tts_api
 Restart=on-failure
 RestartSec=10

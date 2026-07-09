@@ -26,6 +26,8 @@ Environment=PYTORCH_ALLOC_CONF=expandable_segments:True
 Environment=WAN2_OUTPUT_FPS=6
 Environment=MIOPEN_FIND_MODE=2
 Environment=TOKENIZERS_PARALLELISM=false
+EnvironmentFile=/etc/gpu45/resource-manager.env
+Environment=PYTHONPATH=/opt/gpu45/current/services/common
 ExecStart=/opt/wan2-video-venv/bin/python -m wan_api
 Restart=on-failure
 RestartSec=5

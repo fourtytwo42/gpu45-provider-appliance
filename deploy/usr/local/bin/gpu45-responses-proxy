@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+from gpu45_resource import acquire_lease
 
 UPSTREAM = "http://127.0.0.1:30000"
 MAX_STORED_RESPONSES = 200
@@ -784,6 +785,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         requested_model = None
         inference_request = self.command == "POST" and path.startswith("/v1/")
         lock_acquired = False
+        resource_lease = None
 
         if self.command == "POST" and raw_body:
             try:
@@ -800,9 +802,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 MODEL_REQUEST_LOCK.acquire()
                 lock_acquired = True
                 try:
+                    resource_lease = acquire_lease(f"codex-{uuid.uuid4().hex[:12]}", "llm", 100, False, "keep-loaded", timeout=600)
                     ensure_model_loaded(selected_model)
                 except Exception as exc:
+                    if resource_lease is not None:
+                        resource_lease.release()
+                        resource_lease = None
                     MODEL_REQUEST_LOCK.release()
+                    lock_acquired = False
                     self.send_json(503, {"error": {"message": str(exc), "type": "model_load_error"}})
                     record_usage(api_key["id"] if api_key else None, selected_model["servedAlias"], requested_model, 503)
                     return
@@ -894,6 +901,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 record_usage(api_key["id"] if api_key else None, selected_model["servedAlias"] if selected_model else "unknown", requested_model, 499)
             if lock_acquired:
                 MODEL_REQUEST_LOCK.release()
+            if resource_lease is not None:
+                resource_lease.release()
 
     def proxy_upstream_response(self, req, path, request_body, namespace_map, api_key_id, model, requested_model, inference_request):
         with urllib.request.urlopen(req, timeout=600) as resp:

@@ -4,6 +4,8 @@ After=network-online.target gpu45-host-tune.service llama-openai.service
 Wants=network-online.target llama-openai.service
 
 [Service]
+EnvironmentFile=/etc/gpu45/resource-manager.env
+Environment=PYTHONPATH=/opt/gpu45/current/services/common
 Type=simple
 User=root
 Group=root
