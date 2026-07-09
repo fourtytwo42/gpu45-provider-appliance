@@ -24,6 +24,7 @@ install -d -m 0755 /etc/caddy /var/lib/gpu45
 install -m 0644 "$repo_root/deploy/caddy/Caddyfile" /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile
 systemctl enable --now avahi-daemon caddy
+systemctl reload caddy
 
 install -m 0644 "$repo_root/deploy/systemd/gpu45-image-api.service" /etc/systemd/system/gpu45-image-api.service
 install -m 0644 "$repo_root/deploy/systemd/gpu45-whisper-api.service" /etc/systemd/system/gpu45-whisper-api.service
