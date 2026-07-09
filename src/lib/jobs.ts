@@ -5,7 +5,7 @@ import { deleteTtsAudiobook, deleteTtsModel, deleteTtsPresentation, deleteTtsSyn
 import { cancelVideoJob, deleteVideoJob, getVideoSnapshot } from "./video";
 import { deleteWhisperJob, getWhisperSnapshot } from "./whisper";
 
-export type UnifiedJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "stopped" | "needs_review";
+export type UnifiedJobStatus = "queued" | "running" | "paused" | "unknown" | "completed" | "failed" | "cancelled" | "stopped" | "needs_review";
 export type UnifiedJobKind = "download" | "benchmark" | "tts" | "audiobook" | "whisper" | "image" | "video" | "model-training" | "voice" | "presentation";
 export type UnifiedJobAction = "cancel" | "delete" | "retry" | "download";
 
@@ -29,18 +29,23 @@ export type UnifiedJob = {
   actions?: UnifiedJobAction[];
   actionLabels?: Partial<Record<UnifiedJobAction, string>>;
   resourceImpact?: string | null;
+  resourceOwner?: string | null;
+  waitReason?: string | null;
+  preemptible?: boolean | null;
+  resumePolicy?: string | null;
+  recoveryState?: string | null;
 };
 
 export type JobsSummary = { total: number; active: number; queued: number; failed: number; completed: number };
 
-function normalizeStatus(status: string): UnifiedJobStatus {
-  if (status === "complete") return "completed";
+export function normalizeStatus(status: string): UnifiedJobStatus {
+  if (status === "complete" || status === "ready") return "completed";
   if (status === "training") return "running";
-  if (["queued", "running", "completed", "failed", "cancelled", "stopped", "needs_review"].includes(status)) return status as UnifiedJobStatus;
-  return "running";
+  if (["queued", "running", "paused", "completed", "failed", "cancelled", "stopped", "needs_review"].includes(status)) return status as UnifiedJobStatus;
+  return "unknown";
 }
 
-function isActive(status: UnifiedJobStatus): boolean { return status === "queued" || status === "running"; }
+function isActive(status: UnifiedJobStatus): boolean { return status === "queued" || status === "running" || status === "paused"; }
 function sortDate(job: UnifiedJob): string { return job.updatedAt ?? job.finishedAt ?? job.startedAt ?? job.createdAt ?? ""; }
 
 function actionsFor(kind: UnifiedJobKind, status: UnifiedJobStatus, hasOutput = false): UnifiedJobAction[] {
@@ -49,7 +54,7 @@ function actionsFor(kind: UnifiedJobKind, status: UnifiedJobStatus, hasOutput = 
   if (kind === "audiobook" && (status === "running" || status === "queued")) actions.push("cancel");
   if (kind === "presentation" && (status === "running" || status === "queued")) actions.push("cancel");
   if (kind === "video" && (status === "running" || status === "queued")) actions.push("cancel");
-  if (["download", "tts", "audiobook", "presentation", "whisper", "image", "video", "model-training", "voice"].includes(kind) && status !== "running") actions.push("delete");
+  if (["download", "tts", "audiobook", "presentation", "whisper", "image", "video", "model-training", "voice"].includes(kind) && !["running", "unknown"].includes(status)) actions.push("delete");
   return actions;
 }
 

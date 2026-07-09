@@ -4,6 +4,10 @@ JSON store and file paths for voices and models.
 import json
 import os
 import re
+import shutil
+import sqlite3
+import stat
+import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -26,6 +30,9 @@ SAMPLE_WAV = "sample.wav"
 CHECKPOINT_DIR = "checkpoint"
 TRAIN_RAW_JSONL = "train_raw.jsonl"
 TRAIN_WITH_CODES_JSONL = "train_with_codes.jsonl"
+STORE_DB = "jobs.db"
+STORE_SCHEMA_VERSION = "1"
+_STORE_LOCK = threading.RLock()
 
 
 def _data_dir() -> str:
@@ -150,6 +157,96 @@ def _write_json_atomic(path: str, value: Any) -> None:
     os.replace(tmp_path, path)
 
 
+def _store_db_path() -> str:
+    return os.path.join(_data_dir(), STORE_DB)
+
+
+def _connect_store() -> sqlite3.Connection:
+    db = sqlite3.connect(_store_db_path(), timeout=30)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA synchronous=FULL")
+    db.execute("PRAGMA foreign_keys=ON")
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS records (
+          store_name TEXT NOT NULL,
+          record_id TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          payload_json TEXT NOT NULL,
+          updated_at REAL NOT NULL,
+          PRIMARY KEY (store_name, record_id)
+        );
+        CREATE INDEX IF NOT EXISTS records_store_position_idx
+          ON records(store_name, position);
+        """
+    )
+    db.execute(
+        "INSERT OR REPLACE INTO metadata(key,value) VALUES('schema_version',?)",
+        (STORE_SCHEMA_VERSION,),
+    )
+    return db
+
+
+def _migration_key(store_name: str) -> str:
+    return f"json_imported:{store_name}"
+
+
+def _backup_migrated_json(path: str) -> str:
+    backup_path = f"{path}.migration-{int(time.time())}.bak"
+    shutil.copy2(path, backup_path)
+    os.chmod(backup_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+    return backup_path
+
+
+def _ensure_imported(db: sqlite3.Connection, store_name: str, json_path: str) -> None:
+    key = _migration_key(store_name)
+    if db.execute("SELECT 1 FROM metadata WHERE key=?", (key,)).fetchone():
+        return
+    records = _load_json_list(json_path)
+    if os.path.exists(json_path):
+        backup_path = _backup_migrated_json(json_path)
+        print(f"Migrated {json_path} to SQLite; read-only backup: {backup_path}", flush=True)
+    stamp = time.time()
+    for position, record in enumerate(records):
+        record_id = str(record.get("id") or f"legacy-{position}")
+        db.execute(
+            "INSERT OR REPLACE INTO records(store_name,record_id,position,payload_json,updated_at) VALUES(?,?,?,?,?)",
+            (store_name, record_id, position, json.dumps(record, ensure_ascii=False), stamp),
+        )
+    db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (key, str(int(stamp))))
+
+
+def _load_store(store_name: str, json_path: str) -> List[Dict[str, Any]]:
+    with _STORE_LOCK, _connect_store() as db:
+        _ensure_imported(db, store_name, json_path)
+        rows = db.execute(
+            "SELECT payload_json FROM records WHERE store_name=? ORDER BY position",
+            (store_name,),
+        ).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows]
+
+
+def _save_store(store_name: str, json_path: str, records: List[Dict[str, Any]]) -> None:
+    with _STORE_LOCK, _connect_store() as db:
+        _ensure_imported(db, store_name, json_path)
+        db.commit()
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("DELETE FROM records WHERE store_name=?", (store_name,))
+        stamp = time.time()
+        for position, record in enumerate(records):
+            record_id = str(record.get("id") or f"legacy-{position}")
+            db.execute(
+                "INSERT INTO records(store_name,record_id,position,payload_json,updated_at) VALUES(?,?,?,?,?)",
+                (store_name, record_id, position, json.dumps(record, ensure_ascii=False), stamp),
+            )
+        db.commit()
+
+
 def _backup_json(path: str, reason: str) -> str:
     backup_path = f"{path}.corrupt-{int(time.time())}-{reason}"
     try:
@@ -200,30 +297,27 @@ def slug_from_name(name: str) -> str:
 
 
 def load_voices() -> List[Dict[str, Any]]:
-    return _load_json_list(voices_json_path())
+    return _load_store("voices", voices_json_path())
 
 
 def save_voices(voices: List[Dict[str, Any]]) -> None:
-    path = voices_json_path()
-    _write_json_atomic(path, voices)
+    _save_store("voices", voices_json_path(), voices)
 
 
 def load_models() -> List[Dict[str, Any]]:
-    return _load_json_list(models_json_path())
+    return _load_store("models", models_json_path())
 
 
 def save_models(models: List[Dict[str, Any]]) -> None:
-    path = models_json_path()
-    _write_json_atomic(path, models)
+    _save_store("models", models_json_path(), models)
 
 
 def load_voice_jobs() -> List[Dict[str, Any]]:
-    return _load_json_list(voice_jobs_json_path())
+    return _load_store("voice_jobs", voice_jobs_json_path())
 
 
 def save_voice_jobs(jobs: List[Dict[str, Any]]) -> None:
-    path = voice_jobs_json_path()
-    _write_json_atomic(path, jobs)
+    _save_store("voice_jobs", voice_jobs_json_path(), jobs)
 
 
 def get_voice_job_by_id(job_id: str) -> Optional[Dict[str, Any]]:
@@ -258,12 +352,11 @@ def delete_voice_job(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def load_synthesis_jobs() -> List[Dict[str, Any]]:
-    return _load_json_list(synthesis_jobs_json_path())
+    return _load_store("synthesis_jobs", synthesis_jobs_json_path())
 
 
 def save_synthesis_jobs(jobs: List[Dict[str, Any]]) -> None:
-    path = synthesis_jobs_json_path()
-    _write_json_atomic(path, jobs)
+    _save_store("synthesis_jobs", synthesis_jobs_json_path(), jobs)
 
 
 def get_synthesis_job_by_id(job_id: str) -> Optional[Dict[str, Any]]:
@@ -304,12 +397,11 @@ def delete_synthesis_job(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def load_audiobook_jobs() -> List[Dict[str, Any]]:
-    return _load_json_list(audiobook_jobs_json_path())
+    return _load_store("audiobook_jobs", audiobook_jobs_json_path())
 
 
 def save_audiobook_jobs(jobs: List[Dict[str, Any]]) -> None:
-    path = audiobook_jobs_json_path()
-    _write_json_atomic(path, jobs)
+    _save_store("audiobook_jobs", audiobook_jobs_json_path(), jobs)
 
 
 def get_audiobook_job_by_id(job_id: str) -> Optional[Dict[str, Any]]:
@@ -368,12 +460,11 @@ def delete_audiobook_job(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def load_presentation_jobs() -> List[Dict[str, Any]]:
-    return _load_json_list(presentation_jobs_json_path())
+    return _load_store("presentation_jobs", presentation_jobs_json_path())
 
 
 def save_presentation_jobs(jobs: List[Dict[str, Any]]) -> None:
-    path = presentation_jobs_json_path()
-    _write_json_atomic(path, jobs)
+    _save_store("presentation_jobs", presentation_jobs_json_path(), jobs)
 
 
 def get_presentation_job_by_id(job_id: str) -> Optional[Dict[str, Any]]:
