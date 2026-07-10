@@ -521,7 +521,7 @@ def generate_job(job_id: str) -> None:
             if job.get("guidance_scale") is not None:
                 kwargs["true_cfg_scale"] = job["guidance_scale"]
         else:
-            if job.get("negative_prompt") and profile["pipeline"] not in {"flux", "qwen"}:
+            if job.get("negative_prompt") and profile["pipeline"] not in {"flux", "flux2-klein", "qwen"}:
                 kwargs["negative_prompt"] = job["negative_prompt"]
             if job.get("guidance_scale") is not None:
                 kwargs["guidance_scale"] = job["guidance_scale"]
