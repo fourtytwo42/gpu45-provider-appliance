@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminSessionCookie, verifyAdminSessionToken } from "@/lib/auth-token";
 
-const publicPaths = new Set(["/login", "/api/auth/login", "/api/health/summary", "/api/version"]);
+const publicPaths = new Set(["/login", "/api/auth/login", "/api/health/probe", "/api/health/summary", "/api/version"]);
 const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 
 function securityHeaders(response: NextResponse): NextResponse {
