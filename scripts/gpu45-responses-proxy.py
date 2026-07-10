@@ -254,6 +254,9 @@ def ensure_model_loaded(model):
         "flashAttention",
     )
     if all(current.get(key) == next_profile.get(key) for key in restart_keys):
+        active = subprocess.run(["systemctl", "is-active", "--quiet", PROVIDER_SERVICE], check=False).returncode == 0
+        if not active:
+            subprocess.run(["systemctl", "start", PROVIDER_SERVICE], check=True, timeout=30)
         return
 
     profile_path = Path(PROFILE_PATH)
