@@ -75,10 +75,12 @@ class PresentationTtsTests(unittest.TestCase):
             self.assertTrue(any(node.attrib.get("Extension") == "mp3" for node in content_types.findall(f"{{{CT_NS}}}Default")))
             slide1 = ET.fromstring(zf.read("ppt/slides/slide1.xml"))
             slide2 = ET.fromstring(zf.read("ppt/slides/slide2.xml"))
+            self.assertNotIn(b'r:id=""', zf.read("ppt/slides/slide1.xml"))
             self.assertEqual(slide1.find(f"{{{P_NS}}}transition").attrib.get("advClick"), "0")
             self.assertEqual(slide2.find(f"{{{P_NS}}}transition").attrib.get("advTm"), "1500")
             rels = ET.fromstring(zf.read("ppt/slides/_rels/slide1.xml.rels"))
             self.assertTrue(any(rel.attrib.get("Type") == presentation_tts.MEDIA_REL_TYPE for rel in rels.findall(f"{{{REL_NS}}}Relationship")))
+        presentation_tts.validate_pptx(out)
 
     def test_delete_presentation_job_removes_files(self):
         job = presentation_tts.create_presentation_job(str(self.pptx), "fixture.pptx", "model-1", "Fixture")
