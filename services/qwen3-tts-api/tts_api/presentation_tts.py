@@ -241,6 +241,14 @@ def request_stop(job_id: str) -> dict[str, Any]:
         raise KeyError("Presentation job not found")
     if job.get("status") not in ("queued", "running"):
         return job
+    if job.get("status") == "queued":
+        return store.update_presentation_job(
+            job_id,
+            status="stopped",
+            stop_requested=True,
+            progress_label="Stopped before processing",
+            updated_at=utcnow(),
+        ) or job
     return store.update_presentation_job(job_id, stop_requested=True, progress_label="Stop requested", updated_at=utcnow()) or job
 
 
@@ -359,7 +367,7 @@ def _synthesize_slide_audio(job_id: str, slide: dict[str, Any], model_id: str) -
 def run_presentation_job(job_id: str) -> None:
     started = monotonic()
     job = store.get_presentation_job_by_id(job_id)
-    if not job:
+    if not job or job.get("status") == "stopped" or job.get("stop_requested"):
         return
     with tts_vram_guard("presentation", device=DEVICE):
         try:
