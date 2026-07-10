@@ -135,8 +135,8 @@ async def lifespan(app: FastAPI):
                     chunk.update(status="pending", updated_at=now)
                     chunk.pop("started_at", None)
             job.update(
-                status="stopped",
-                progress_label="Interrupted by service restart",
+                status="paused" if job.get("paused_by_resource") else "stopped",
+                progress_label=(job.get("pause_reason") or "Paused for GPU handoff") if job.get("paused_by_resource") else "Interrupted by service restart",
                 current_chunk=None,
                 stop_requested=False,
                 updated_at=now,
@@ -153,8 +153,8 @@ async def lifespan(app: FastAPI):
                     slide.update(status="pending", updated_at=now)
                     slide.pop("started_at", None)
             job.update(
-                status="stopped",
-                progress_label="Interrupted by service restart",
+                status="paused" if job.get("paused_by_resource") else "stopped",
+                progress_label=(job.get("pause_reason") or "Paused for GPU handoff") if job.get("paused_by_resource") else "Interrupted by service restart",
                 current_slide=None,
                 stop_requested=False,
                 updated_at=now,
