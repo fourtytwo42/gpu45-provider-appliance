@@ -163,6 +163,11 @@ export async function POST(request: Request): Promise<Response> {
 
     return Response.json({ error: "Unknown TTS action." }, { status: 400 });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "TTS action failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "TTS action failed";
+    return Response.json({
+      error: message.includes("parse body as FormData")
+        ? "The PowerPoint upload could not be read. Use a valid .pptx file no larger than 120 MB."
+        : message,
+    }, { status: 500 });
   }
 }
