@@ -801,18 +801,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     return
                 MODEL_REQUEST_LOCK.acquire()
                 lock_acquired = True
-                try:
-                    resource_lease = acquire_lease(f"codex-{uuid.uuid4().hex[:12]}", "llm", 100, False, "keep-loaded", timeout=600)
-                    ensure_model_loaded(selected_model)
-                except Exception as exc:
-                    if resource_lease is not None:
-                        resource_lease.release()
-                        resource_lease = None
-                    MODEL_REQUEST_LOCK.release()
-                    lock_acquired = False
-                    self.send_json(503, {"error": {"message": str(exc), "type": "model_load_error"}})
-                    record_usage(api_key["id"] if api_key else None, selected_model["servedAlias"], requested_model, 503)
-                    return
+                if path != "/v1/responses":
+                    try:
+                        resource_lease = acquire_lease(f"codex-{uuid.uuid4().hex[:12]}", "llm", 100, False, "keep-loaded", timeout=600)
+                        ensure_model_loaded(selected_model)
+                    except Exception as exc:
+                        if resource_lease is not None:
+                            resource_lease.release()
+                            resource_lease = None
+                        MODEL_REQUEST_LOCK.release()
+                        lock_acquired = False
+                        self.send_json(503, {"error": {"message": str(exc), "type": "model_load_error"}})
+                        record_usage(api_key["id"] if api_key else None, selected_model["servedAlias"], requested_model, 503)
+                        return
                 request_body["model"] = selected_model["servedAlias"]
                 raw_body = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
 
@@ -950,30 +951,42 @@ class ProxyHandler(BaseHTTPRequestHandler):
         upstream_events = queue.Queue()
 
         def read_upstream():
+            stream_lease = None
             try:
-                with urllib.request.urlopen(req, timeout=600) as resp:
-                    content_type = resp.headers.get("Content-Type", "application/octet-stream")
-                    upstream_events.put(("open", resp.status, content_type))
-                    if "text/event-stream" in content_type:
-                        event_lines = []
-                        while True:
-                            line = resp.readline()
-                            if not line:
-                                break
-                            if line.strip():
-                                event_lines.append(line.rstrip(b"\r\n"))
-                                continue
-                            upstream_events.put(("event", event_lines))
-                            event_lines = []
-                        if event_lines:
-                            upstream_events.put(("event", event_lines))
-                    else:
-                        upstream_events.put(("payload", resp.status, content_type, resp.read()))
+                stream_lease = acquire_lease(f"codex-{request_id}", "llm", 100, False, "keep-loaded", timeout=600)
+                selected = resolve_model(model)
+                if not selected:
+                    raise RuntimeError(f"Model is no longer available: {model}")
+                ensure_model_loaded(selected)
+                deadline = time.time() + 600
+                while True:
+                    try:
+                        with urllib.request.urlopen(req, timeout=600) as resp:
+                            content_type = resp.headers.get("Content-Type", "application/octet-stream")
+                            upstream_events.put(("open", resp.status, content_type))
+                            if "text/event-stream" in content_type:
+                                event_lines = []
+                                while True:
+                                    line = resp.readline()
+                                    if not line: break
+                                    if line.strip(): event_lines.append(line.rstrip(b"\r\n")); continue
+                                    upstream_events.put(("event", event_lines)); event_lines = []
+                                if event_lines: upstream_events.put(("event", event_lines))
+                            else:
+                                upstream_events.put(("payload", resp.status, content_type, resp.read()))
+                        break
+                    except urllib.error.HTTPError as exc:
+                        body = exc.read().decode("utf-8", "replace")
+                        if exc.code == 503 and "loading model" in body.lower() and time.time() < deadline:
+                            upstream_events.put(("waiting", "loading model")); time.sleep(5); continue
+                        upstream_events.put(("http_error", exc.code, body)); break
             except urllib.error.HTTPError as exc:
                 upstream_events.put(("http_error", exc.code, exc.read().decode("utf-8", "replace")))
             except Exception as exc:
                 upstream_events.put(("error", repr(exc)))
             finally:
+                if stream_lease is not None:
+                    stream_lease.release()
                 upstream_events.put(("done",))
 
         thread = threading.Thread(target=read_upstream, name=f"{request_id}-upstream", daemon=True)
@@ -1007,6 +1020,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     elapsed_ms = int((time.time() - started_at) * 1000)
                     print(f"{request_id} upstream_open status={item[1]} content_type={item[2]} elapsed_ms={elapsed_ms}", flush=True)
                     self.write_sse_comment(f"{request_id} upstream_open elapsed_ms={elapsed_ms}")
+                elif kind == "waiting":
+                    elapsed = int(time.time() - started_at)
+                    self.write_sse_comment(f"{request_id} waiting reason={item[1]} elapsed_s={elapsed}")
                 elif kind == "event":
                     response = self.write_sse_event(item[1], request_body, namespace_map)
                     if response and not completed:
