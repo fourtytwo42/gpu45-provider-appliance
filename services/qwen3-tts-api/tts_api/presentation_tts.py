@@ -65,6 +65,45 @@ def xml_bytes(root: ET.Element) -> bytes:
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
+def validate_pptx(path: str) -> None:
+    """Reject malformed packages before they become downloadable artifacts."""
+    with zipfile.ZipFile(path, "r") as zf:
+        bad_entry = zf.testzip()
+        if bad_entry is not None:
+            raise ValueError(f"Generated PPTX contains a corrupt ZIP entry: {bad_entry}")
+
+        names = set(zf.namelist())
+        for name in names:
+            if not (name.endswith(".xml") or name.endswith(".rels")):
+                continue
+            raw = zf.read(name)
+            try:
+                parse_xml(raw)
+            except ET.ParseError as exc:
+                raise ValueError(f"Generated PPTX contains invalid XML in {name}: {exc}") from exc
+            if b'r:id=""' in raw or b'r:embed=""' in raw or b'r:link=""' in raw:
+                raise ValueError(f"Generated PPTX contains an empty relationship attribute in {name}")
+
+        for rels_path in sorted(names):
+            if not re.fullmatch(r"ppt/slides/_rels/slide\d+\.xml\.rels", rels_path):
+                continue
+            rels = parse_xml(zf.read(rels_path))
+            rels_dir, rels_filename = posixpath.split(rels_path)
+            source_part = posixpath.join(
+                posixpath.dirname(rels_dir),
+                rels_filename.removesuffix(".rels"),
+            )
+            for relationship in _relationship_items(rels):
+                target = relationship.attrib.get("Target", "")
+                if not target:
+                    raise ValueError(f"Generated PPTX relationship has no target in {rels_path}")
+                if relationship.attrib.get("TargetMode") == "External" or "://" in target:
+                    continue
+                target_part = normalize_part_path(source_part, target)
+                if target_part not in names:
+                    raise ValueError(f"Generated PPTX relationship target is missing: {rels_path} -> {target}")
+
+
 def _presentation_dir(job_id: str) -> str:
     return store.presentation_dir(job_id)
 
@@ -481,8 +520,9 @@ def _add_audio_shape(slide_root: ET.Element, rel_id: str, shape_id: int) -> None
         raise ValueError("Slide does not have a shape tree")
     sp = ET.Element(qn("p", "sp"))
     nv_sp_pr = ET.SubElement(sp, qn("p", "nvSpPr"))
-    c_nv_pr = ET.SubElement(nv_sp_pr, qn("p", "cNvPr"), {"id": str(shape_id), "name": f"Narration Audio {shape_id}"})
-    ET.SubElement(c_nv_pr, qn("a", "hlinkClick"), {qn("r", "id"): "", "action": "ppaction://media"})
+    # The media relationship and timing tree are sufficient for autoplay.
+    # An empty a:hlinkClick r:id makes PowerPoint repair the presentation.
+    ET.SubElement(nv_sp_pr, qn("p", "cNvPr"), {"id": str(shape_id), "name": f"Narration Audio {shape_id}"})
     ET.SubElement(nv_sp_pr, qn("p", "cNvSpPr"))
     nv_pr = ET.SubElement(nv_sp_pr, qn("p", "nvPr"))
     ET.SubElement(nv_pr, qn("a", "audioFile"), {qn("r", "link"): rel_id})
@@ -564,8 +604,15 @@ def build_pptx_output(job_id: str) -> str:
             _ensure_transition(slide_root, duration_ms)
             files[slide_path] = xml_bytes(slide_root)
     os.makedirs(os.path.dirname(output), exist_ok=True)
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as out:
+    temp_output = f"{output}.tmp"
+    with zipfile.ZipFile(temp_output, "w", compression=zipfile.ZIP_DEFLATED) as out:
         for name, data in files.items():
             out.writestr(name, data)
+    try:
+        validate_pptx(temp_output)
+        os.replace(temp_output, output)
+    finally:
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
     store.update_presentation_job(job_id, output_path=output, output_bytes=os.path.getsize(output), output_built_at=utcnow(), updated_at=utcnow())
     return output
