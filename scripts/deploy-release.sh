@@ -117,7 +117,7 @@ systemctl daemon-reload
 systemctl enable gpu45-resource-manager.service
 systemctl restart gpu45-resource-manager.service
 systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer
-systemctl restart gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
+systemctl restart gpu45-responses-proxy.service gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
 
 healthy=false
 for _ in $(seq 1 30); do
@@ -132,7 +132,7 @@ if [[ "$healthy" != "true" ]]; then
   echo "Release health check failed; rolling back" >&2
   if [[ -n "$previous_target" && -d "$previous_target" ]]; then
     ln -sfn "$previous_target" "$current_link"
-    systemctl restart gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
+    systemctl restart gpu45-responses-proxy.service gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
   fi
   exit 1
 fi
