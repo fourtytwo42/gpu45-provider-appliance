@@ -80,6 +80,7 @@ PROFILES = {
         "guidance_scale": 1.0,
         "step_options": [4],
         "guidance_options": [1.0],
+        "supports_negative_prompt": False,
         "recommended": True,
         "quality_tier": "best",
         "tested": True,

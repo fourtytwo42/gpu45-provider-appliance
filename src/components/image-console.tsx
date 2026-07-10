@@ -190,8 +190,20 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
               {selectedProfileInfo.description}
             </div>
           ) : null}
-          <textarea name="prompt" required rows={6} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-violet-400/60" placeholder="A realistic photo of a compact AI appliance on a workbench, tiny status LEDs, shallow depth of field, crisp details." />
-          <textarea name="negative_prompt" rows={3} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-violet-400/60" placeholder="blurry, low quality, watermark, text, distorted" />
+          <label className="grid gap-1 text-xs text-slate-400">
+            Prompt
+            <textarea name="prompt" required rows={6} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-violet-400/60" placeholder="A realistic photo of a compact AI appliance on a workbench, tiny status LEDs, shallow depth of field, crisp details." />
+          </label>
+          <label className="grid gap-1 text-xs text-slate-400">
+            Negative prompt
+            <textarea
+              name="negative_prompt"
+              rows={3}
+              disabled={selectedProfileInfo?.supports_negative_prompt === false}
+              className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-violet-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+              placeholder={selectedProfileInfo?.supports_negative_prompt === false ? "This model does not use negative prompts." : "blurry, low quality, watermark, text, distorted"}
+            />
+          </label>
           <div className="grid gap-3 sm:grid-cols-4">
             <label className="grid gap-1 text-xs text-slate-400">
               Size
