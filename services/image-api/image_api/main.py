@@ -68,6 +68,29 @@ _libc = CDLL("libc.so.6")
 
 
 PROFILES = {
+    "flux2-klein-4b": {
+        "id": "flux2-klein-4b",
+        "name": "FLUX.2 Klein 4B",
+        "description": "Recommended quality model. Modern prompt following and composition with full-GPU inference on this 32GB appliance.",
+        "repo": "black-forest-labs/FLUX.2-klein-4B",
+        "pipeline": "flux2-klein",
+        "default_steps": 4,
+        "default_width": 1024,
+        "default_height": 1024,
+        "guidance_scale": 1.0,
+        "step_options": [4],
+        "guidance_options": [1.0],
+        "recommended": True,
+        "quality_tier": "best",
+        "tested": True,
+        "resolution_options": [
+            {"label": "768 x 768", "width": 768, "height": 768},
+            {"label": "1024 x 1024", "width": 1024, "height": 1024},
+            {"label": "1344 x 768", "width": 1344, "height": 768},
+            {"label": "768 x 1344", "width": 768, "height": 1344},
+        ],
+        "test_summary": "1024 square: 60.3s / 18.3GB. 1344 x 768: 126.3s / 18.3GB. Strong composition and readable text at four steps.",
+    },
     "sdxl-turbo": {
         "id": "sdxl-turbo",
         "name": "SDXL Turbo",
@@ -78,6 +101,9 @@ PROFILES = {
         "default_width": 1024,
         "default_height": 1024,
         "guidance_scale": 0.0,
+        "step_options": [4],
+        "guidance_options": [0.0],
+        "quality_tier": "fast",
         "tested": True,
         "resolution_options": [
             {"label": "512 x 512", "width": 512, "height": 512},
@@ -96,6 +122,9 @@ PROFILES = {
         "default_width": 512,
         "default_height": 512,
         "guidance_scale": 0.0,
+        "step_options": [2],
+        "guidance_options": [0.0],
+        "quality_tier": "draft",
         "tested": True,
         "resolution_options": [
             {"label": "512 x 512", "width": 512, "height": 512},
@@ -103,43 +132,28 @@ PROFILES = {
         ],
         "test_summary": "512: 3.9s / 5.1GB, 768: 6.1s / 8.0GB.",
     },
-    "ssd-1b": {
-        "id": "ssd-1b",
-        "name": "Segmind SSD-1B",
-        "description": "Compact SDXL-derived model. Tested stable through 1024; output is softer than SDXL Turbo but usable.",
-        "repo": "segmind/SSD-1B",
-        "pipeline": "sdxl",
-        "default_steps": 20,
-        "default_width": 1024,
-        "default_height": 1024,
-        "guidance_scale": 7.0,
-        "tested": True,
-        "resolution_options": [
-            {"label": "512 x 512", "width": 512, "height": 512},
-            {"label": "768 x 768", "width": 768, "height": 768},
-            {"label": "1024 x 1024", "width": 1024, "height": 1024},
-        ],
-        "test_summary": "512: 7.9s / 7.2GB, 768: 12.3s / 10.0GB, 1024: 24.0s / 7.9GB at 4-step smoke settings.",
-    },
     "qwen-image-gguf-q3": {
         "id": "qwen-image-gguf-q3",
         "name": "Qwen Image GGUF Q3_K_M",
-        "description": "Highest prompt-following path that currently survives on this appliance. Tested safe only at 512; 768 and 1024 crash/OOM the image service.",
+        "description": "Slower alternate aesthetic. Tested safe only at 512; 768 and 1024 crash/OOM the image service.",
         "repo": "city96/Qwen-Image-gguf",
         "pipeline": "qwen-gguf",
         "base_repo": "callgg/qi-decoder",
         "gguf_file": "qwen-image-Q3_K_M.gguf",
-        "default_steps": 8,
+        "default_steps": 20,
         "default_width": 512,
         "default_height": 512,
         "guidance_scale": 4.0,
+        "step_options": [8, 20],
+        "guidance_options": [4.0],
+        "quality_tier": "quality",
         "max_width": 512,
         "max_height": 512,
         "tested": True,
         "resolution_options": [
             {"label": "512 x 512", "width": 512, "height": 512},
         ],
-        "test_summary": "512: 139.1s / 27.0GB. 768 and 1024 are disabled because they restarted the image API.",
+        "test_summary": "512 only. Eight steps: 139.1s / 27.0GB. Twenty steps: 436.7s / 30.0GB with improved detail. Larger sizes OOM.",
     },
 }
 
@@ -389,7 +403,10 @@ def load_pipeline(profile_id: str):
         torch.cuda.empty_cache()
 
         pipeline_type = profile["pipeline"]
-        if pipeline_type == "flux":
+        if pipeline_type == "flux2-klein":
+            from diffusers import Flux2KleinPipeline
+            pipe = Flux2KleinPipeline.from_pretrained(str(path), torch_dtype=DTYPE)
+        elif pipeline_type == "flux":
             from diffusers import FluxPipeline
             pipe = FluxPipeline.from_pretrained(str(path), torch_dtype=DTYPE)
         elif pipeline_type == "sd3":
@@ -422,9 +439,9 @@ def load_pipeline(profile_id: str):
             pipe.enable_model_cpu_offload()
         else:
             pipe = pipe.to(DEVICE)
-        if hasattr(pipe, "enable_attention_slicing"):
+        if profile.get("attention_slicing") and hasattr(pipe, "enable_attention_slicing"):
             pipe.enable_attention_slicing()
-        if hasattr(pipe, "enable_vae_tiling"):
+        if profile.get("vae_tiling") and hasattr(pipe, "enable_vae_tiling"):
             pipe.enable_vae_tiling()
         _pipeline_cache[profile_id] = pipe
         return pipe
@@ -483,7 +500,7 @@ def generate_job(job_id: str) -> None:
             if job.get("guidance_scale") is not None:
                 kwargs["true_cfg_scale"] = job["guidance_scale"]
         else:
-            if job.get("negative_prompt") and profile["pipeline"] not in {"flux", "qwen"}:
+            if job.get("negative_prompt") and profile["pipeline"] not in {"flux", "flux2-klein", "qwen"}:
                 kwargs["negative_prompt"] = job["negative_prompt"]
             if job.get("guidance_scale") is not None:
                 kwargs["guidance_scale"] = job["guidance_scale"]
@@ -581,6 +598,15 @@ def create_job(body: CreateJobBody, background_tasks: BackgroundTasks):
             status_code=400,
             detail=f"{profile['name']} is limited to {max_width}x{max_height} on this appliance.",
         )
+    step_options = [int(value) for value in profile.get("step_options") or []]
+    if step_options and body.steps not in step_options:
+        raise HTTPException(status_code=400, detail=f"{profile['name']} supports tested step counts: {', '.join(map(str, step_options))}.")
+    guidance_options = [float(value) for value in profile.get("guidance_options") or []]
+    requested_guidance = body.guidance_scale
+    if requested_guidance is None or (float(requested_guidance) <= 0 and float(profile["guidance_scale"]) > 0):
+        requested_guidance = float(profile["guidance_scale"])
+    if guidance_options and float(requested_guidance) not in guidance_options:
+        raise HTTPException(status_code=400, detail=f"{profile['name']} supports tested guidance values: {', '.join(map(str, guidance_options))}.")
     job_id = uuid.uuid4().hex[:12]
     guidance = body.guidance_scale
     if guidance is None:

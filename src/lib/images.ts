@@ -15,6 +15,10 @@ export type ImageProfile = {
   ready: boolean;
   tested?: boolean;
   resolution_options?: Array<{ label: string; width: number; height: number }>;
+  step_options?: number[];
+  guidance_options?: number[];
+  recommended?: boolean;
+  quality_tier?: string;
   test_summary?: string;
   error?: string | null;
 };
