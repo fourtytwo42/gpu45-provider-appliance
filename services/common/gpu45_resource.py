@@ -7,12 +7,12 @@ URL = os.environ.get("GPU45_RESOURCE_MANAGER_URL", "http://127.0.0.1:8040").rstr
 TOKEN = os.environ.get("GPU45_RESOURCE_MANAGER_TOKEN", "")
 
 
-def _request(path: str, payload: dict | None = None) -> tuple[int, dict]:
+def _request(path: str, payload: dict | None = None, timeout: int = 15) -> tuple[int, dict]:
     headers = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
     data = json.dumps(payload).encode() if payload is not None else None
     request = urllib.request.Request(URL + path, data=data, headers=headers, method="POST" if data is not None else "GET")
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, json.load(response)
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read().decode() or "{}")
@@ -41,7 +41,7 @@ class Lease:
 def acquire_lease(job_id: str, kind: str, priority: int, preemptible: bool, resume_policy: str, timeout: int = 600) -> Lease:
     if not TOKEN:
         raise RuntimeError("GPU45 resource manager token is missing")
-    status, response = _request("/v1/leases/acquire", {"jobId": job_id, "kind": kind, "priority": priority, "preemptible": preemptible, "resumePolicy": resume_policy})
+    status, response = _request("/v1/leases/acquire", {"jobId": job_id, "kind": kind, "priority": priority, "preemptible": preemptible, "resumePolicy": resume_policy}, timeout=120)
     if status not in (200, 202): raise RuntimeError(response.get("error", "resource lease rejected"))
     lease_id = response["leaseId"]
     deadline = time.time() + timeout
