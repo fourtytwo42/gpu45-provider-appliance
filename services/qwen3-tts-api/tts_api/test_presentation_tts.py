@@ -12,6 +12,7 @@ REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+P14_NS = "http://schemas.microsoft.com/office/powerpoint/2010/main"
 
 
 def make_fixture_pptx(path: Path) -> None:
@@ -71,15 +72,24 @@ class PresentationTtsTests(unittest.TestCase):
         with zipfile.ZipFile(out) as zf:
             names = set(zf.namelist())
             self.assertTrue(any(name.startswith("ppt/media/narration_") and name.endswith(".mp3") for name in names))
+            self.assertIn(f'<Types xmlns="{CT_NS}"'.encode("utf-8"), zf.read("[Content_Types].xml"))
             content_types = ET.fromstring(zf.read("[Content_Types].xml"))
             self.assertTrue(any(node.attrib.get("Extension") == "mp3" for node in content_types.findall(f"{{{CT_NS}}}Default")))
             slide1 = ET.fromstring(zf.read("ppt/slides/slide1.xml"))
             slide2 = ET.fromstring(zf.read("ppt/slides/slide2.xml"))
-            self.assertNotIn(b'r:id=""', zf.read("ppt/slides/slide1.xml"))
             self.assertEqual(slide1.find(f"{{{P_NS}}}transition").attrib.get("advClick"), "0")
             self.assertEqual(slide2.find(f"{{{P_NS}}}transition").attrib.get("advTm"), "1500")
             rels = ET.fromstring(zf.read("ppt/slides/_rels/slide1.xml.rels"))
-            self.assertTrue(any(rel.attrib.get("Type") == presentation_tts.MEDIA_REL_TYPE for rel in rels.findall(f"{{{REL_NS}}}Relationship")))
+            relationships = rels.findall(f"{{{REL_NS}}}Relationship")
+            relationship_types = {rel.attrib.get("Type") for rel in relationships}
+            self.assertIn(presentation_tts.MEDIA_REL_TYPE, relationship_types)
+            self.assertIn(presentation_tts.AUDIO_REL_TYPE, relationship_types)
+            self.assertIn(presentation_tts.IMAGE_REL_TYPE, relationship_types)
+            audio = slide1.find(f".//{{{P_NS}}}pic/{{{P_NS}}}nvPicPr/{{{P_NS}}}nvPr/{{{A_NS}}}audioFile")
+            media = slide1.find(f".//{{{P14_NS}}}media")
+            self.assertIsNotNone(audio)
+            self.assertIsNotNone(media)
+            self.assertNotEqual(audio.attrib.get(f"{{{R_NS}}}link"), media.attrib.get(f"{{{R_NS}}}embed"))
         presentation_tts.validate_pptx(out)
 
     def test_delete_presentation_job_removes_files(self):

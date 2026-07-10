@@ -5,6 +5,7 @@ import posixpath
 import re
 import shutil
 import zipfile
+import base64
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
@@ -28,15 +29,22 @@ NS = {
     "p14": "http://schemas.microsoft.com/office/powerpoint/2010/main",
 }
 
-for prefix, uri in NS.items():
-    ET.register_namespace(prefix if prefix != "rel" else "", uri)
+for prefix in ("a", "p", "r", "p14"):
+    ET.register_namespace(prefix, NS[prefix])
 
-MEDIA_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/media"
+CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+MEDIA_REL_TYPE = "http://schemas.microsoft.com/office/2007/relationships/media"
+AUDIO_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/audio"
+IMAGE_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
 NOTES_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide"
 PRESENTATION_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
 MP3_CONTENT_TYPE = "audio/mpeg"
 EMPTY_SLIDE_ADVANCE_MS = 1500
 NARRATION_ADVANCE_PAD_MS = 750
+AUDIO_PLACEHOLDER_NAME = "ppt/media/narration_audio_placeholder.png"
+AUDIO_PLACEHOLDER_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WnR6tsAAAAASUVORK5CYII="
+)
 
 
 def qn(prefix: str, name: str) -> str:
@@ -62,6 +70,13 @@ def parse_xml(raw: bytes) -> ET.Element:
 
 
 def xml_bytes(root: ET.Element) -> bytes:
+    if root.tag == f"{{{CONTENT_TYPES_NS}}}Types":
+        ET.register_namespace("", CONTENT_TYPES_NS)
+    elif root.tag == qn("rel", "Relationships"):
+        ET.register_namespace("", NS["rel"])
+    else:
+        for prefix in ("a", "p", "r", "p14"):
+            ET.register_namespace(prefix, NS[prefix])
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
@@ -73,6 +88,10 @@ def validate_pptx(path: str) -> None:
             raise ValueError(f"Generated PPTX contains a corrupt ZIP entry: {bad_entry}")
 
         names = set(zf.namelist())
+        content_types_raw = zf.read("[Content_Types].xml")
+        canonical_types_root = f'<Types xmlns="{CONTENT_TYPES_NS}"'.encode("utf-8")
+        if canonical_types_root not in content_types_raw:
+            raise ValueError("Generated PPTX does not use the canonical unprefixed Types root")
         for name in names:
             if not (name.endswith(".xml") or name.endswith(".rels")):
                 continue
@@ -81,7 +100,7 @@ def validate_pptx(path: str) -> None:
                 parse_xml(raw)
             except ET.ParseError as exc:
                 raise ValueError(f"Generated PPTX contains invalid XML in {name}: {exc}") from exc
-            if b'r:id=""' in raw or b'r:embed=""' in raw or b'r:link=""' in raw:
+            if b'r:embed=""' in raw or b'r:link=""' in raw:
                 raise ValueError(f"Generated PPTX contains an empty relationship attribute in {name}")
 
         for rels_path in sorted(names):
@@ -480,14 +499,13 @@ def _run_presentation_job_inner(job_id: str, started: float) -> None:
         store.update_presentation_job(job_id, status="failed", error=str(exc), progress_label="Failed", current_slide=None, updated_at=utcnow())
 
 
-def _ensure_mp3_content_type(root: ET.Element) -> None:
-    ns = "http://schemas.openxmlformats.org/package/2006/content-types"
-    default_tag = f"{{{ns}}}Default"
+def _ensure_default_content_type(root: ET.Element, extension: str, content_type: str) -> None:
+    default_tag = f"{{{CONTENT_TYPES_NS}}}Default"
     for item in root.findall(default_tag):
-        if item.attrib.get("Extension") == "mp3":
-            item.attrib["ContentType"] = MP3_CONTENT_TYPE
+        if item.attrib.get("Extension", "").lower() == extension.lower():
+            item.attrib["ContentType"] = content_type
             return
-    ET.SubElement(root, default_tag, {"Extension": "mp3", "ContentType": MP3_CONTENT_TYPE})
+    ET.SubElement(root, default_tag, {"Extension": extension, "ContentType": content_type})
 
 
 def _max_shape_id(slide_root: ET.Element) -> int:
@@ -514,63 +532,69 @@ def _ensure_transition(slide_root: ET.Element, duration_ms: int) -> None:
     transition.attrib["advTm"] = str(max(1, int(duration_ms)))
 
 
-def _add_audio_shape(slide_root: ET.Element, rel_id: str, shape_id: int) -> None:
+def _add_audio_shape(
+    slide_root: ET.Element,
+    media_rel_id: str,
+    audio_rel_id: str,
+    image_rel_id: str,
+    shape_id: int,
+) -> None:
     sp_tree = slide_root.find("p:cSld/p:spTree", NS)
     if sp_tree is None:
         raise ValueError("Slide does not have a shape tree")
-    sp = ET.Element(qn("p", "sp"))
-    nv_sp_pr = ET.SubElement(sp, qn("p", "nvSpPr"))
-    # The media relationship and timing tree are sufficient for autoplay.
-    # An empty a:hlinkClick r:id makes PowerPoint repair the presentation.
-    ET.SubElement(nv_sp_pr, qn("p", "cNvPr"), {"id": str(shape_id), "name": f"Narration Audio {shape_id}"})
-    ET.SubElement(nv_sp_pr, qn("p", "cNvSpPr"))
-    nv_pr = ET.SubElement(nv_sp_pr, qn("p", "nvPr"))
-    ET.SubElement(nv_pr, qn("a", "audioFile"), {qn("r", "link"): rel_id})
+    pic = ET.Element(qn("p", "pic"))
+    nv_pic_pr = ET.SubElement(pic, qn("p", "nvPicPr"))
+    c_nv_pr = ET.SubElement(nv_pic_pr, qn("p", "cNvPr"), {"id": str(shape_id), "name": f"Narration Audio {shape_id}"})
+    ET.SubElement(c_nv_pr, qn("a", "hlinkClick"), {qn("r", "id"): "", "action": "ppaction://media"})
+    c_nv_pic_pr = ET.SubElement(nv_pic_pr, qn("p", "cNvPicPr"))
+    ET.SubElement(c_nv_pic_pr, qn("a", "picLocks"), {"noChangeAspect": "1"})
+    nv_pr = ET.SubElement(nv_pic_pr, qn("p", "nvPr"))
+    ET.SubElement(nv_pr, qn("a", "audioFile"), {qn("r", "link"): audio_rel_id})
     ext_lst = ET.SubElement(nv_pr, qn("p", "extLst"))
-    ext = ET.SubElement(ext_lst, qn("p", "ext"), {"uri": "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB2D49}"})
-    ET.SubElement(ext, qn("p14", "media"), {qn("r", "embed"): rel_id})
-    sp_pr = ET.SubElement(sp, qn("p", "spPr"))
+    ext = ET.SubElement(ext_lst, qn("p", "ext"), {"uri": "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}"})
+    ET.SubElement(ext, qn("p14", "media"), {qn("r", "embed"): media_rel_id})
+    blip_fill = ET.SubElement(pic, qn("p", "blipFill"))
+    ET.SubElement(blip_fill, qn("a", "blip"), {qn("r", "embed"): image_rel_id})
+    stretch = ET.SubElement(blip_fill, qn("a", "stretch"))
+    ET.SubElement(stretch, qn("a", "fillRect"))
+    sp_pr = ET.SubElement(pic, qn("p", "spPr"))
     xfrm = ET.SubElement(sp_pr, qn("a", "xfrm"))
-    ET.SubElement(xfrm, qn("a", "off"), {"x": "0", "y": "0"})
-    ET.SubElement(xfrm, qn("a", "ext"), {"cx": "1", "cy": "1"})
-    ET.SubElement(sp_pr, qn("a", "noFill"))
-    ln = ET.SubElement(sp_pr, qn("a", "ln"))
-    ET.SubElement(ln, qn("a", "noFill"))
-    sp_tree.append(sp)
+    ET.SubElement(xfrm, qn("a", "off"), {"x": "127000", "y": "127000"})
+    ET.SubElement(xfrm, qn("a", "ext"), {"cx": "304800", "cy": "304800"})
+    geometry = ET.SubElement(sp_pr, qn("a", "prstGeom"), {"prst": "rect"})
+    ET.SubElement(geometry, qn("a", "avLst"))
+    sp_tree.append(pic)
 
 
-def _ensure_audio_timing(slide_root: ET.Element, shape_id: int) -> None:
-    timing = slide_root.find("p:timing", NS)
-    if timing is None:
-        timing = ET.SubElement(slide_root, qn("p", "timing"))
-    tn_lst = timing.find("p:tnLst", NS)
-    if tn_lst is None:
-        tn_lst = ET.SubElement(timing, qn("p", "tnLst"))
-    par = tn_lst.find("p:par", NS)
-    if par is None:
-        par = ET.SubElement(tn_lst, qn("p", "par"))
-    ctn = par.find("p:cTn", NS)
-    if ctn is None:
-        ctn = ET.SubElement(par, qn("p", "cTn"), {"id": "1", "dur": "indefinite", "restart": "never", "nodeType": "tmRoot"})
-    child = ctn.find("p:childTnLst", NS)
-    if child is None:
-        child = ET.SubElement(ctn, qn("p", "childTnLst"))
-    audio = ET.SubElement(child, qn("p", "audio"))
-    media = ET.SubElement(audio, qn("p", "cMediaNode"), {"vol": "80000"})
-    audio_ctn = ET.SubElement(media, qn("p", "cTn"), {"id": str(100000 + shape_id), "fill": "hold", "display": "0"})
-    st = ET.SubElement(audio_ctn, qn("p", "stCondLst"))
-    ET.SubElement(st, qn("p", "cond"), {"delay": "0"})
-    tgt = ET.SubElement(media, qn("p", "tgtEl"))
-    ET.SubElement(tgt, qn("p", "spTgt"), {"spid": str(shape_id)})
+def _ensure_audio_timing(slide_root: ET.Element, shape_id: int, audio_duration_ms: int) -> None:
+    existing = slide_root.find("p:timing", NS)
+    if existing is not None:
+        slide_root.remove(existing)
+    timing = ET.fromstring(
+        f'''<p:timing xmlns:p="{NS["p"]}"><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst><p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst><p:par><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="indefinite"/><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond></p:stCondLst><p:childTnLst><p:par><p:cTn id="4" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="5" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="withEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="6" dur="{audio_duration_ms}" fill="hold"/><p:tgtEl><p:spTgt spid="{shape_id}"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn><p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst><p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>'''
+    )
+    root_ext_lst = slide_root.find("p:extLst", NS)
+    if root_ext_lst is not None:
+        slide_root.insert(list(slide_root).index(root_ext_lst), timing)
+    else:
+        slide_root.append(timing)
 
 
-def _add_media_relationship(zf: zipfile.ZipFile, files: dict[str, bytes], slide_path: str, media_name: str) -> str:
+def _add_audio_relationships(
+    files: dict[str, bytes],
+    slide_path: str,
+    media_name: str,
+) -> tuple[str, str, str]:
     rels_path = rels_path_for(slide_path)
-    rels = _load_relationships(zf, rels_path) if rels_path in zf.namelist() else ET.Element(qn("rel", "Relationships"))
-    rel_id = _next_rel_id(rels)
-    ET.SubElement(rels, qn("rel", "Relationship"), {"Id": rel_id, "Type": MEDIA_REL_TYPE, "Target": f"../media/{media_name}"})
+    rels = parse_xml(files[rels_path]) if rels_path in files else ET.Element(qn("rel", "Relationships"))
+    media_rel_id = _next_rel_id(rels)
+    ET.SubElement(rels, qn("rel", "Relationship"), {"Id": media_rel_id, "Type": MEDIA_REL_TYPE, "Target": f"../media/{media_name}"})
+    audio_rel_id = _next_rel_id(rels)
+    ET.SubElement(rels, qn("rel", "Relationship"), {"Id": audio_rel_id, "Type": AUDIO_REL_TYPE, "Target": f"../media/{media_name}"})
+    image_rel_id = _next_rel_id(rels)
+    ET.SubElement(rels, qn("rel", "Relationship"), {"Id": image_rel_id, "Type": IMAGE_REL_TYPE, "Target": f"../media/{Path(AUDIO_PLACEHOLDER_NAME).name}"})
     files[rels_path] = xml_bytes(rels)
-    return rel_id
+    return media_rel_id, audio_rel_id, image_rel_id
 
 
 def build_pptx_output(job_id: str) -> str:
@@ -582,8 +606,10 @@ def build_pptx_output(job_id: str) -> str:
     with zipfile.ZipFile(source, "r") as zf:
         files = {name: zf.read(name) for name in zf.namelist()}
         content_types = parse_xml(files["[Content_Types].xml"])
-        _ensure_mp3_content_type(content_types)
+        _ensure_default_content_type(content_types, "mp3", MP3_CONTENT_TYPE)
+        _ensure_default_content_type(content_types, "png", "image/png")
         files["[Content_Types].xml"] = xml_bytes(content_types)
+        files[AUDIO_PLACEHOLDER_NAME] = AUDIO_PLACEHOLDER_PNG
         for slide in job.get("slides", []):
             slide_path = slide.get("slide_path")
             if not slide_path or slide_path not in files:
@@ -595,12 +621,13 @@ def build_pptx_output(job_id: str) -> str:
             if has_audio:
                 media_name = f"narration_{job_id}_slide_{int(slide['index']) + 1:05d}.mp3"
                 files[f"ppt/media/{media_name}"] = Path(path).read_bytes()
-                rel_id = _add_media_relationship(zf, files, slide_path, media_name)
+                media_rel_id, audio_rel_id, image_rel_id = _add_audio_relationships(files, slide_path, media_name)
                 shape_id = _max_shape_id(slide_root) + 1
-                _add_audio_shape(slide_root, rel_id, shape_id)
-                _ensure_audio_timing(slide_root, shape_id)
                 seconds = float(slide.get("audio_duration_seconds") or (slide.get("quality") or {}).get("duration_seconds") or 0)
-                duration_ms = max(EMPTY_SLIDE_ADVANCE_MS, int(seconds * 1000) + NARRATION_ADVANCE_PAD_MS)
+                audio_duration_ms = max(1, int(seconds * 1000))
+                _add_audio_shape(slide_root, media_rel_id, audio_rel_id, image_rel_id, shape_id)
+                _ensure_audio_timing(slide_root, shape_id, audio_duration_ms)
+                duration_ms = max(EMPTY_SLIDE_ADVANCE_MS, audio_duration_ms + NARRATION_ADVANCE_PAD_MS)
             _ensure_transition(slide_root, duration_ms)
             files[slide_path] = xml_bytes(slide_root)
     os.makedirs(os.path.dirname(output), exist_ok=True)
