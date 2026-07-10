@@ -36,6 +36,8 @@ audio/
 video/
 videos/
 images/
+!/src/app/api/images/
+!/src/app/api/images/**
 transcripts/
 *.wav
 *.mp3

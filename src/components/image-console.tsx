@@ -10,7 +10,13 @@ import { imageOutputUrl } from "@/lib/images";
 type RunState = "idle" | "working" | "error";
 
 async function parseJson(response: Response): Promise<Record<string, unknown>> {
-  const data = await response.json() as Record<string, unknown>;
+  const text = await response.text();
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new Error(`Image request returned ${response.status} ${response.statusText || "without JSON"}.`);
+  }
   if (!response.ok) throw new Error(String(data.error ?? "Image request failed"));
   return data;
 }
