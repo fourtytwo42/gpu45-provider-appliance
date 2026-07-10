@@ -10,7 +10,7 @@ const lockDurationMs = 15 * 60 * 1000;
 const maxFailedAttempts = 5;
 
 export async function hashAdminPassword(password: string, salt = randomBytes(16).toString("hex")): Promise<{ hash: string; salt: string }> {
-  if (password.length < 14) throw new Error("Admin password must contain at least 14 characters.");
+  if (password.length < 8) throw new Error("Admin password must contain at least 8 characters.");
   const derived = await scrypt(password, salt, 64) as Buffer;
   return { hash: derived.toString("hex"), salt };
 }
