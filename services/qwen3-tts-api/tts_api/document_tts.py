@@ -635,7 +635,7 @@ def run_audiobook_job(job_id: str) -> None:
 
 def _run_audiobook_job_inner(job_id: str, started: float, job: dict[str, Any]) -> None:
     try:
-        store.update_audiobook_job(job_id, status="running", progress_label="Starting", started_at=job.get("started_at") or utcnow(), stop_requested=False, updated_at=utcnow())
+        store.update_audiobook_job(job_id, status="running", error=None, progress_label="Starting", started_at=job.get("started_at") or utcnow(), stop_requested=False, updated_at=utcnow())
         while True:
             job = store.get_audiobook_job_by_id(job_id)
             if not job:

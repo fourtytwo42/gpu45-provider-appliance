@@ -904,7 +904,7 @@ def resume_audiobook(job_id: str, background_tasks: BackgroundTasks):
     if job.get("status") in ("queued", "running"):
         raise HTTPException(status_code=409, detail="Audiobook job is already running")
     document_tts.reset_interrupted_chunks(job_id)
-    store.update_audiobook_job(job_id, status="queued", stop_requested=False, progress_label="Queued for resume", updated_at=_utcnow())
+    store.update_audiobook_job(job_id, status="queued", stop_requested=False, error=None, progress_label="Queued for resume", updated_at=_utcnow())
     background_tasks.add_task(document_tts.run_audiobook_job, job_id)
     return store.get_audiobook_job_by_id(job_id)
 

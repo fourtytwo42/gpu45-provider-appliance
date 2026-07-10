@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { formatBytes, formatNumber } from "@/lib/format";
 import type { LiveTelemetry } from "@/lib/types";
 import type { ApplianceVersion } from "@/lib/version";
+import type { ResourceState } from "@/lib/resource-manager";
 import { MetricTile } from "./metric-tile";
 import { StatusBadge } from "./status-badge";
 
@@ -38,12 +39,13 @@ function readinessTone(status?: string): "success" | "warning" | "danger" | "inf
 
 function formatTemp(value: number | null | undefined): string { return value == null ? "n/a" : `${formatNumber(value, 0)} C`; }
 function formatWatts(value: number | null | undefined): string { return value == null ? "n/a" : `${formatNumber(value, 0)} W`; }
-function formatRpm(value: number | null | undefined): string { return value == null ? "n/a" : `${Math.round(value).toLocaleString()} rpm`; }
+function formatRpm(value: number | null | undefined): string { return value == null ? "n/a" : `${new Intl.NumberFormat("en-US").format(Math.round(value))} rpm`; }
 
-function TopStatusBar() {
-  const [live, setLive] = useState<LiveTelemetry | null>(null);
+function TopStatusBar({ initial }: { initial: LiveTelemetry }) {
+  const [live, setLive] = useState<LiveTelemetry>(initial);
   const [connected, setConnected] = useState(false);
   const [jobs, setJobs] = useState<JobsSummary | null>(null);
+  const [resources, setResources] = useState<ResourceState | null>(null);
 
   useEffect(() => {
     const source = new EventSource("/api/live");
@@ -53,6 +55,16 @@ function TopStatusBar() {
     });
     source.onerror = () => setConnected(false);
     return () => source.close();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadResources() {
+      try { const response = await fetch("/api/resources/state", { cache: "no-store" }); const value = await response.json() as ResourceState; if (!cancelled) setResources(value); }
+      catch { if (!cancelled) setResources(null); }
+    }
+    void loadResources(); const timer = window.setInterval(() => void loadResources(), 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
   useEffect(() => {
@@ -76,6 +88,7 @@ function TopStatusBar() {
   const provider = live?.provider;
   const vramDetail = system?.vramUsedBytes != null && system?.vramTotalBytes != null ? `${formatBytes(system.vramUsedBytes)} / ${formatBytes(system.vramTotalBytes)}` : "sensor unavailable";
   const activeJobs = (jobs?.active ?? 0) + (provider?.activeRequests ?? 0);
+  const owner = resources?.owner?.kind ?? (activeJobs ? "working" : "idle");
 
   return (
     <div className="border-b border-[#223044] bg-[#0d131c]/95 px-3 py-3 backdrop-blur xl:px-5">
@@ -93,13 +106,13 @@ function TopStatusBar() {
         <MetricTile label="VRAM" value={system?.vramUsedBytes == null ? "n/a" : formatBytes(system.vramUsedBytes)} detail={vramDetail} icon={Database} tone="violet" />
         <MetricTile label="Power" value={formatWatts(system?.gpuPowerW)} detail="board draw" icon={Zap} tone="amber" />
         <MetricTile label="Fan" value={formatRpm(system?.fanRpm)} detail={`PWM ${system?.fanPwm ?? "n/a"}`} icon={Cpu} tone="cyan" />
-        <MetricTile label="Workload" value={`${activeJobs} active`} detail={`${jobs?.queued ?? 0} queued / ${jobs?.failed ?? 0} failed`} icon={Activity} tone={activeJobs > 0 ? "green" : "slate"} />
+        <MetricTile label="GPU owner" value={owner.toUpperCase()} detail={`${activeJobs} active / ${resources?.queue.length ?? 0} waiting`} icon={Activity} tone={owner !== "idle" ? "green" : "slate"} />
       </div>
     </div>
   );
 }
 
-export function AppChrome({ children, version }: { children: React.ReactNode; version: ApplianceVersion }) {
+export function AppChrome({ children, version, initialTelemetry }: { children: React.ReactNode; version: ApplianceVersion; initialTelemetry: LiveTelemetry }) {
   const pathname = usePathname();
   const activeGroup = useMemo(() => navGroups.find((group) => group.items.some((item) => item.href === pathname || (item.href !== "/" && pathname.startsWith(item.href))))?.label ?? "Command Center", [pathname]);
   if (pathname === "/login") return children;
@@ -132,7 +145,7 @@ export function AppChrome({ children, version }: { children: React.ReactNode; ve
             </div>
           </div>
         </aside>
-        <div className="min-w-0"><TopStatusBar /><main className="mx-auto w-full max-w-[1680px] px-3 py-4 lg:px-5">{children}</main></div>
+        <div className="min-w-0"><TopStatusBar initial={initialTelemetry} /><main className="mx-auto w-full max-w-[1680px] px-3 py-4 lg:px-5">{children}</main></div>
       </div>
     </div>
   );

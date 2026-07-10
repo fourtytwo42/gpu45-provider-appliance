@@ -5,6 +5,7 @@ import { SectionCard } from "@/components/section-card";
 import { applyFanCurvePresetAction } from "../actions";
 import { getBackupStatus } from "@/lib/backups";
 import { BackupPanel } from "@/components/backup-panel";
+import { StoragePanel } from "@/components/storage-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -117,6 +118,9 @@ export default async function SettingsPage() {
         </SectionCard>
         <SectionCard title="Backups and recovery" description="Encrypted snapshots and restore verification">
           <BackupPanel initial={backupStatus} />
+        </SectionCard>
+        <SectionCard title="Storage lifecycle" description="Verified inventory with recoverable seven-day quarantine">
+          <StoragePanel />
         </SectionCard>
       </div>
     </div>
