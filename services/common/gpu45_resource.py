@@ -16,6 +16,8 @@ def _request(path: str, payload: dict | None = None) -> tuple[int, dict]:
             return response.status, json.load(response)
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read().decode() or "{}")
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return 0, {"error": "resource manager unavailable"}
 
 
 class Lease:
@@ -28,7 +30,7 @@ class Lease:
     def _heartbeat(self) -> None:
         while not self._stop.wait(20):
             status, _ = _request(f"/v1/leases/{self.lease_id}/heartbeat", {})
-            if status >= 400:
+            if status == 404:
                 self._stop.set()
 
     def release(self) -> None:
