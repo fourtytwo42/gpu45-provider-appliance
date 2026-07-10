@@ -80,6 +80,7 @@ PROFILES = {
         "guidance_scale": 1.0,
         "step_options": [4],
         "guidance_options": [1.0],
+        "supports_negative_prompt": False,
         "recommended": True,
         "quality_tier": "best",
         "tested": True,
@@ -91,76 +92,12 @@ PROFILES = {
         ],
         "test_summary": "1024 square: 60.3s / 18.3GB. 1344 x 768: 126.3s / 18.3GB. Strong composition and readable text at four steps.",
     },
-    "sdxl-turbo": {
-        "id": "sdxl-turbo",
-        "name": "SDXL Turbo",
-        "description": "Fast tested preview model. Coherent output at 512, 768, and 1024 on this appliance.",
-        "repo": "stabilityai/sdxl-turbo",
-        "pipeline": "auto",
-        "default_steps": 4,
-        "default_width": 1024,
-        "default_height": 1024,
-        "guidance_scale": 0.0,
-        "step_options": [4],
-        "guidance_options": [0.0],
-        "quality_tier": "fast",
-        "tested": True,
-        "resolution_options": [
-            {"label": "512 x 512", "width": 512, "height": 512},
-            {"label": "768 x 768", "width": 768, "height": 768},
-            {"label": "1024 x 1024", "width": 1024, "height": 1024},
-        ],
-        "test_summary": "512: 9.0s / 8.1GB, 768: 7.9s / 12.5GB, 1024: 10.3s / 10.0GB.",
-    },
-    "sd-turbo": {
-        "id": "sd-turbo",
-        "name": "SD Turbo",
-        "description": "Very fast draft model. Tested stable at 512 and 768.",
-        "repo": "stabilityai/sd-turbo",
-        "pipeline": "auto",
-        "default_steps": 2,
-        "default_width": 512,
-        "default_height": 512,
-        "guidance_scale": 0.0,
-        "step_options": [2],
-        "guidance_options": [0.0],
-        "quality_tier": "draft",
-        "tested": True,
-        "resolution_options": [
-            {"label": "512 x 512", "width": 512, "height": 512},
-            {"label": "768 x 768", "width": 768, "height": 768},
-        ],
-        "test_summary": "512: 3.9s / 5.1GB, 768: 6.1s / 8.0GB.",
-    },
-    "qwen-image-gguf-q3": {
-        "id": "qwen-image-gguf-q3",
-        "name": "Qwen Image GGUF Q3_K_M",
-        "description": "Slower alternate aesthetic. Tested safe only at 512; 768 and 1024 crash/OOM the image service.",
-        "repo": "city96/Qwen-Image-gguf",
-        "pipeline": "qwen-gguf",
-        "base_repo": "callgg/qi-decoder",
-        "gguf_file": "qwen-image-Q3_K_M.gguf",
-        "default_steps": 20,
-        "default_width": 512,
-        "default_height": 512,
-        "guidance_scale": 4.0,
-        "step_options": [8, 20],
-        "guidance_options": [4.0],
-        "quality_tier": "quality",
-        "max_width": 512,
-        "max_height": 512,
-        "tested": True,
-        "resolution_options": [
-            {"label": "512 x 512", "width": 512, "height": 512},
-        ],
-        "test_summary": "512 only. Eight steps: 139.1s / 27.0GB. Twenty steps: 436.7s / 30.0GB with improved detail. Larger sizes OOM.",
-    },
 }
 
 
 
 class CreateJobBody(BaseModel):
-    profile: str = "sdxl-turbo"
+    profile: str = "flux2-klein-4b"
     prompt: str = Field(..., min_length=1)
     negative_prompt: str | None = None
     width: int = 1024
