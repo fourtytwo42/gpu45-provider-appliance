@@ -980,6 +980,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         if exc.code == 503 and "loading model" in body.lower() and time.time() < deadline:
                             upstream_events.put(("waiting", "loading model")); time.sleep(5); continue
                         upstream_events.put(("http_error", exc.code, body)); break
+                    except (urllib.error.URLError, ConnectionRefusedError, TimeoutError, OSError) as exc:
+                        if time.time() < deadline:
+                            upstream_events.put(("waiting", "backend starting")); time.sleep(5); continue
+                        upstream_events.put(("error", repr(exc))); break
             except urllib.error.HTTPError as exc:
                 upstream_events.put(("http_error", exc.code, exc.read().decode("utf-8", "replace")))
             except Exception as exc:
