@@ -93,7 +93,7 @@ class PresentationTtsTests(unittest.TestCase):
             self.assertEqual(slide1.find(f"{{{P_NS}}}transition").attrib.get("advTm"), "4750")
             media_duration = slide1.find(f".//{{{P_NS}}}cTn[@id='6']")
             self.assertIsNotNone(media_duration)
-            self.assertEqual(media_duration.attrib.get("dur"), "2750")
+            self.assertEqual(media_duration.attrib.get("dur"), "4750")
         presentation_tts.validate_pptx(out)
 
     def test_delete_presentation_job_removes_files(self):
