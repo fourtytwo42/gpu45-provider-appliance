@@ -7,6 +7,7 @@ import shutil
 import zipfile
 import base64
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -40,9 +41,8 @@ NOTES_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relation
 PRESENTATION_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
 MP3_CONTENT_TYPE = "audio/mpeg"
 EMPTY_SLIDE_ADVANCE_MS = 1500
-POWERPOINT_MEDIA_STARTUP_MS = 2000
-NARRATION_MEDIA_GUARD_MS = POWERPOINT_MEDIA_STARTUP_MS + 500
-NARRATION_ADVANCE_PAD_MS = POWERPOINT_MEDIA_STARTUP_MS + 500
+NARRATION_MEDIA_GUARD_MS = 500
+NARRATION_ADVANCE_PAD_MS = 500
 AUDIO_PLACEHOLDER_NAME = "ppt/media/narration_audio_placeholder.png"
 AUDIO_PLACEHOLDER_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WnR6tsAAAAASUVORK5CYII="
@@ -599,6 +599,14 @@ def _add_audio_relationships(
     return media_rel_id, audio_rel_id, image_rel_id
 
 
+def _powerpoint_safe_mp3(path: str) -> tuple[bytes, int]:
+    """Normalize narration so PowerPoint reports and plays its full duration."""
+    audio = AudioSegment.from_file(path, format="mp3").set_frame_rate(44100).set_channels(1)
+    output = BytesIO()
+    audio.export(output, format="mp3", bitrate="128k")
+    return output.getvalue(), len(audio)
+
+
 def build_pptx_output(job_id: str) -> str:
     job = store.get_presentation_job_by_id(job_id)
     if not job:
@@ -622,11 +630,10 @@ def build_pptx_output(job_id: str) -> str:
             has_audio = slide.get("status") in ("completed", "flagged") and path and os.path.exists(path)
             if has_audio:
                 media_name = f"narration_{job_id}_slide_{int(slide['index']) + 1:05d}.mp3"
-                files[f"ppt/media/{media_name}"] = Path(path).read_bytes()
+                media_bytes, audio_duration_ms = _powerpoint_safe_mp3(path)
+                files[f"ppt/media/{media_name}"] = media_bytes
                 media_rel_id, audio_rel_id, image_rel_id = _add_audio_relationships(files, slide_path, media_name)
                 shape_id = _max_shape_id(slide_root) + 1
-                seconds = float(slide.get("audio_duration_seconds") or (slide.get("quality") or {}).get("duration_seconds") or 0)
-                audio_duration_ms = max(1, int(seconds * 1000))
                 _add_audio_shape(slide_root, media_rel_id, audio_rel_id, image_rel_id, shape_id)
                 _ensure_audio_timing(slide_root, shape_id, audio_duration_ms + NARRATION_MEDIA_GUARD_MS)
                 duration_ms = max(EMPTY_SLIDE_ADVANCE_MS, audio_duration_ms + NARRATION_ADVANCE_PAD_MS)

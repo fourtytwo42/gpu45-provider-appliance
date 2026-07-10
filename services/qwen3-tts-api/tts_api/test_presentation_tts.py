@@ -5,6 +5,8 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from pydub import AudioSegment
+
 from tts_api import presentation_tts, store
 
 CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
@@ -66,7 +68,9 @@ class PresentationTtsTests(unittest.TestCase):
     def test_build_output_embeds_audio_and_empty_slide_advance(self):
         job = presentation_tts.create_presentation_job(str(self.pptx), "fixture.pptx", "model-1", "Fixture")
         slide_audio = Path(job["slides"][0]["output_path"])
-        slide_audio.write_bytes(b"ID3fake")
+        exported = AudioSegment.silent(duration=2250).export(slide_audio, format="mp3", bitrate="128k")
+        exported.close()
+        expected_duration = len(AudioSegment.from_file(slide_audio, format="mp3")) + 500
         store.update_presentation_slide(job["id"], 0, status="completed", output_path=str(slide_audio), audio_duration_seconds=2.25, quality={"ok": True, "duration_seconds": 2.25})
         out = presentation_tts.build_pptx_output(job["id"])
         with zipfile.ZipFile(out) as zf:
@@ -90,10 +94,10 @@ class PresentationTtsTests(unittest.TestCase):
             self.assertIsNotNone(audio)
             self.assertIsNotNone(media)
             self.assertNotEqual(audio.attrib.get(f"{{{R_NS}}}link"), media.attrib.get(f"{{{R_NS}}}embed"))
-            self.assertEqual(slide1.find(f"{{{P_NS}}}transition").attrib.get("advTm"), "4750")
+            self.assertEqual(slide1.find(f"{{{P_NS}}}transition").attrib.get("advTm"), str(expected_duration))
             media_duration = slide1.find(f".//{{{P_NS}}}cTn[@id='6']")
             self.assertIsNotNone(media_duration)
-            self.assertEqual(media_duration.attrib.get("dur"), "4750")
+            self.assertEqual(media_duration.attrib.get("dur"), str(expected_duration))
         presentation_tts.validate_pptx(out)
 
     def test_delete_presentation_job_removes_files(self):
