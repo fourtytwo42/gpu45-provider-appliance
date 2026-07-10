@@ -5,8 +5,9 @@ Wants=network-online.target llama-openai.service
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=gpu45
+Group=gpu45
+SupplementaryGroups=hendo420 video render
 WorkingDirectory=/opt/gpu45/current
 EnvironmentFile=-/etc/gpu45/appliance.env
 EnvironmentFile=-/etc/gpu45/release.env
@@ -15,6 +16,9 @@ ExecStart=/usr/bin/npm run start -- --port 3010 -H 127.0.0.1
 Restart=always
 RestartSec=5
 TimeoutStartSec=120
+PrivateTmp=true
+ProtectHome=true
+NoNewPrivileges=false
 
 [Install]
 WantedBy=multi-user.target

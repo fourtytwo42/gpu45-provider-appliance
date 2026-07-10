@@ -55,7 +55,7 @@ export function validateFanCurve(profile: FanCurveProfile): string | null {
 
 export async function restartProvider(): Promise<ControlResult> {
   if (!isLiveRuntime()) return { ok: true, message: "Mock runtime - restart skipped." };
-  const output = await runHostCommand(`systemctl restart ${shQuote(getConfig().providerService)}`);
+  const output = await runHostCommand(`sudo -n systemctl restart ${shQuote(getConfig().providerService)}`);
   if (output === null) return { ok: false, message: "Provider restart failed." };
   await prisma.auditLog.create({
     data: {
@@ -116,7 +116,7 @@ export async function activateProfile(profile: LaunchProfile): Promise<ControlRe
     create: { ...profile, active: true },
     update: { ...profile, active: true },
   });
-  const output = await runHostCommand(`systemctl restart ${shQuote(cfg.providerService)}`);
+  const output = await runHostCommand(`sudo -n systemctl restart ${shQuote(cfg.providerService)}`);
   if (output === null) return { ok: false, message: "Profile saved, but provider restart failed." };
   await prisma.auditLog.create({
     data: {
@@ -174,7 +174,7 @@ export async function saveFanCurve(profile: FanCurveProfile): Promise<ControlRes
     create: { name: profile.name, description: profile.description ?? null, pointsJson: JSON.stringify(profile.points), active: true },
     update: { description: profile.description ?? null, pointsJson: JSON.stringify(profile.points), active: true },
   });
-  const output = await runHostCommand(`systemctl restart ${shQuote(cfg.fanService)}`);
+  const output = await runHostCommand(`sudo -n systemctl restart ${shQuote(cfg.fanService)}`);
   if (output === null) return { ok: false, message: "Fan curve saved, but service restart failed." };
   await prisma.auditLog.create({
     data: {

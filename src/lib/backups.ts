@@ -24,6 +24,6 @@ export async function getBackupStatus(): Promise<BackupStatus> {
 
 export async function startBackupOperation(operation: "backup" | "verify"): Promise<void> {
   const unit = operation === "backup" ? "gpu45-backup.service" : "gpu45-backup-verify.service";
-  const output = await runHostCommand(`systemctl start --no-block ${unit}`);
+  const output = await runHostCommand(`sudo -n systemctl start --no-block ${unit}`);
   if (output === null) throw new Error(`Could not start ${operation}.`);
 }
