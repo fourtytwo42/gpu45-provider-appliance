@@ -37,9 +37,10 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [state, setState] = useState<RunState>("idle");
   const [message, setMessage] = useState("");
-  const [selectedProfile, setSelectedProfile] = useState(initialSnapshot.profiles[0]?.id ?? "sdxl-turbo");
+  const initialProfile = initialSnapshot.profiles.find((profile) => profile.recommended) ?? initialSnapshot.profiles[0];
+  const [selectedProfile, setSelectedProfile] = useState(initialProfile?.id ?? "sdxl-turbo");
   const [settings, setSettings] = useState(() => {
-    const profile = initialSnapshot.profiles[0];
+    const profile = initialProfile;
     return {
       width: profile?.default_width ?? 1024,
       height: profile?.default_height ?? 1024,
@@ -172,7 +173,7 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
                     ...current,
                     width: nextProfile.default_width,
                     height: nextProfile.default_height,
-                    steps: nextProfile.default_steps,
+                  steps: nextProfile.default_steps,
                     guidance_scale: nextProfile.guidance_scale,
                   }));
                 }
@@ -211,11 +212,23 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
             </label>
             <label className="grid gap-1 text-xs text-slate-400">
               Steps
-              <input name="steps" type="number" min={1} max={50} value={settings.steps} onChange={(event) => setSettings((current) => ({ ...current, steps: Number(event.target.value) }))} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" />
+              {selectedProfileInfo?.step_options?.length ? (
+                <select name="steps" value={settings.steps} onChange={(event) => setSettings((current) => ({ ...current, steps: Number(event.target.value) }))} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none">
+                  {selectedProfileInfo.step_options.map((steps) => <option key={steps} value={steps}>{steps}</option>)}
+                </select>
+              ) : (
+                <input name="steps" type="number" min={1} max={50} value={settings.steps} onChange={(event) => setSettings((current) => ({ ...current, steps: Number(event.target.value) }))} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" />
+              )}
             </label>
             <label className="grid gap-1 text-xs text-slate-400">
               Guidance
-              <input name="guidance_scale" type="number" min={0} max={12} step={0.1} value={settings.guidance_scale} onChange={(event) => setSettings((current) => ({ ...current, guidance_scale: Number(event.target.value) }))} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" />
+              {selectedProfileInfo?.guidance_options?.length ? (
+                <select name="guidance_scale" value={settings.guidance_scale} onChange={(event) => setSettings((current) => ({ ...current, guidance_scale: Number(event.target.value) }))} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none">
+                  {selectedProfileInfo.guidance_options.map((guidance) => <option key={guidance} value={guidance}>{guidance}</option>)}
+                </select>
+              ) : (
+                <input name="guidance_scale" type="number" min={0} max={12} step={0.1} value={settings.guidance_scale} onChange={(event) => setSettings((current) => ({ ...current, guidance_scale: Number(event.target.value) }))} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" />
+              )}
             </label>
             <label className="grid gap-1 text-xs text-slate-400">
               Seed
@@ -235,7 +248,7 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
             <div key={profile.id} className="grid gap-3 border border-white/10 bg-black/20 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="font-medium text-white">{profile.name}</div>
+                  <div className="flex flex-wrap items-center gap-2 font-medium text-white">{profile.name}{profile.recommended ? <span className="border border-cyan-400/40 bg-cyan-400/10 px-2 py-0.5 text-[10px] uppercase text-cyan-100">Recommended</span> : null}</div>
                   <div className="mt-1 text-xs text-slate-500">{profile.repo}</div>
                 </div>
                 <span className={cn("border px-2 py-1 text-xs", profile.ready ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : "border-amber-400/40 bg-amber-400/10 text-amber-200")}>
