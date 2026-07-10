@@ -9,9 +9,16 @@ import { cn } from "@/lib/cn";
 
 type Status = "idle" | "working" | "error";
 const AUDIOBOOK_CHUNKS_PER_PAGE = 8;
+const MAX_PRESENTATION_BYTES = 120 * 1024 * 1024;
 
 async function parseJson(response: Response): Promise<Record<string, unknown>> {
-  const json = await response.json() as Record<string, unknown>;
+  const text = await response.text();
+  let json: Record<string, unknown>;
+  try {
+    json = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new Error(`TTS request returned ${response.status} ${response.statusText || "without JSON"}.`);
+  }
   if (!response.ok) throw new Error(String(json.error ?? json.detail ?? "TTS request failed"));
   return json;
 }
@@ -281,6 +288,10 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
     try {
       const modelId = String(formData.get("model_id") ?? "");
       if (!modelId) throw new Error("Choose a trained voice model before narrating a PowerPoint.");
+      const file = formData.get("file");
+      if (!(file instanceof File) || file.size === 0) throw new Error("Choose a PPTX file before creating narration.");
+      if (!file.name.toLowerCase().endsWith(".pptx")) throw new Error("PowerPoint narration accepts .pptx files only.");
+      if (file.size > MAX_PRESENTATION_BYTES) throw new Error("PPTX files must be 120 MB or smaller.");
       const response = await fetch("/api/tts", { method: "POST", body: formData });
       await parseJson(response);
       setMessage("PowerPoint narration queued. Slide audio appears as each slide completes.");
