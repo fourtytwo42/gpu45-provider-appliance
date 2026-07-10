@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 export const DEFAULT_BASE_URL = process.env.GPU45_APPLIANCE_URL || "http://192.168.50.189:3010";
 export const DEFAULT_ARTIFACT_DIR = process.env.GPU45_ARTIFACT_DIR || join(homedir(), ".codex", "gpu45-artifacts");
+const MCP_TOKEN = process.env.GPU45_MCP_TOKEN || "";
 
 const PROTOCOL_VERSION = "2024-11-05";
 
@@ -246,12 +247,19 @@ function safeFileStem(value) {
   return String(value || "gpu45-artifact").replace(/[^a-z0-9_.-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "gpu45-artifact";
 }
 
+function authenticatedHeaders(headers = {}) {
+  return {
+    ...(MCP_TOKEN ? { Authorization: `Bearer ${MCP_TOKEN}` } : {}),
+    ...headers,
+  };
+}
+
 async function fetchJson(url, init) {
   const response = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(init?.headers || {}),
+      ...authenticatedHeaders(init?.headers || {}),
     },
   });
   if (!response.ok) {
@@ -261,7 +269,7 @@ async function fetchJson(url, init) {
 }
 
 async function fetchBytes(url, init) {
-  const response = await fetch(url, init);
+  const response = await fetch(url, { ...init, headers: authenticatedHeaders(init?.headers || {}) });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
   }
@@ -275,7 +283,7 @@ async function fetchFirstSseData(url, timeoutMs = 6000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetch(url, { signal: controller.signal, headers: authenticatedHeaders() });
     if (!response.ok || !response.body) {
       throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
     }
@@ -459,7 +467,7 @@ async function toolTtsAudiobookCreate(baseUrl, args) {
   form.set("model_id", args.model_id);
   if (args.title) form.set("title", args.title);
   form.set("file", new Blob([bytes]), basename(args.file_path));
-  const response = await fetch(`${baseUrl}/api/tts`, { method: "POST", body: form });
+  const response = await fetch(`${baseUrl}/api/tts`, { method: "POST", body: form, headers: authenticatedHeaders() });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
   const created = await response.json();
   let job = created.job;

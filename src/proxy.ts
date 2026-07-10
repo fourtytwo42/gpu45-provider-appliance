@@ -26,14 +26,20 @@ function sameOrigin(request: NextRequest): boolean {
 export function proxy(request: NextRequest): NextResponse {
   if (process.env.GPU45_E2E_AUTH_BYPASS === "true") return securityHeaders(NextResponse.next());
   const path = request.nextUrl.pathname;
+  const mcpToken = process.env.GPU45_MCP_TOKEN;
+  const mcpAuthorized = Boolean(
+    path.startsWith("/api/")
+    && mcpToken
+    && request.headers.get("authorization") === `Bearer ${mcpToken}`,
+  );
   const session = verifyAdminSessionToken(request.cookies.get(adminSessionCookie)?.value);
   const isPublic = publicPaths.has(path);
 
-  if (!safeMethods.has(request.method) && !sameOrigin(request)) {
+  if (!mcpAuthorized && !safeMethods.has(request.method) && !sameOrigin(request)) {
     return securityHeaders(NextResponse.json({ error: "Cross-site request rejected." }, { status: 403 }));
   }
   if (path === "/login" && session) return securityHeaders(NextResponse.redirect(new URL("/", request.url)));
-  if (!isPublic && !session) {
+  if (!isPublic && !session && !mcpAuthorized) {
     if (path.startsWith("/api/")) return securityHeaders(NextResponse.json({ error: "Authentication required." }, { status: 401 }));
     const login = new URL("/login", request.url);
     login.searchParams.set("next", path);
