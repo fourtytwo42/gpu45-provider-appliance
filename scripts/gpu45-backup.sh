@@ -27,6 +27,8 @@ with os.fdopen(fd, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2); handle.flush(); os.fsync(handle.fileno())
 os.replace(temp, path)
 PY
+  chown root:gpu45 "$status_file"
+  chmod 0640 "$status_file"
 }
 
 trap 'code=$?; write_status failed "Backup operation failed with exit code $code" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; exit $code' ERR
