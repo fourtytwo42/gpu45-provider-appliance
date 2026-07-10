@@ -38,7 +38,7 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
   const [state, setState] = useState<RunState>("idle");
   const [message, setMessage] = useState("");
   const initialProfile = initialSnapshot.profiles.find((profile) => profile.recommended) ?? initialSnapshot.profiles[0];
-  const [selectedProfile, setSelectedProfile] = useState(initialProfile?.id ?? "sdxl-turbo");
+  const [selectedProfile, setSelectedProfile] = useState(initialProfile?.id ?? "flux2-klein-4b");
   const [settings, setSettings] = useState(() => {
     const profile = initialProfile;
     return {
