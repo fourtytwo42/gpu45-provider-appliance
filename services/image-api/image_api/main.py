@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse
 from huggingface_hub import snapshot_download
 from pydantic import BaseModel, Field
 from gpu45_resource import acquire_lease
+from .job_store import JobStore
 
 DATA_DIR = Path(os.environ.get("IMAGE_API_DATA", "/models/image-gen"))
 OUTPUT_DIR = DATA_DIR / "outputs"
@@ -61,6 +62,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="GPU45 Image API", lifespan=lifespan)
 _jobs_lock = Lock()
 _model_lock = Lock()
+_job_store = JobStore(JOBS_PATH)
 _pipeline_cache: dict[str, object] = {}
 _libc = CDLL("libc.so.6")
 
@@ -161,22 +163,16 @@ def now_iso() -> str:
 def ensure_dirs() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     MODEL_BASE.mkdir(parents=True, exist_ok=True)
-    if not JOBS_PATH.exists():
-        JOBS_PATH.write_text("[]", encoding="utf-8")
 
 
 def load_jobs() -> list[dict]:
     ensure_dirs()
-    with _jobs_lock:
-        return json.loads(JOBS_PATH.read_text(encoding="utf-8"))
+    return _job_store.load()
 
 
 def save_jobs(jobs: list[dict]) -> None:
     ensure_dirs()
-    tmp_path = JOBS_PATH.with_suffix(".tmp")
-    with _jobs_lock:
-        tmp_path.write_text(json.dumps(jobs, indent=2), encoding="utf-8")
-        tmp_path.replace(JOBS_PATH)
+    _job_store.save(jobs)
 
 
 def update_job(job_id: str, **updates) -> dict:

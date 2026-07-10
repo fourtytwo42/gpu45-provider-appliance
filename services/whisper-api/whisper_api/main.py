@@ -1,4 +1,3 @@
-import json
 import os
 import shutil
 import time
@@ -8,10 +7,12 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal
 
+from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from faster_whisper import WhisperModel
 from pydantic import BaseModel
+from .job_store import JobStore
 
 MODEL_NAMES = ["tiny", "base", "small", "medium", "large-v3", "turbo"]
 DATA_DIR = Path(os.environ.get("WHISPER_API_DATA", "/models/whisper"))
@@ -21,10 +22,10 @@ JOBS_PATH = DATA_DIR / "jobs.json"
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
 
-app = FastAPI(title="GPU45 Whisper API")
 _jobs_lock = Lock()
 _model_lock = Lock()
 _model_cache: dict[str, WhisperModel] = {}
+_job_store = JobStore(JOBS_PATH)
 
 
 class Job(BaseModel):
@@ -52,25 +53,35 @@ def now_iso() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    jobs = load_jobs()
+    changed = False
+    for job in jobs:
+        if job.get("status") in {"queued", "running"}:
+            job.update(status="failed", progress_label="Interrupted", error="Whisper service restarted before this job finished.", completed_at=now_iso())
+            changed = True
+    if changed:
+        save_jobs(jobs)
+    yield
+
+
+app = FastAPI(title="GPU45 Whisper API", lifespan=lifespan)
+
+
 def ensure_dirs() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
-    if not JOBS_PATH.exists():
-        JOBS_PATH.write_text("[]", encoding="utf-8")
 
 
 def load_jobs() -> list[dict]:
     ensure_dirs()
-    with _jobs_lock:
-        return json.loads(JOBS_PATH.read_text(encoding="utf-8"))
+    return _job_store.load()
 
 
 def save_jobs(jobs: list[dict]) -> None:
     ensure_dirs()
-    tmp_path = JOBS_PATH.with_suffix(".tmp")
-    with _jobs_lock:
-        tmp_path.write_text(json.dumps(jobs, indent=2), encoding="utf-8")
-        tmp_path.replace(JOBS_PATH)
+    _job_store.save(jobs)
 
 
 def update_job(job_id: str, **updates) -> dict:

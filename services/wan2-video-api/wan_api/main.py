@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from gpu45_resource import acquire_lease
+from .job_store import JobStore
 
 
 WAN_ROOT = Path(os.environ.get("WAN2_ROOT", "/opt/wan2.2"))
@@ -29,6 +30,7 @@ HF_REPO = os.environ.get("WAN2_HF_REPO", "Wan-AI/Wan2.2-TI2V-5B")
 JOBS_PATH = DATA_DIR / "jobs.json"
 OUTPUT_DIR = DATA_DIR / "outputs"
 LOG_DIR = DATA_DIR / "logs"
+_job_store = JobStore(JOBS_PATH)
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -97,20 +99,11 @@ def now() -> str:
 
 
 def load_jobs() -> list[dict[str, Any]]:
-    if not JOBS_PATH.exists():
-        return []
-    for _ in range(3):
-        try:
-            return json.loads(JOBS_PATH.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            time.sleep(0.05)
-    return json.loads(JOBS_PATH.read_text(encoding="utf-8"))
+    return _job_store.load()
 
 
 def save_jobs(jobs: list[dict[str, Any]]) -> None:
-    tmp_path = JOBS_PATH.with_suffix(".json.tmp")
-    tmp_path.write_text(json.dumps(jobs, indent=2) + "\n", encoding="utf-8")
-    tmp_path.replace(JOBS_PATH)
+    _job_store.save(jobs)
 
 
 def get_profile(profile_id: str) -> dict[str, Any]:
