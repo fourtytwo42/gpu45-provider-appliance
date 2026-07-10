@@ -29,7 +29,7 @@ const tools = [
       properties: {
         prompt: { type: "string", minLength: 1 },
         negative_prompt: { type: "string" },
-        profile: { type: "string", default: "sdxl-turbo" },
+        profile: { type: "string", default: "flux2-klein-4b" },
         width: { type: "integer", minimum: 256, maximum: 1536, default: 1024 },
         height: { type: "integer", minimum: 256, maximum: 1536, default: 1024 },
         steps: { type: "integer", minimum: 1, maximum: 60 },
@@ -38,26 +38,6 @@ const tools = [
         wait: { type: "boolean", default: true },
         timeout_seconds: { type: "integer", minimum: 5, maximum: 1800, default: 600 },
         include_image: { type: "boolean", default: true },
-      },
-      required: ["prompt"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "gpu45_video_generate",
-    description: "Queue or run a video generation job on the GPU45 appliance and return job metadata plus the output URL when complete.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        prompt: { type: "string", minLength: 1 },
-        negative_prompt: { type: "string" },
-        profile: { type: "string", default: "wan22-ti2v-5b" },
-        size: { type: "string", default: "832*480" },
-        steps: { type: "integer", minimum: 1, maximum: 24, default: 8 },
-        duration_seconds: { type: "integer", minimum: 1, maximum: 15, default: 2 },
-        seed: { type: "integer", default: -1 },
-        wait: { type: "boolean", default: false },
-        timeout_seconds: { type: "integer", minimum: 5, maximum: 7200, default: 3600 },
       },
       required: ["prompt"],
       additionalProperties: false,
@@ -146,7 +126,7 @@ const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        kind: { type: "string", enum: ["image", "video", "tts", "whisper"] },
+        kind: { type: "string", enum: ["image", "tts", "whisper"] },
         id: { type: "string", minLength: 1 },
       },
       required: ["kind", "id"],
@@ -345,10 +325,9 @@ function textContent(value) {
 }
 
 async function toolStatus(baseUrl) {
-  const [live, images, video, tts, whisper] = await Promise.allSettled([
+  const [live, images, tts, whisper] = await Promise.allSettled([
     fetchFirstSseData(`${baseUrl}/api/live`),
     fetchJson(`${baseUrl}/api/images`),
-    fetchJson(`${baseUrl}/api/video`),
     fetchJson(`${baseUrl}/api/tts`),
     fetchJson(`${baseUrl}/api/whisper`),
   ]);
@@ -356,7 +335,6 @@ async function toolStatus(baseUrl) {
     appliance: baseUrl,
     live: live.status === "fulfilled" ? live.value : { error: live.reason.message },
     images: images.status === "fulfilled" ? images.value : { error: images.reason.message },
-    video: video.status === "fulfilled" ? video.value : { error: video.reason.message },
     tts: tts.status === "fulfilled" ? tts.value : { error: tts.reason.message },
     whisper: whisper.status === "fulfilled" ? whisper.value : { error: whisper.reason.message },
   };
@@ -367,7 +345,7 @@ async function toolImageGenerate(baseUrl, args) {
     action: "createJob",
     prompt: args.prompt,
     negative_prompt: args.negative_prompt || undefined,
-    profile: args.profile || "sdxl-turbo",
+    profile: args.profile || "flux2-klein-4b",
     width: args.width || 1024,
     height: args.height || 1024,
     steps: args.steps,
