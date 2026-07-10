@@ -40,7 +40,8 @@ NOTES_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relation
 PRESENTATION_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
 MP3_CONTENT_TYPE = "audio/mpeg"
 EMPTY_SLIDE_ADVANCE_MS = 1500
-NARRATION_ADVANCE_PAD_MS = 750
+NARRATION_MEDIA_GUARD_MS = 4000
+NARRATION_ADVANCE_PAD_MS = 5000
 AUDIO_PLACEHOLDER_NAME = "ppt/media/narration_audio_placeholder.png"
 AUDIO_PLACEHOLDER_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WnR6tsAAAAASUVORK5CYII="
@@ -626,7 +627,7 @@ def build_pptx_output(job_id: str) -> str:
                 seconds = float(slide.get("audio_duration_seconds") or (slide.get("quality") or {}).get("duration_seconds") or 0)
                 audio_duration_ms = max(1, int(seconds * 1000))
                 _add_audio_shape(slide_root, media_rel_id, audio_rel_id, image_rel_id, shape_id)
-                _ensure_audio_timing(slide_root, shape_id, audio_duration_ms)
+                _ensure_audio_timing(slide_root, shape_id, audio_duration_ms + NARRATION_MEDIA_GUARD_MS)
                 duration_ms = max(EMPTY_SLIDE_ADVANCE_MS, audio_duration_ms + NARRATION_ADVANCE_PAD_MS)
             _ensure_transition(slide_root, duration_ms)
             files[slide_path] = xml_bytes(slide_root)
