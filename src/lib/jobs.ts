@@ -17,6 +17,8 @@ export type UnifiedJob = {
   title: string;
   subtitle?: string | null;
   status: UnifiedJobStatus;
+  displayStatus?: string | null;
+  stage?: string | null;
   progressPercent?: number | null;
   progressLabel?: string | null;
   etaSeconds?: number | null;
@@ -26,8 +28,12 @@ export type UnifiedJob = {
   finishedAt?: string | null;
   outputUrl?: string | null;
   error?: string | null;
+  technicalError?: string | null;
+  userMessage?: string | null;
   model?: string | null;
   actions?: UnifiedJobAction[];
+  availableActions?: UnifiedJobAction[];
+  outputPreview?: string | null;
   actionLabels?: Partial<Record<UnifiedJobAction, string>>;
   resourceImpact?: string | null;
   resourceOwner?: string | null;
@@ -62,7 +68,9 @@ function actionsFor(kind: UnifiedJobKind, status: UnifiedJobStatus, hasOutput = 
 function withActions(job: UnifiedJob): UnifiedJob {
   const actions = actionsFor(job.kind, job.status, Boolean(job.outputUrl));
   const actionLabels: UnifiedJob["actionLabels"] = { cancel: "Cancel", delete: "Delete", download: "Open output", retry: "Retry" };
-  return { ...job, actions, actionLabels };
+  const displayStatus = job.status === "needs_review" ? "Needs review" : job.status.charAt(0).toUpperCase() + job.status.slice(1);
+  const userMessage = job.error ? job.error.split("\n").find((line) => line.trim().length > 0)?.slice(0, 220) ?? "This job failed. Open technical details for more information." : null;
+  return { ...job, displayStatus, technicalError: job.error, userMessage, actions, availableActions: actions, actionLabels, outputPreview: job.outputUrl };
 }
 
 
