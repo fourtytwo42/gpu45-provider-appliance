@@ -231,6 +231,28 @@ def _load_store(store_name: str, json_path: str) -> List[Dict[str, Any]]:
         return [json.loads(row["payload_json"]) for row in rows]
 
 
+def load_snapshot() -> Dict[str, List[Dict[str, Any]]]:
+    """Read every UI-facing store while holding the lock only once."""
+    stores = {
+        "voices": ("voices", voices_json_path()),
+        "voiceJobs": ("voice_jobs", voice_jobs_json_path()),
+        "models": ("models", models_json_path()),
+        "synthesisJobs": ("synthesis_jobs", synthesis_jobs_json_path()),
+        "audiobookJobs": ("audiobook_jobs", audiobook_jobs_json_path()),
+        "presentationJobs": ("presentation_jobs", presentation_jobs_json_path()),
+    }
+    result: Dict[str, List[Dict[str, Any]]] = {}
+    with _STORE_LOCK, _connect_store() as db:
+        for output_name, (store_name, json_path) in stores.items():
+            _ensure_imported(db, store_name, json_path)
+            rows = db.execute(
+                "SELECT payload_json FROM records WHERE store_name=? ORDER BY position",
+                (store_name,),
+            ).fetchall()
+            result[output_name] = [json.loads(row["payload_json"]) for row in rows]
+    return result
+
+
 def _save_store(store_name: str, json_path: str, records: List[Dict[str, Any]]) -> None:
     with _STORE_LOCK, _connect_store() as db:
         _ensure_imported(db, store_name, json_path)

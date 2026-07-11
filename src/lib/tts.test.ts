@@ -8,9 +8,14 @@ afterEach(() => {
 describe("tts client", () => {
   it("collects a healthy TTS snapshot", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.endsWith("/health")) return Response.json({ status: "ok" });
-      if (url.endsWith("/voices")) return Response.json([{ id: "voice-1", name: "Narrator", instruct: "Warm", language: "English", created_at: "now" }]);
-      if (url.endsWith("/models")) return Response.json([{ id: "model-1", name: "Narrator clone", voice_id: "voice-1", status: "ready", created_at: "now" }]);
+      if (url.endsWith("/snapshot")) return Response.json({
+        voices: [{ id: "voice-1", name: "Narrator", instruct: "Warm", language: "English", created_at: "now" }],
+        voiceJobs: [],
+        models: [{ id: "model-1", name: "Narrator clone", voice_id: "voice-1", status: "ready", created_at: "now" }],
+        synthesisJobs: [],
+        audiobookJobs: [],
+        presentationJobs: [],
+      });
       return new Response("not found", { status: 404 });
     }));
 

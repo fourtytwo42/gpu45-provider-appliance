@@ -188,6 +188,9 @@ export type TtsSnapshot = {
 
 type JsonValue = Record<string, unknown>;
 
+let snapshotCache: { value: TtsSnapshot; expiresAt: number } | null = null;
+let snapshotRequest: Promise<TtsSnapshot> | null = null;
+
 function ttsUrl(path: string): string {
   return `${getConfig().ttsUrl.replace(/\/$/, "")}${path}`;
 }
@@ -210,30 +213,21 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export async function getTtsSnapshot(): Promise<TtsSnapshot> {
   const serviceUrl = getConfig().ttsUrl;
-  try {
-    await fetchJson<{ status: string }>("/health");
-    const [voices, models] = await Promise.all([
-      fetchJson<TtsVoice[]>("/voices"),
-      fetchJson<TtsModel[]>("/models"),
-    ]);
-    const voiceJobs = await fetchJson<TtsVoiceJob[]>("/voice-jobs").catch(() => []);
-    const synthesisJobs = await fetchJson<TtsSynthesisJob[]>("/synthesis-jobs").catch(() => []);
-    const audiobookJobs = await fetchJson<TtsAudiobookJob[]>("/audiobooks").catch(() => []);
-    const presentationJobs = await fetchJson<TtsPresentationJob[]>("/presentations").catch(() => []);
-    return { healthy: true, serviceUrl, voices, voiceJobs, models, synthesisJobs, audiobookJobs, presentationJobs };
-  } catch (error) {
-    return {
-      healthy: false,
-      serviceUrl,
-      voices: [],
-      voiceJobs: [],
-      models: [],
-      synthesisJobs: [],
-      audiobookJobs: [],
-      presentationJobs: [],
-      error: error instanceof Error ? error.message : "TTS service unavailable",
-    };
-  }
+  if (snapshotCache && snapshotCache.expiresAt > Date.now()) return snapshotCache.value;
+  if (snapshotRequest) return snapshotRequest;
+  snapshotRequest = (async () => {
+    try {
+      const payload = await fetchJson<Omit<TtsSnapshot, "healthy" | "serviceUrl">>("/snapshot");
+      const value: TtsSnapshot = { healthy: true, serviceUrl, ...payload };
+      snapshotCache = { value, expiresAt: Date.now() + 2000 };
+      return value;
+    } catch (error) {
+      return { healthy: false, serviceUrl, voices: [], voiceJobs: [], models: [], synthesisJobs: [], audiobookJobs: [], presentationJobs: [], error: error instanceof Error ? error.message : "TTS service unavailable" };
+    } finally {
+      snapshotRequest = null;
+    }
+  })();
+  return snapshotRequest;
 }
 
 export async function createTtsVoice(payload: JsonValue): Promise<JsonValue> {

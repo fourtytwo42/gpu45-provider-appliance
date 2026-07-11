@@ -195,6 +195,12 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/snapshot")
+def snapshot():
+    """Return the complete console snapshot with one store-lock acquisition."""
+    return store.load_snapshot()
+
+
 def _run_create_voice_job(job_id: str, body: CreateVoiceBody) -> None:
     started = monotonic()
 
