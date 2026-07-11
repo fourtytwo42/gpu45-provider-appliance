@@ -339,8 +339,19 @@ def delete_job_files(job_id: str, job: dict[str, Any]) -> list[str]:
     return deleted
 
 
-def terminate_job_processes(job_id: str) -> list[int]:
+def terminate_job_processes(job_id: str, job: dict[str, Any] | None = None) -> list[int]:
     terminated: list[int] = []
+    recorded_pid = int((job or {}).get("process_pid") or 0)
+    use_process_group = bool((job or {}).get("process_group"))
+    if recorded_pid > 0:
+        try:
+            if use_process_group:
+                os.killpg(os.getpgid(recorded_pid), signal.SIGTERM)
+            else:
+                os.kill(recorded_pid, signal.SIGTERM)
+            terminated.append(recorded_pid)
+        except (ProcessLookupError, OSError):
+            pass
     try:
         result = subprocess.run(["/usr/bin/pgrep", "-f", f"wan_api.diffsynth_generate.*{job_id}"], check=False, capture_output=True, text=True)
     except OSError:
@@ -352,6 +363,8 @@ def terminate_job_processes(job_id: str) -> list[int]:
         except ValueError:
             continue
         if pid == os.getpid():
+            continue
+        if pid in terminated:
             continue
         try:
             os.kill(pid, signal.SIGTERM)
@@ -366,8 +379,11 @@ def terminate_job_processes(job_id: str) -> list[int]:
             except ProcessLookupError:
                 continue
             try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
+                if pid == recorded_pid and use_process_group:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                else:
+                    os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
                 continue
     return terminated
 
@@ -460,17 +476,26 @@ def run_job(job: dict[str, Any]) -> None:
         with log_path.open("w", encoding="utf-8") as log:
             log.write("$ " + " ".join(command) + "\n\n")
             log.flush()
-            result = subprocess.run(command, cwd=WAN_ROOT, stdout=log, stderr=subprocess.STDOUT, text=True)
-        if result.returncode != 0:
-            update_job(job_id, status="failed", completed_at=now(), error=f"generate.py exited with {result.returncode}")
+            process = subprocess.Popen(
+                command,
+                cwd=WAN_ROOT,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+            update_job(job_id, process_pid=process.pid, process_group=True)
+            return_code = process.wait()
+        if return_code != 0:
+            update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error=f"generate.py exited with {return_code}", process_pid=None)
             return
         output = find_output(job_id)
         if not output:
-            update_job(job_id, status="failed", completed_at=now(), error="No output video found.")
+            update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error="No output video found.", process_pid=None)
             return
-        update_job(job_id, status="completed", completed_at=now(), output_path=str(output))
+        update_job_unless_cancelled(job_id, status="completed", completed_at=now(), output_path=str(output), process_pid=None)
     except Exception as exc:
-        update_job(job_id, status="failed", completed_at=now(), error=str(exc))
+        update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error=str(exc), process_pid=None)
     finally:
         if lease is not None:
             lease.release()
@@ -603,6 +628,20 @@ async def create_i2v_job(
         jobs = load_jobs()
         jobs.append(job)
         save_jobs(jobs)
+
+
+def update_job_unless_cancelled(job_id: str, **updates: Any) -> bool:
+    with lock:
+        jobs = load_jobs()
+        for job in jobs:
+            if job["id"] != job_id:
+                continue
+            if job.get("status") == "cancelled":
+                return False
+            job.update(updates)
+            save_jobs(jobs)
+            return True
+    return False
     ensure_runner()
     return public_job(job)
 
@@ -612,16 +651,24 @@ def cancel_job(job_id: str) -> dict[str, Any]:
     with lock:
         jobs = load_jobs()
         for job in jobs:
+            if job["id"] == job_id and job["status"] == "cancelled":
+                return {"ok": True, "already_cancelled": True}
+            if job["id"] == job_id and job["status"] == "failed" and "exited with -15" in str(job.get("error") or ""):
+                job["status"] = "cancelled"
+                job["error"] = "Cancelled by user."
+                save_jobs(jobs)
+                return {"ok": True, "reconciled": True}
             if job["id"] == job_id and job["status"] == "queued":
                 job["status"] = "cancelled"
                 job["completed_at"] = now()
                 save_jobs(jobs)
                 return {"ok": True}
             if job["id"] == job_id and job["status"] == "running":
-                terminated = terminate_job_processes(job_id)
+                terminated = terminate_job_processes(job_id, job)
                 job["status"] = "cancelled"
                 job["completed_at"] = now()
                 job["error"] = "Cancelled by user."
+                job["process_pid"] = None
                 save_jobs(jobs)
                 return {"ok": True, "terminated_pids": terminated}
     raise HTTPException(status_code=409, detail="Only queued or running jobs can be cancelled.")
