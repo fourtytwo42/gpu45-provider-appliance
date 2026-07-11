@@ -1,7 +1,7 @@
 [Unit]
 Description=GPU45 provider appliance collector worker
-After=network-online.target gpu45-host-tune.service llama-openai.service
-Wants=network-online.target llama-openai.service
+After=network-online.target gpu45-host-tune.service
+Wants=network-online.target
 
 [Service]
 Type=simple
