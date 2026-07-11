@@ -29,9 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--negative-prompt", default=DEFAULT_NEGATIVE_PROMPT)
     parser.add_argument("--size", default="832*480")
-    parser.add_argument("--steps", type=int, default=8)
+    parser.add_argument("--steps", type=int, default=30)
     parser.add_argument("--frame-num", type=int, default=45)
-    parser.add_argument("--fps", type=int, default=6)
+    parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed", type=int, default=-1)
     parser.add_argument("--input-image")
     return parser

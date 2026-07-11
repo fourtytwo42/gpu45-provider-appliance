@@ -25,7 +25,7 @@ Environment=FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE
 Environment=GPU_ARCHS=gfx1100
 Environment=AITER_USE_SYSTEM_TRITON=1
 Environment=PYTORCH_ALLOC_CONF=expandable_segments:True
-Environment=WAN2_OUTPUT_FPS=6
+Environment=WAN2_OUTPUT_FPS=24
 Environment=MIOPEN_FIND_MODE=2
 Environment=TOKENIZERS_PARALLELISM=false
 EnvironmentFile=/etc/gpu45/resource-manager.env

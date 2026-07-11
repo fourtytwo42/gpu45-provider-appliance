@@ -44,7 +44,7 @@ lock = threading.Lock()
 runner_thread: threading.Thread | None = None
 
 SUPPORTED_SIZES = {"832*480", "480*832", "1280*704", "704*1280"}
-OUTPUT_FPS = int(os.environ.get("WAN2_OUTPUT_FPS", "6"))
+OUTPUT_FPS = int(os.environ.get("WAN2_OUTPUT_FPS", "24"))
 DEFAULT_NEGATIVE_PROMPT = (
     "abstract colors, smoke only, overexposed, blown out highlights, blurry, low quality, "
     "distorted subject, missing subject, text, watermark, painting, cartoon"
@@ -118,6 +118,15 @@ PROFILES: dict[str, dict[str, Any]] = {
         "ready_detail": "Wan2.2 TI2V-5B",
         "modes": ["t2v", "i2v"],
         "sizes": ["832*480", "480*832", "1280*704", "704*1280"],
+        "durations": [2, 3, 4, 5],
+        "step_counts": [20, 30, 40, 50],
+        "default_steps": 30,
+        "default_fps": OUTPUT_FPS,
+        "expected_vram_gb": 28,
+        "known_limitations": [
+            "The base TI2V model is not distilled; 12 steps and below produce visibly degraded results.",
+            "Text-to-video is less compositionally reliable than image-to-video.",
+        ],
     },
     "wan21-t2v-13b": {
         "id": "wan21-t2v-13b",
@@ -143,14 +152,14 @@ class CreateJobBody(BaseModel):
     profile: str = "wan22-ti2v-5b"
     negative_prompt: str | None = None
     size: str = "832*480"
-    steps: int = Field(default=8, ge=1, le=24)
+    steps: int = Field(default=30, ge=1, le=50)
     duration_seconds: int = Field(default=2, ge=1, le=15)
     seed: int = -1
 
 
 def duration_to_frame_num(seconds: int) -> int:
-    output_frames = max(5, seconds * OUTPUT_FPS)
-    return (output_frames - 1) * 4 + 1
+    target_frames = max(5, seconds * OUTPUT_FPS)
+    return round((target_frames - 1) / 4) * 4 + 1
 
 
 def now() -> str:
@@ -551,7 +560,7 @@ async def create_i2v_job(
     negative_prompt: str = Form(DEFAULT_NEGATIVE_PROMPT),
     profile: str = Form("wan22-ti2v-5b"),
     size: str = Form("832*480"),
-    steps: int = Form(8),
+    steps: int = Form(30),
     duration_seconds: int = Form(2),
     seed: int = Form(-1),
 ) -> dict[str, Any]:

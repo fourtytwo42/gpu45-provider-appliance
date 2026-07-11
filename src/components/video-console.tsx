@@ -10,10 +10,10 @@ import { videoOutputUrl } from "@/lib/video";
 type RunState = "idle" | "working" | "error";
 const DEFAULT_NEGATIVE_PROMPT = "abstract colors, smoke only, overexposed, blown out highlights, blurry, low quality, distorted subject, missing subject, text, watermark, painting, cartoon";
 const VIDEO_PRESETS = {
-  preview: { label: "Preview", size: "832*480", steps: 8, duration: 2 },
-  balanced: { label: "Balanced", size: "832*480", steps: 12, duration: 2 },
-  quality: { label: "Quality", size: "832*480", steps: 16, duration: 2 },
-  custom: { label: "Custom", size: "832*480", steps: 8, duration: 2 },
+  preview: { label: "Preview", size: "832*480", steps: 20, duration: 2 },
+  balanced: { label: "Balanced", size: "832*480", steps: 30, duration: 2 },
+  quality: { label: "Quality", size: "832*480", steps: 50, duration: 2 },
+  custom: { label: "Custom", size: "832*480", steps: 30, duration: 2 },
 };
 
 async function parseJson(response: Response): Promise<Record<string, unknown>> {
