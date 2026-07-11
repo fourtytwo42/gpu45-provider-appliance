@@ -108,6 +108,14 @@ class PresentationTtsTests(unittest.TestCase):
         self.assertIsNotNone(deleted)
         self.assertFalse(job_dir.exists())
 
+    def test_eta_uses_recent_median_slide_time(self):
+        job = {"slides": [
+            {"status": "completed", "started_at": "2026-07-11T10:00:00Z", "finished_at": "2026-07-11T10:00:40Z"},
+            {"status": "completed", "started_at": "2026-07-11T10:01:00Z", "finished_at": "2026-07-11T10:02:00Z"},
+            {"status": "pending"}, {"status": "pending"}, {"status": "pending"},
+        ]}
+        self.assertEqual(presentation_tts.estimate_presentation_eta(job), 150.0)
+
 
 if __name__ == "__main__":
     unittest.main()

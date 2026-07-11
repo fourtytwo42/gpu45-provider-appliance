@@ -94,6 +94,7 @@ export type TtsAudiobookJob = {
   current_chunk?: number | null;
   progress_label: string;
   progress_percent: number;
+  eta_seconds?: number | null;
   stop_requested?: boolean;
   stitched_audio_url?: string;
   text_chars: number;
@@ -139,6 +140,7 @@ export type TtsPresentationJob = {
   current_slide?: number | null;
   progress_label: string;
   progress_percent: number;
+  eta_seconds?: number | null;
   stop_requested?: boolean;
   output_url?: string;
   output_path?: string;

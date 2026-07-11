@@ -671,7 +671,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                 <div className="mt-3 h-2 border border-white/10 bg-black/30">
                   <div className="h-full bg-emerald-300 transition-all" style={{ width: `${audiobookProgressValue(job)}%` }} />
                 </div>
-                <div className="mt-1 flex justify-between text-xs text-slate-400"><span>{job.progress_label}</span><span>{audiobookProgressValue(job).toFixed(1)}%</span></div>
+                <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400"><span>{job.progress_label}</span><span className="flex items-center gap-3"><span>{audiobookProgressValue(job).toFixed(1)}%</span>{canStop ? <span className="inline-flex items-center gap-1 text-cyan-200"><Clock className="h-3.5 w-3.5" />ETA {formatEta(job.eta_seconds, true)}</span> : null}</span></div>
                 {job.error ? <p className="mt-2 text-sm text-red-200">{job.error}</p> : null}
                 {hasAudio ? <audio className="mt-3 w-full" controls src={ttsAudiobookAudioUrl(job.id, { version: audioVersion })} /> : null}
                 {hasAudio ? (
@@ -780,7 +780,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                 <div className="mt-3 h-2 border border-white/10 bg-black/30">
                   <div className="h-full bg-violet-300 transition-all" style={{ width: `${presentationProgressValue(job)}%` }} />
                 </div>
-                <div className="mt-1 flex justify-between text-xs text-slate-400"><span>{job.progress_label}</span><span>{presentationProgressValue(job).toFixed(1)}%</span></div>
+                <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400"><span>{job.progress_label}</span><span className="flex items-center gap-3"><span>{presentationProgressValue(job).toFixed(1)}%</span>{canStop ? <span className="inline-flex items-center gap-1 text-violet-200"><Clock className="h-3.5 w-3.5" />ETA {formatEta(job.eta_seconds, true)}</span> : null}</span></div>
                 {job.error ? <p className="mt-2 text-sm text-red-200">{job.error}</p> : null}
                 {narratedSlides.length > 0 ? (
                   <div className="mt-3 grid gap-2 md:grid-cols-2">

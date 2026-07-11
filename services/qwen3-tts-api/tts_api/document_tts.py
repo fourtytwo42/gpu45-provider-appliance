@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import re
+from statistics import median
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
@@ -68,6 +69,27 @@ FIRST_SENTENCE_END_RE = re.compile(r"[.!?][\"')\]]*(?=\s+|$)")
 
 def utcnow() -> str:
     return datetime.utcnow().isoformat() + "Z"
+
+
+def estimate_audiobook_eta(job: dict[str, Any]) -> float | None:
+    durations: list[float] = []
+    for chunk in reversed(job.get("chunks", [])):
+        if chunk.get("status") != "completed" or not chunk.get("started_at") or not chunk.get("finished_at"):
+            continue
+        try:
+            started = datetime.fromisoformat(str(chunk["started_at"]).replace("Z", "+00:00"))
+            finished = datetime.fromisoformat(str(chunk["finished_at"]).replace("Z", "+00:00"))
+            duration = (finished - started).total_seconds()
+            if 1.0 <= duration <= 3600.0:
+                durations.append(duration)
+        except (TypeError, ValueError):
+            continue
+        if len(durations) >= 20:
+            break
+    if not durations:
+        return None
+    remaining = sum(1 for chunk in job.get("chunks", []) if chunk.get("status") in ("pending", "running", "failed"))
+    return round(median(durations) * remaining, 1)
 
 
 def _epub_item_text(item: Any) -> str:
@@ -676,6 +698,7 @@ def _run_audiobook_job_inner(job_id: str, started: float, job: dict[str, Any]) -
                 failed_chunks=sum(1 for c in chunks if c.get("status") == "failed"),
                 progress_percent=round((completed / total) * 100, 1),
                 progress_label=f"Generating chunk {idx + 1} of {total}",
+                eta_seconds=estimate_audiobook_eta(job),
                 elapsed_seconds=round(monotonic() - started, 1),
                 updated_at=utcnow(),
             )

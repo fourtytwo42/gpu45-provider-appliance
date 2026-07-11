@@ -4,6 +4,7 @@ import os
 import posixpath
 import re
 import shutil
+from statistics import median
 import zipfile
 import base64
 from datetime import datetime
@@ -56,6 +57,27 @@ def qn(prefix: str, name: str) -> str:
 
 def utcnow() -> str:
     return datetime.utcnow().isoformat() + "Z"
+
+
+def estimate_presentation_eta(job: dict[str, Any]) -> float | None:
+    durations: list[float] = []
+    for slide in reversed(job.get("slides", [])):
+        if slide.get("status") != "completed" or not slide.get("started_at") or not slide.get("finished_at"):
+            continue
+        try:
+            started = datetime.fromisoformat(str(slide["started_at"]).replace("Z", "+00:00"))
+            finished = datetime.fromisoformat(str(slide["finished_at"]).replace("Z", "+00:00"))
+            duration = (finished - started).total_seconds()
+            if 1.0 <= duration <= 7200.0:
+                durations.append(duration)
+        except (TypeError, ValueError):
+            continue
+        if len(durations) >= 12:
+            break
+    if not durations:
+        return None
+    remaining = sum(1 for slide in job.get("slides", []) if slide.get("status") in ("pending", "running", "failed", "flagged"))
+    return round(median(durations) * remaining, 1)
 
 
 def rels_path_for(part_path: str) -> str:
@@ -473,6 +495,7 @@ def _run_presentation_job_inner(job_id: str, started: float) -> None:
                 status="running",
                 current_slide=idx,
                 progress_label=f"Generating slide {idx + 1} of {job.get('total_slides')}",
+                eta_seconds=estimate_presentation_eta(job),
                 elapsed_seconds=round(monotonic() - started, 1),
                 updated_at=utcnow(),
             )
