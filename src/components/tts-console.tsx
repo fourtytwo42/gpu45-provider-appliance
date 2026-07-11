@@ -72,6 +72,8 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
   const [message, setMessage] = useState("");
   const [activeSynthesisId, setActiveSynthesisId] = useState<string | null>(null);
   const [audiobookChunkPages, setAudiobookChunkPages] = useState<Record<string, number>>({});
+  const [audiobookEngine, setAudiobookEngine] = useState<"qwen" | "pocket">("qwen");
+  const [presentationEngine, setPresentationEngine] = useState<"qwen" | "pocket">("qwen");
   const [pocket, setPocket] = useState<PocketTtsSnapshot>({ healthy: false, serviceUrl: "", device: "cpu", modelLoaded: false, voices: [], jobs: [] });
   const readyModels = useMemo(() => snapshot.models.filter((model) => model.status === "ready"), [snapshot.models]);
   const activeSynthesisJobs = useMemo(() => (
@@ -606,13 +608,19 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
         </div>
       </SectionCard>
 
-      <SectionCard title="Document To Audiobook" description="Upload EPUB, PDF, DOCX, TXT, Markdown, or HTML and generate sentence-aware TTS with preview, stop, resume, and stitching.">
+      <SectionCard title="Document To Audiobook" description="Use Qwen trained models or Pocket voices with the same sentence-aware chunking, quality checks, preview, stop, resume, and stitching workflow.">
         <form action={(formData) => void createAudiobook(formData)} className="grid gap-3">
           <input type="hidden" name="action" value="createAudiobook" />
           <input name="title" className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60" placeholder="optional audiobook title" />
+          <select name="engine" value={audiobookEngine} onChange={(event) => setAudiobookEngine(event.target.value as "qwen" | "pocket")} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
+            <option value="qwen">Qwen3-TTS - GPU trained voice</option>
+            <option value="pocket">Pocket TTS - CPU voice</option>
+          </select>
           <select name="model_id" required className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
-            <option value="">Choose trained voice model</option>
-            {readyModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+            <option value="">{audiobookEngine === "qwen" ? "Choose trained voice model" : "Choose Pocket voice"}</option>
+            {audiobookEngine === "qwen"
+              ? readyModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)
+              : pocket.voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name} - {voice.language}{voice.kind === "clone" ? " (clone)" : ""}</option>)}
           </select>
           <input
             name="file"
@@ -621,7 +629,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
             accept=".epub,.pdf,.docx,.txt,.md,.html,.htm,application/epub+zip,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
             className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-200 file:mr-3 file:border-0 file:bg-cyan-400/10 file:px-3 file:py-1 file:text-cyan-100"
           />
-          <button disabled={status === "working" || readyModels.length === 0} className="inline-flex items-center justify-center gap-2 border border-emerald-400/40 bg-emerald-400/10 px-4 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-50">
+          <button disabled={status === "working" || (audiobookEngine === "qwen" ? readyModels.length === 0 : !pocket.healthy || pocket.voices.length === 0)} className="inline-flex items-center justify-center gap-2 border border-emerald-400/40 bg-emerald-400/10 px-4 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-50">
             <BookOpen className="h-4 w-4" />
             Create Audiobook
           </button>
@@ -649,6 +657,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                       <span>{job.status}</span>
                       <span>{job.completed_chunks}/{job.total_chunks} chunks</span>
                       <span>{job.model_name ?? job.model_id}</span>
+                      <span>{job.speech_engine === "pocket" ? "Pocket CPU" : "Qwen GPU"}</span>
                       <span>{job.source_filename}</span>
                     </div>
                   </div>
@@ -713,13 +722,19 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
         </div>
       </SectionCard>
 
-      <SectionCard title="PowerPoint Narration" description="Upload a PPTX with speaker notes and create a narrated autoplay deck using a trained voice model.">
+      <SectionCard title="PowerPoint Narration" description="Upload a PPTX with speaker notes and narrate it with either a Qwen trained model or a Pocket voice.">
         <form action={(formData) => void createPresentation(formData)} className="grid gap-3">
           <input type="hidden" name="action" value="createPresentation" />
           <input name="title" className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60" placeholder="optional narrated deck title" />
+          <select name="engine" value={presentationEngine} onChange={(event) => setPresentationEngine(event.target.value as "qwen" | "pocket")} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
+            <option value="qwen">Qwen3-TTS - GPU trained voice</option>
+            <option value="pocket">Pocket TTS - CPU voice</option>
+          </select>
           <select name="model_id" required className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
-            <option value="">Choose trained voice model</option>
-            {readyModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+            <option value="">{presentationEngine === "qwen" ? "Choose trained voice model" : "Choose Pocket voice"}</option>
+            {presentationEngine === "qwen"
+              ? readyModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)
+              : pocket.voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name} - {voice.language}{voice.kind === "clone" ? " (clone)" : ""}</option>)}
           </select>
           <input
             name="file"
@@ -728,7 +743,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
             accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
             className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-200 file:mr-3 file:border-0 file:bg-cyan-400/10 file:px-3 file:py-1 file:text-cyan-100"
           />
-          <button disabled={status === "working" || readyModels.length === 0} className="inline-flex items-center justify-center gap-2 border border-violet-400/40 bg-violet-400/10 px-4 py-2 text-sm font-medium text-violet-100 hover:bg-violet-400/20 disabled:opacity-50">
+          <button disabled={status === "working" || (presentationEngine === "qwen" ? readyModels.length === 0 : !pocket.healthy || pocket.voices.length === 0)} className="inline-flex items-center justify-center gap-2 border border-violet-400/40 bg-violet-400/10 px-4 py-2 text-sm font-medium text-violet-100 hover:bg-violet-400/20 disabled:opacity-50">
             <Upload className="h-4 w-4" />
             Create Narrated PPTX
           </button>

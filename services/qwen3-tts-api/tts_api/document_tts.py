@@ -18,7 +18,8 @@ from pypdf import PdfReader
 
 from tts_api import store
 from tts_api.audio_convert import wav_to_mp3_bytes
-from tts_api import synthesize as synthesize_module
+from contextlib import nullcontext
+from tts_api import engine_bridge
 from tts_api.config import DEVICE
 from tts_api.resource_guard import tts_vram_guard
 
@@ -352,12 +353,9 @@ def _stitched_audio_path(job_id: str) -> str:
     return os.path.join(store.audiobook_dir(job_id), f"audiobook_{job_id}.mp3")
 
 
-def create_audiobook_job(source_path: str, source_filename: str, model_id: str, title: str | None) -> dict[str, Any]:
-    model = store.get_model_by_id(model_id)
-    if not model:
-        raise KeyError(f"Model not found: {model_id}")
-    if model.get("status") != "ready":
-        raise ValueError("Model is not ready")
+def create_audiobook_job(source_path: str, source_filename: str, model_id: str, title: str | None, engine: str = "qwen") -> dict[str, Any]:
+    selected_engine = engine_bridge.normalize_engine(engine)
+    voice = engine_bridge.resolve_voice(selected_engine, model_id)
     text = extract_text(source_path, source_filename)
     if not text:
         raise ValueError("No readable text found in uploaded document")
@@ -394,7 +392,8 @@ def create_audiobook_job(source_path: str, source_filename: str, model_id: str, 
         "title": (title or Path(source_filename).stem or "Audiobook").strip(),
         "source_filename": source_filename,
         "model_id": model_id,
-        "model_name": model.get("name"),
+        "model_name": voice.get("name"),
+        "speech_engine": selected_engine,
         "split_strategy": "sentence",
         "front_matter_policy": "skip_index_start_at_first_section",
         "intro_text": intro_text,
@@ -626,11 +625,13 @@ def run_audiobook_job(job_id: str) -> None:
     job = store.get_audiobook_job_by_id(job_id)
     if not job:
         return
-    with tts_vram_guard("audiobook", device=DEVICE):
+    engine = str(job.get("speech_engine") or "qwen")
+    guard = tts_vram_guard("audiobook", device=DEVICE) if engine == "qwen" else nullcontext()
+    with guard:
         try:
             _run_audiobook_job_inner(job_id, started, job)
         finally:
-            synthesize_module.unload_cached_models()
+            engine_bridge.unload(engine)
 
 
 def _run_audiobook_job_inner(job_id: str, started: float, job: dict[str, Any]) -> None:
@@ -683,7 +684,7 @@ def _run_audiobook_job_inner(job_id: str, started: float, job: dict[str, Any]) -
                 final_quality: dict[str, Any] | None = None
                 final_mp3_bytes: bytes | None = None
                 while True:
-                    wav_bytes, sr = synthesize_module.synthesize(text=next_chunk["text"], model_id=job["model_id"])
+                    wav_bytes, sr = engine_bridge.synthesize(text=next_chunk["text"], engine=job.get("speech_engine"), voice_id=job["model_id"])
                     quality = analyze_wav_quality(wav_bytes, sr, next_chunk["text"])
                     final_quality = quality
                     if quality.get("ok") or attempts >= MAX_AUTO_REGENERATE_ATTEMPTS:

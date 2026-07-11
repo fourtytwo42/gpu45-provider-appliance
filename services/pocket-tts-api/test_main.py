@@ -51,6 +51,13 @@ class PocketTtsApiTests(unittest.TestCase):
             self.assertEqual(job["status"], "completed")
             self.assertEqual(self.client.get(f"/jobs/{job_id}/audio").status_code, 200)
 
+    def test_direct_synthesis_returns_wav_without_job(self):
+        with patch.object(main, "get_model", return_value=FakeModel()), patch.object(main, "get_voice_state", return_value={}):
+            response = self.client.post("/synthesize", json={"text": "Audiobook chunk.", "voice_id": "builtin:alba"})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["content-type"], "audio/wav")
+            self.assertEqual(self.client.get("/jobs").json(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

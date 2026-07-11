@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import shutil
 import subprocess
@@ -14,7 +15,7 @@ from typing import Any
 
 import scipy.io.wavfile
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pocket_tts import TTSModel, export_model_state
 from pydantic import BaseModel, Field
 
@@ -176,6 +177,11 @@ class CreateJobBody(BaseModel):
     voice_id: str
 
 
+class DirectSynthesisBody(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_TEXT_CHARS)
+    voice_id: str
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     jobs = read_json(JOBS_PATH)
@@ -240,6 +246,18 @@ def delete_voice(voice_id: str) -> dict[str, bool]:
 @app.get("/jobs")
 def jobs() -> list[dict[str, Any]]:
     return list(reversed(read_json(JOBS_PATH)))
+
+
+@app.post("/synthesize", response_class=Response)
+def synthesize_direct(body: DirectSynthesisBody) -> Response:
+    voice = resolve_voice(body.voice_id)
+    with generation_lock:
+        model = get_model(voice["language"])
+        state = get_voice_state(model, voice)
+        audio = model.generate_audio(state, body.text, max_tokens=50)
+        output = io.BytesIO()
+        scipy.io.wavfile.write(output, model.sample_rate, audio.detach().cpu().numpy())
+    return Response(content=output.getvalue(), media_type="audio/wav", headers={"X-Sample-Rate": str(model.sample_rate)})
 
 
 @app.post("/jobs", status_code=202)

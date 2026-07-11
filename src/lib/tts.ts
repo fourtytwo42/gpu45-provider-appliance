@@ -84,6 +84,7 @@ export type TtsAudiobookJob = {
   source_filename: string;
   model_id: string;
   model_name?: string;
+  speech_engine?: "qwen" | "pocket";
   chunk_chars?: number;
   split_strategy?: "sentence" | string;
   target_chunk_chars?: number;
@@ -130,6 +131,7 @@ export type TtsPresentationJob = {
   source_filename: string;
   model_id: string;
   model_name?: string;
+  speech_engine?: "qwen" | "pocket";
   total_slides: number;
   narration_slides: number;
   completed_slides: number;
