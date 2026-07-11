@@ -27,8 +27,10 @@ async function parseJson(response: Response): Promise<Record<string, unknown>> {
 function formatDuration(seconds?: number | null): string {
   if (seconds == null || !Number.isFinite(seconds)) return "unknown";
   const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
   const minutes = Math.floor(total / 60);
   const rest = total % 60;
+  if (hours > 0) return `${hours}h ${Math.floor((total % 3600) / 60)}m`;
   return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`;
 }
 

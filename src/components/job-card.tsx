@@ -17,6 +17,14 @@ function dateLabel(value?: string | null): string {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }).format(date);
 }
 
+function etaLabel(seconds?: number | null): string | null {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return null;
+  const total = Math.round(seconds);
+  if (total >= 3600) return `${Math.floor(total / 3600)}h ${Math.floor((total % 3600) / 60)}m left`;
+  if (total >= 60) return `${Math.floor(total / 60)}m left`;
+  return `${total}s left`;
+}
+
 async function runAction(id: string, action: UnifiedJobAction): Promise<string> {
   const response = await fetch("/api/jobs/action", {
     method: "POST",
@@ -62,7 +70,7 @@ export function JobCard({ job, compact = false }: { job: UnifiedJob; compact?: b
           <div className="flex flex-wrap items-center gap-2"><StatusBadge tone={toneMap[job.status]}>{job.displayStatus ?? job.status.replace("_", " ")}</StatusBadge><span className="text-xs text-[#617083]">{job.kind.replace("-", " ")}</span></div>
           <h3 className="mt-2 truncate text-sm font-semibold text-[#e6edf5]" title={job.title}>{job.title}</h3>
           {job.subtitle ? <p className="mt-1 line-clamp-2 text-sm text-[#8a98aa]" title={job.subtitle}>{job.subtitle}</p> : null}
-          {progress !== null ? <div className="mt-3"><div className="mb-1 flex justify-between gap-3 text-xs text-[#8a98aa]"><span>{job.progressLabel ?? "Progress"}</span><span className="font-mono">{progress.toFixed(progress % 1 === 0 ? 0 : 1)}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[#223044]"><div className="h-full rounded-full bg-[#21d4fd]" style={{ width: `${progress}%` }} /></div></div> : null}
+          {progress !== null ? <div className="mt-3"><div className="mb-1 flex justify-between gap-3 text-xs text-[#8a98aa]"><span>{job.progressLabel ?? "Progress"}</span><span className="flex items-center gap-2"><span className="text-[#21d4fd]">{etaLabel(job.etaSeconds)}</span><span className="font-mono">{progress.toFixed(progress % 1 === 0 ? 0 : 1)}%</span></span></div><div className="h-1.5 overflow-hidden rounded-full bg-[#223044]"><div className="h-full rounded-full bg-[#21d4fd]" style={{ width: `${progress}%` }} /></div></div> : null}
           {job.error ? <details className="mt-3 rounded-md bg-[#24151a] px-3 py-2 text-sm text-rose-100"><summary className="flex cursor-pointer list-none gap-2"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span className="line-clamp-2">{job.userMessage ?? "This job needs attention."}</span></summary><pre className="mt-3 max-h-52 overflow-auto whitespace-pre-wrap border-t border-[#fb4b6b]/20 pt-3 font-mono text-xs text-[#c99aa5]">{job.technicalError ?? job.error}</pre></details> : null}
           {message ? <div className="mt-3 rounded-md border border-[#223044] bg-[#121a26] px-3 py-2 text-xs text-[#cbd5e1]">{message}</div> : null}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-[#617083]">
