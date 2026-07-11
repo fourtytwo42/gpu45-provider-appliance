@@ -49,6 +49,31 @@ DEFAULT_NEGATIVE_PROMPT = (
 )
 
 PROFILES: dict[str, dict[str, Any]] = {
+    "wan22-a14b-q4": {
+        "id": "wan22-a14b-q4",
+        "name": "Wan2.2 A14B Q4 Turbo",
+        "description": "Dual-expert A14B quality profile with the four-step LightX2V accelerator.",
+        "repo": "QuantStack/Wan2.2-T2V-A14B-GGUF",
+        "model_dir": DATA_DIR,
+        "backend": "hunyuan-comfy",
+        "modes": ["t2v"],
+        "sizes": ["832*480", "480*832"],
+        "durations": [2, 3, 4, 5],
+        "step_counts": [4],
+        "default_steps": 4,
+        "default_fps": 12,
+        "expected_vram_gb": 28,
+        "required_files": [
+            "Wan2.2-T2V-A14B-GGUF/HighNoise/Wan2.2-T2V-A14B-HighNoise-Q4_K_M.gguf",
+            "Wan2.2-T2V-A14B-GGUF/LowNoise/Wan2.2-T2V-A14B-LowNoise-Q4_K_M.gguf",
+            "comfy-assets/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "comfy-assets/split_files/vae/wan_2.1_vae.safetensors",
+            "comfy-assets/split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+            "comfy-assets/split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+        ],
+        "index_file": None,
+        "ready_detail": "Wan2.2 A14B Q4 Turbo",
+    },
     "hunyuan15-t2v-q5": {
         "id": "hunyuan15-t2v-q5",
         "name": "HunyuanVideo 1.5 480p Q5",
@@ -358,6 +383,8 @@ def run_job(job: dict[str, Any]) -> None:
             "wan_api.comfy_generate",
             "--job-id",
             job_id,
+            "--profile",
+            job["profile"],
             "--output",
             str(out_prefix.with_suffix(".mp4")),
             "--prompt",
