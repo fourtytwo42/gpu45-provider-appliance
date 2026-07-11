@@ -351,6 +351,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                         {job.status}
                       </span>
                       <span className="truncate text-xs text-slate-500">{job.profile_name ?? job.profile ?? "Wan"}</span>
+                      {job.mode ? <span className="border border-white/10 px-1.5 py-0.5 text-[10px] uppercase text-slate-400">{job.mode}</span> : null}
                     </div>
                   </div>
                   <button

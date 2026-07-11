@@ -6,6 +6,7 @@ export type VideoJob = {
   id: string;
   profile?: string;
   profile_name?: string;
+  mode?: "t2v" | "i2v";
   prompt: string;
   negative_prompt?: string;
   size: string;
