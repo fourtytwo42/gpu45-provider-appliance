@@ -99,6 +99,7 @@ install -m 0644 deploy/systemd/gpu45-provider-appliance-worker.service /etc/syst
 install -m 0644 deploy/systemd/gpu45-resource-manager.service /etc/systemd/system/gpu45-resource-manager.service
 install -m 0644 deploy/systemd/gpu45-responses-proxy.service /etc/systemd/system/gpu45-responses-proxy.service
 install -m 0644 deploy/systemd/qwen3-tts-api.service /etc/systemd/system/qwen3-tts-api.service
+install -m 0644 deploy/systemd/gpu45-pocket-tts-api.service /etc/systemd/system/gpu45-pocket-tts-api.service
 install -m 0644 deploy/systemd/gpu45-image-api.service /etc/systemd/system/gpu45-image-api.service
 install -m 0644 deploy/systemd/gpu45-whisper-api.service /etc/systemd/system/gpu45-whisper-api.service
 install -m 0644 deploy/systemd/wan2-video-api.service /etc/systemd/system/wan2-video-api.service
@@ -107,6 +108,8 @@ install -m 0755 scripts/configure-service-user.sh /usr/local/sbin/gpu45-configur
 /usr/local/sbin/gpu45-configure-service-user
 install -m 0755 deploy/usr/local/bin/gpu45-responses-proxy /usr/local/bin/gpu45-responses-proxy
 cp -a services/qwen3-tts-api/tts_api/. /opt/qwen3-tts/tts_api/
+mkdir -p /opt/pocket-tts/pocket_tts_api
+cp -a services/pocket-tts-api/pocket_tts_api/. /opt/pocket-tts/pocket_tts_api/
 cp -a services/image-api/image_api/. /opt/gpu45-image-api/image_api/
 cp -a services/whisper-api/whisper_api/. /opt/gpu45-whisper-api/whisper_api/
 cp -a services/wan2-video-api/wan_api/. /opt/wan2.2/wan_api/
@@ -119,6 +122,8 @@ if [[ -L "$current_link" ]]; then
 fi
 ln -sfn "$release_dir" "$current_link"
 systemctl daemon-reload
+systemctl enable gpu45-pocket-tts-api.service
+systemctl restart gpu45-pocket-tts-api.service
 systemctl enable gpu45-resource-manager.service
 systemctl restart gpu45-resource-manager.service
 systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer
