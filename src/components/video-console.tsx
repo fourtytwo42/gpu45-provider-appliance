@@ -199,7 +199,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
               onChange={(event) => chooseProfile(event.target.value)}
               className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
             >
-              {modeProfiles.map((profile) => (
+              {modeProfiles.filter((profile) => profile.ready).map((profile) => (
                 <option key={profile.id} value={profile.id}>{profile.name}{profile.ready ? "" : " (not installed)"}</option>
               ))}
             </select>
@@ -319,9 +319,9 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                 <span>{profile.step_counts?.join(" / ") ?? "Variable"} steps</span>
                 <span>{profile.expected_vram_gb ? `~${profile.expected_vram_gb} GB VRAM` : "VRAM varies"}</span>
               </div>
-              <button disabled={state === "working" || profile.ready} className="inline-flex items-center justify-center gap-2 border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50" onClick={() => void downloadModel(profile.id)}>
+              <button disabled={state === "working" || profile.ready || Boolean(profile.assets_ready && profile.availability_reason)} className="inline-flex items-center justify-center gap-2 border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50" onClick={() => void downloadModel(profile.id)}>
                 <Download className="h-4 w-4" />
-                {profile.ready ? "Model Installed" : "Download Model"}
+                {profile.ready ? "Model Installed" : profile.assets_ready && profile.availability_reason ? "Failed Validation" : "Download Model"}
               </button>
             </div>
           ))}

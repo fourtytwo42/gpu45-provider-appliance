@@ -106,7 +106,7 @@ PROFILES: dict[str, dict[str, Any]] = {
     "wan22-ti2v-5b": {
         "id": "wan22-ti2v-5b",
         "name": "Wan2.2 TI2V 5B",
-        "description": "Quality target for text-to-video on this 32GB AMD GPU.",
+        "description": "Validated text-to-video and image-to-video profile for this 32GB AMD GPU.",
         "repo": "Wan-AI/Wan2.2-TI2V-5B",
         "model_dir": MODEL_DIR,
         "required_files": [
@@ -117,6 +117,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "index_file": "diffusion_pytorch_model.safetensors.index.json",
         "ready_detail": "Wan2.2 TI2V-5B",
         "modes": ["t2v", "i2v"],
+        "sizes": ["832*480", "480*832", "1280*704", "704*1280"],
     },
     "wan21-t2v-13b": {
         "id": "wan21-t2v-13b",
@@ -132,6 +133,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         ],
         "index_file": None,
         "ready_detail": "Wan2.1 T2V-1.3B",
+        "sizes": ["832*480", "480*832", "1280*704", "704*1280"],
     },
 }
 
