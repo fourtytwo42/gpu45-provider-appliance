@@ -1,152 +1,132 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, BriefcaseBusiness, Cpu, Database, FileSearch, FileText, Film, Gauge, HardDriveDownload, ImageIcon, KeyRound, Library, LogOut, Logs, Mic2, RadioTower, ScrollText, Settings2, SquareTerminal, Thermometer, Wrench, Zap } from "lucide-react";
+import {
+  Activity, Bot, BriefcaseBusiness, CheckCircle2, ChevronDown, Command,
+  Database, Home, LogOut, Menu, Search,
+  Settings2, Sparkles, Thermometer, Wrench, X, Zap,
+} from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatNumber } from "@/lib/format";
+import type { UnifiedJob } from "@/lib/jobs";
 import type { LiveTelemetry } from "@/lib/types";
 import type { ApplianceVersion } from "@/lib/version";
 import type { ResourceState } from "@/lib/resource-manager";
-import { MetricTile } from "./metric-tile";
+import { JobCard } from "./job-card";
 import { StatusBadge } from "./status-badge";
 
-type JobsSummary = { active: number; queued: number; failed: number; completed: number; total: number };
+type JobsPayload = { jobs: UnifiedJob[]; summary: { active: number; queued: number; failed: number; completed: number; total: number } };
 
-const navGroups = [
-  { label: "Command Center", items: [{ href: "/", label: "Overview", icon: Gauge }, { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness }, { href: "/outputs", label: "Outputs", icon: Library }] },
-  { label: "LLM Provider", items: [{ href: "/models", label: "Models", icon: HardDriveDownload }, { href: "/benchmarks", label: "Benchmarks", icon: SquareTerminal }, { href: "/keys", label: "Keys", icon: KeyRound }] },
-  { label: "Audio Studio", items: [{ href: "/tts", label: "TTS & Audiobooks", icon: Mic2 }, { href: "/whisper", label: "Whisper", icon: FileText }] },
-  { label: "Media Studio", items: [{ href: "/images", label: "Images", icon: ImageIcon }, { href: "/video", label: "Video", icon: Film }] },
-  { label: "Research", items: [{ href: "/research", label: "Search & Scrape", icon: FileSearch }] },
-  { label: "System", items: [{ href: "/timeline", label: "Timeline", icon: ScrollText }, { href: "/logs", label: "Logs", icon: Logs }, { href: "/settings", label: "Settings", icon: Settings2 }] },
+const areas = [
+  { href: "/", label: "Home", icon: Home, match: ["/"] },
+  { href: "/jobs", label: "Work", icon: BriefcaseBusiness, match: ["/jobs", "/outputs"] },
+  { href: "/models", label: "Models", icon: Bot, match: ["/models", "/benchmarks", "/keys"] },
+  { href: "/tts", label: "Studio", icon: Sparkles, match: ["/tts", "/whisper", "/images", "/video", "/research"] },
+  { href: "/settings", label: "System", icon: Settings2, match: ["/settings", "/timeline", "/logs"] },
 ];
 
-function shortModelName(model?: string): string {
-  if (!model || model === "unknown") return "No model";
-  const clean = model.split(/[\/]/).pop() ?? model;
-  return clean.replace(/\.gguf$/i, "");
-}
+const contextLinks: Record<string, Array<{ href: string; label: string }>> = {
+  Home: [{ href: "/", label: "Command center" }],
+  Work: [{ href: "/jobs", label: "Jobs" }, { href: "/outputs", label: "Outputs" }],
+  Models: [{ href: "/models", label: "Library" }, { href: "/benchmarks", label: "Benchmarks" }, { href: "/keys", label: "API access" }],
+  Studio: [{ href: "/tts", label: "Audio" }, { href: "/whisper", label: "Transcription" }, { href: "/images", label: "Images" }, { href: "/video", label: "Video" }, { href: "/research", label: "Research" }],
+  System: [{ href: "/settings", label: "Health & settings" }, { href: "/timeline", label: "Timeline" }, { href: "/logs", label: "Logs" }],
+};
 
+function isPathActive(pathname: string, href: string) { return href === "/" ? pathname === "/" : pathname.startsWith(href); }
+function shortModelName(model?: string) { return !model || model === "unknown" ? "No model" : (model.split("/").pop() ?? model).replace(/\.gguf$/i, ""); }
 function readinessTone(status?: string): "success" | "warning" | "danger" | "info" | "neutral" {
   if (status === "idle" || status === "generating") return "success";
   if (status === "loading" || status === "restarting") return "warning";
   if (status === "error" || status === "offline") return "danger";
-  if (status) return "info";
-  return "neutral";
+  return status ? "info" : "neutral";
 }
 
-function formatTemp(value: number | null | undefined): string { return value == null ? "n/a" : `${formatNumber(value, 0)} C`; }
-function formatWatts(value: number | null | undefined): string { return value == null ? "n/a" : `${formatNumber(value, 0)} W`; }
-function formatRpm(value: number | null | undefined): string { return value == null ? "n/a" : `${new Intl.NumberFormat("en-US").format(Math.round(value))} rpm`; }
+function IconButton({ label, onClick, children, active }: { label: string; onClick: () => void; children: React.ReactNode; active?: boolean }) {
+  return <button type="button" aria-label={label} title={label} onClick={onClick} className={cn("inline-flex h-9 w-9 items-center justify-center rounded-md text-[#8a98aa] transition hover:bg-[#182231] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#21d4fd]", active && "bg-[#182231] text-[#21d4fd]")}>{children}</button>;
+}
 
-function TopStatusBar({ initial }: { initial: LiveTelemetry }) {
-  const [live, setLive] = useState<LiveTelemetry>(initial);
+function ShellNav({ pathname, mobile, close }: { pathname: string; mobile?: boolean; close?: () => void }) {
+  const activeArea = areas.find((area) => area.match.some((path) => isPathActive(pathname, path))) ?? areas[0];
+  return <>
+    <div className="flex h-14 items-center gap-3 px-4">
+      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[#21d4fd]/12 text-[#21d4fd]"><Wrench className="h-4 w-4" /></div>
+      <div className="min-w-0"><div className="truncate text-sm font-semibold text-white">GPU45</div><div className="text-xs text-[#718096]">Appliance console</div></div>
+      {mobile ? <div className="ml-auto"><IconButton label="Close navigation" onClick={() => close?.()}><X className="h-4 w-4" /></IconButton></div> : null}
+    </div>
+    <nav aria-label="Primary navigation" className="space-y-1 px-2 py-3">
+      {areas.map((area) => { const Icon = area.icon; const active = area.label === activeArea.label; return <Link onClick={close} key={area.label} href={area.href} className={cn("flex h-10 items-center gap-3 rounded-md px-3 text-sm transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#21d4fd]", active ? "bg-[#172331] font-medium text-white" : "text-[#8a98aa] hover:bg-[#121a26] hover:text-white")}><Icon className={cn("h-4 w-4", active ? "text-[#21d4fd]" : "text-[#617083]")} /><span>{area.label}</span></Link>; })}
+    </nav>
+    <div className="mx-3 border-t border-[#1b2736] pt-4">
+      <div className="px-2 text-xs font-medium text-[#617083]">{activeArea.label}</div>
+      <nav aria-label={`${activeArea.label} navigation`} className="mt-2 space-y-0.5">
+        {contextLinks[activeArea.label].map((item) => <Link onClick={close} key={item.href} href={item.href} className={cn("block rounded-md px-2 py-2 text-sm transition", isPathActive(pathname, item.href) ? "text-[#21d4fd]" : "text-[#8a98aa] hover:bg-[#121a26] hover:text-white")}>{item.label}</Link>)}
+      </nav>
+    </div>
+  </>;
+}
+
+function StatusBar({ initial, onJobs, onMenu, jobs }: { initial: LiveTelemetry; onJobs: () => void; onMenu: () => void; jobs: JobsPayload | null }) {
+  const [live, setLive] = useState(initial);
   const [connected, setConnected] = useState(false);
-  const [jobs, setJobs] = useState<JobsSummary | null>(null);
   const [resources, setResources] = useState<ResourceState | null>(null);
-
+  const [telemetryOpen, setTelemetryOpen] = useState(false);
   useEffect(() => {
     const source = new EventSource("/api/live");
-    source.addEventListener("telemetry", (event) => {
-      setLive(JSON.parse((event as MessageEvent).data) as LiveTelemetry);
-      setConnected(true);
-    });
+    source.addEventListener("telemetry", (event) => { setLive(JSON.parse((event as MessageEvent).data) as LiveTelemetry); setConnected(true); });
     source.onerror = () => setConnected(false);
     return () => source.close();
   }, []);
-
   useEffect(() => {
     let cancelled = false;
-    async function loadResources() {
-      try { const response = await fetch("/api/resources/state", { cache: "no-store" }); const value = await response.json() as ResourceState; if (!cancelled) setResources(value); }
-      catch { if (!cancelled) setResources(null); }
-    }
-    void loadResources(); const timer = window.setInterval(() => void loadResources(), 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    const load = async () => { try { const response = await fetch("/api/resources/state", { cache: "no-store" }); if (response.ok && !cancelled) setResources(await response.json() as ResourceState); } catch { if (!cancelled) setResources(null); } };
+    void load(); const timer = window.setInterval(() => void load(), 5000); return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadJobs() {
-      try {
-        const response = await fetch("/api/jobs", { cache: "no-store" });
-        if (!response.ok) return;
-        const payload = await response.json() as { summary?: JobsSummary };
-        if (!cancelled) setJobs(payload.summary ?? null);
-      } catch {
-        if (!cancelled) setJobs(null);
-      }
-    }
-    void loadJobs();
-    const timer = window.setInterval(() => void loadJobs(), 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, []);
-
-  const system = live?.system;
-  const provider = live?.provider;
-  const vramDetail = system?.vramUsedBytes != null && system?.vramTotalBytes != null ? `${formatBytes(system.vramUsedBytes)} / ${formatBytes(system.vramTotalBytes)}` : "sensor unavailable";
-  const activeJobs = (jobs?.active ?? 0) + (provider?.activeRequests ?? 0);
-  const owner = resources?.owner?.kind ?? (activeJobs ? "working" : "idle");
-
-  return (
-    <div className="border-b border-[#223044] bg-[#0d131c]/95 px-3 py-3 backdrop-blur xl:px-5">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_repeat(5,minmax(132px,1fr))]">
-        <div className="rounded-lg border border-[#223044] bg-[#070a0f] px-3 py-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2"><StatusBadge tone={readinessTone(provider?.status)}>{provider?.status ?? "connecting"}</StatusBadge><span className={cn("h-2 w-2 rounded-full", connected ? "bg-[#36fba1]" : "bg-[#fb4b6b]")} /></div>
-              <div className="mt-1 truncate font-mono text-sm text-[#e6edf5]" title={provider?.model}>{shortModelName(provider?.model)}</div>
-            </div>
-            <Bot className="h-5 w-5 shrink-0 text-[#21d4fd]" />
-          </div>
-        </div>
-        <MetricTile label="Junction" value={formatTemp(system?.gpuTempJunctionC)} detail="thermal guard" icon={Thermometer} tone={(system?.gpuTempJunctionC ?? 0) >= 90 ? "rose" : "amber"} />
-        <MetricTile label="VRAM" value={system?.vramUsedBytes == null ? "n/a" : formatBytes(system.vramUsedBytes)} detail={vramDetail} icon={Database} tone="violet" />
-        <MetricTile label="Power" value={formatWatts(system?.gpuPowerW)} detail="board draw" icon={Zap} tone="amber" />
-        <MetricTile label="Fan" value={formatRpm(system?.fanRpm)} detail={`PWM ${system?.fanPwm ?? "n/a"}`} icon={Cpu} tone="cyan" />
-        <MetricTile label="GPU owner" value={owner.toUpperCase()} detail={`${activeJobs} active / ${resources?.queue.length ?? 0} waiting`} icon={Activity} tone={owner !== "idle" ? "green" : "slate"} />
+  const s = live.system; const provider = live.provider; const owner = resources?.owner?.kind ?? ((jobs?.summary.active ?? 0) > 0 ? "working" : "idle");
+  return <header className="sticky top-0 z-30 border-b border-[#1b2736] bg-[#0b1119]/95 backdrop-blur">
+    <div className="flex h-14 min-w-0 items-center gap-2 px-3 lg:px-4">
+      <div className="lg:hidden"><IconButton label="Open navigation" onClick={onMenu}><Menu className="h-4 w-4" /></IconButton></div>
+      <div className="flex min-w-0 items-center gap-2"><StatusBadge tone={readinessTone(provider.status)}>{provider.status ?? "connecting"}</StatusBadge><span className={cn("h-1.5 w-1.5 rounded-full", connected ? "bg-[#36fba1]" : "bg-[#fb4b6b]")} /><span className="hidden max-w-[20rem] truncate text-sm text-[#cdd7e3] sm:block">{shortModelName(provider.model)}</span></div>
+      <div className="ml-auto flex min-w-0 items-center gap-1">
+        <button onClick={() => setTelemetryOpen((value) => !value)} className="hidden items-center gap-3 rounded-md px-2 py-1.5 text-xs text-[#8a98aa] transition hover:bg-[#182231] hover:text-white md:flex">
+          <span><Thermometer className="mr-1 inline h-3.5 w-3.5 text-[#fbbf24]" />{s.gpuTempJunctionC == null ? "n/a" : `${formatNumber(s.gpuTempJunctionC, 0)} C`}</span>
+          <span><Database className="mr-1 inline h-3.5 w-3.5 text-[#a78bfa]" />{s.vramUsedBytes == null ? "n/a" : formatBytes(s.vramUsedBytes)}</span>
+          <span className="hidden xl:inline"><Zap className="mr-1 inline h-3.5 w-3.5 text-[#fbbf24]" />{s.gpuPowerW == null ? "n/a" : `${formatNumber(s.gpuPowerW, 0)} W`}</span>
+          <ChevronDown className={cn("h-3.5 w-3.5", telemetryOpen && "rotate-180")} />
+        </button>
+        <button onClick={onJobs} className="relative flex h-9 items-center gap-2 rounded-md px-2.5 text-sm text-[#8a98aa] hover:bg-[#182231] hover:text-white"><Activity className="h-4 w-4" /><span className="hidden sm:inline">{owner}</span>{(jobs?.summary.active ?? 0) > 0 ? <span className="rounded-full bg-[#21d4fd] px-1.5 text-[10px] font-semibold text-[#071018]">{jobs?.summary.active}</span> : null}</button>
+        <IconButton label="Open command palette" onClick={() => window.dispatchEvent(new CustomEvent("gpu45:commands"))}><Command className="h-4 w-4" /></IconButton>
       </div>
     </div>
-  );
+    {telemetryOpen ? <div className="absolute right-3 top-[3.35rem] grid w-[min(28rem,calc(100vw-1.5rem))] grid-cols-2 gap-3 rounded-lg border border-[#223044] bg-[#101822] p-4 shadow-2xl sm:grid-cols-3">
+      {[['Junction', s.gpuTempJunctionC == null ? 'n/a' : `${formatNumber(s.gpuTempJunctionC, 1)} C`], ['VRAM', s.vramUsedBytes == null ? 'n/a' : formatBytes(s.vramUsedBytes)], ['Power', s.gpuPowerW == null ? 'n/a' : `${formatNumber(s.gpuPowerW, 0)} W`], ['GPU busy', s.gpuUsage == null ? 'n/a' : `${formatNumber(s.gpuUsage, 0)}%`], ['Fan', s.fanRpm == null ? 'n/a' : `${formatNumber(s.fanRpm, 0)} rpm`], ['Queue', `${resources?.queue.length ?? 0} waiting`]].map(([label, value]) => <div key={label}><div className="text-xs text-[#718096]">{label}</div><div className="mt-1 font-mono text-sm text-white">{value}</div></div>)}
+    </div> : null}
+  </header>;
+}
+
+function CommandPalette({ close }: { close: () => void }) {
+  const router = useRouter(); const [query, setQuery] = useState("");
+  const commands = useMemo(() => areas.flatMap((area) => [{ href: area.href, label: `Open ${area.label}`, group: "Navigate" }, ...contextLinks[area.label].map((item) => ({ href: item.href, label: item.label, group: area.label }))]).filter((item, index, all) => all.findIndex((candidate) => candidate.href === item.href) === index), []);
+  const visible = commands.filter((item) => `${item.label} ${item.group}`.toLowerCase().includes(query.toLowerCase())).slice(0, 10);
+  return <div className="fixed inset-0 z-50 bg-black/65 p-4 pt-[12vh]" onMouseDown={close}><div role="dialog" aria-modal="true" aria-label="Command palette" className="mx-auto max-w-xl overflow-hidden rounded-xl border border-[#2a3a4f] bg-[#101822] shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="flex items-center gap-3 border-b border-[#223044] px-4"><Search className="h-4 w-4 text-[#617083]" /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") close(); }} placeholder="Go to a page or workflow..." className="h-14 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-[#617083]" /></div>
+    <div className="max-h-80 overflow-y-auto p-2">{visible.map((item) => <button key={item.href} onClick={() => { router.push(item.href); close(); }} className="flex w-full items-center justify-between rounded-md px-3 py-2.5 text-left text-sm text-[#cdd7e3] hover:bg-[#182331] hover:text-white"><span>{item.label}</span><span className="text-xs text-[#617083]">{item.group}</span></button>)}{visible.length === 0 ? <div className="px-3 py-8 text-center text-sm text-[#718096]">No matching destination</div> : null}</div>
+  </div></div>;
 }
 
 export function AppChrome({ children, version, initialTelemetry }: { children: React.ReactNode; version: ApplianceVersion; initialTelemetry: LiveTelemetry }) {
-  const pathname = usePathname();
-  const activeGroup = useMemo(() => navGroups.find((group) => group.items.some((item) => item.href === pathname || (item.href !== "/" && pathname.startsWith(item.href))))?.label ?? "Command Center", [pathname]);
+  const pathname = usePathname(); const [mobileNav, setMobileNav] = useState(false); const [jobsOpen, setJobsOpen] = useState(false); const [commandsOpen, setCommandsOpen] = useState(false); const [accountOpen, setAccountOpen] = useState(false); const [jobs, setJobs] = useState<JobsPayload | null>(null);
+  useEffect(() => { const listener = () => setCommandsOpen(true); window.addEventListener("gpu45:commands", listener); const key = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setCommandsOpen(true); } }; window.addEventListener("keydown", key); return () => { window.removeEventListener("gpu45:commands", listener); window.removeEventListener("keydown", key); }; }, []);
+  useEffect(() => { let cancelled = false; const load = async () => { try { const response = await fetch("/api/jobs", { cache: "no-store" }); if (response.ok && !cancelled) setJobs(await response.json() as JobsPayload); } catch { if (!cancelled) setJobs(null); } }; void load(); const timer = window.setInterval(() => void load(), 5000); return () => { cancelled = true; window.clearInterval(timer); }; }, []);
   if (pathname === "/login") return children;
-  return (
-    <div className="min-h-screen bg-[#070a0f] text-[#e6edf5]">
-      <div className="grid min-h-screen lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="border-b border-[#223044] bg-[#0a0f17]/95 lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
-          <div className="flex h-full flex-col">
-            <div className="border-b border-[#223044] px-4 py-4">
-              <div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-lg border border-[#21d4fd]/40 bg-[#21d4fd]/10 text-[#21d4fd]"><Wrench className="h-5 w-5" /></div><div className="min-w-0"><div className="truncate text-sm font-semibold tracking-wide text-white">GPU45 Appliance</div><div className="truncate text-xs text-[#8a98aa]">{activeGroup}</div></div></div>
-            </div>
-            <nav className="flex gap-3 overflow-x-auto px-3 py-3 lg:block lg:flex-1 lg:space-y-5 lg:overflow-y-auto lg:px-3 lg:py-4">
-              {navGroups.map((group) => (
-                <div key={group.label} className="min-w-[210px] lg:min-w-0">
-                  <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#617083]">{group.label}</div>
-                  <div className="space-y-1">
-                    {group.items.map((item) => {
-                      const Icon = item.icon;
-                      const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-                      return <Link key={item.href} href={item.href} className={cn("group flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition", active ? "border-[#21d4fd]/35 bg-[#21d4fd]/10 text-[#e6edf5] shadow-[inset_3px_0_0_rgba(33,212,253,0.9)]" : "border-transparent text-[#8a98aa] hover:border-[#223044] hover:bg-[#121a26] hover:text-[#e6edf5]")}><Icon className={cn("h-4 w-4 shrink-0", active ? "text-[#21d4fd]" : "text-[#617083] group-hover:text-[#21d4fd]")} /><span className="truncate">{item.label}</span></Link>;
-                    })}
-                  </div>
-                </div>
-              ))}
-            </nav>
-            <div className="hidden border-t border-[#223044] p-3 text-xs text-[#617083] lg:block">
-              <div className="flex items-center gap-2"><RadioTower className="h-3.5 w-3.5 text-[#36fba1]" /> Persistent bare-metal console</div>
-              <div className="mt-1 truncate font-mono text-[10px]" title={version.commit}>v{version.version} · {version.commit.slice(0, 12)}</div>
-              <button type="button" onClick={async () => { await fetch("/api/auth/logout", { method: "POST" }); window.location.assign("/login"); }} className="mt-3 flex w-full items-center gap-2 border border-[#223044] px-2 py-2 text-left text-[#8a98aa] hover:bg-[#121a26] hover:text-white"><LogOut className="h-3.5 w-3.5" /> Sign out</button>
-            </div>
-          </div>
-        </aside>
-        <div className="min-w-0"><TopStatusBar initial={initialTelemetry} /><main className="mx-auto w-full max-w-[1680px] px-3 py-4 lg:px-5">{children}</main></div>
-      </div>
-    </div>
-  );
+  const drawerJobs = jobs?.jobs.filter((job) => ["queued", "running", "paused", "failed", "needs_review"].includes(job.status)).slice(0, 8) ?? [];
+  return <div className="min-h-screen overflow-x-hidden bg-[#070a0f] text-[#e6edf5]">
+    <aside className="fixed inset-y-0 left-0 z-40 hidden w-56 border-r border-[#1b2736] bg-[#0a0f17] lg:block"><ShellNav pathname={pathname} /><div className="absolute inset-x-2 bottom-3"><button onClick={() => setAccountOpen((value) => !value)} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-[#8a98aa] hover:bg-[#121a26] hover:text-white"><div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#172331] text-xs text-[#21d4fd]">H</div><span className="min-w-0 flex-1 truncate">hendo420</span><ChevronDown className="h-3.5 w-3.5" /></button>{accountOpen ? <div className="absolute bottom-12 left-0 right-0 rounded-lg border border-[#223044] bg-[#101822] p-2 shadow-xl"><div className="px-2 py-1.5 text-xs text-[#617083]">v{version.version} · {version.commit.slice(0, 8)}</div><button onClick={async () => { await fetch("/api/auth/logout", { method: "POST" }); window.location.assign("/login"); }} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-[#8a98aa] hover:bg-[#182331] hover:text-white"><LogOut className="h-4 w-4" />Sign out</button></div> : null}</div></aside>
+    {mobileNav ? <div className="fixed inset-0 z-50 bg-black/60 lg:hidden" onClick={() => setMobileNav(false)}><aside className="h-full w-[min(18rem,86vw)] border-r border-[#223044] bg-[#0a0f17]" onClick={(event) => event.stopPropagation()}><ShellNav pathname={pathname} mobile close={() => setMobileNav(false)} /></aside></div> : null}
+    <div className="min-w-0 lg:pl-56"><StatusBar initial={initialTelemetry} jobs={jobs} onMenu={() => setMobileNav(true)} onJobs={() => setJobsOpen(true)} /><main className="mx-auto w-full max-w-[1560px] px-4 py-5 sm:px-6">{children}</main></div>
+    {jobsOpen ? <div className="fixed inset-0 z-50 bg-black/55" onClick={() => setJobsOpen(false)}><aside className="ml-auto flex h-full w-[min(34rem,94vw)] flex-col border-l border-[#223044] bg-[#0b1119] shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="flex h-14 items-center justify-between border-b border-[#223044] px-4"><div><div className="font-semibold text-white">Work</div><div className="text-xs text-[#718096]">Active jobs and attention</div></div><IconButton label="Close jobs" onClick={() => setJobsOpen(false)}><X className="h-4 w-4" /></IconButton></div><div className="flex-1 space-y-3 overflow-y-auto p-4">{drawerJobs.map((job) => <JobCard key={job.id} job={job} compact />)}{drawerJobs.length === 0 ? <div className="py-16 text-center"><CheckCircle2 className="mx-auto h-8 w-8 text-[#36fba1]" /><div className="mt-3 text-sm text-white">No active work</div><div className="mt-1 text-xs text-[#718096]">The unified queue is clear.</div></div> : null}</div><div className="border-t border-[#223044] p-3"><Link onClick={() => setJobsOpen(false)} href="/jobs" className="flex h-10 items-center justify-center rounded-md bg-[#21d4fd] text-sm font-semibold text-[#061018] hover:bg-[#63e4ff]">Open Work</Link></div></aside></div> : null}
+    {commandsOpen ? <CommandPalette close={() => setCommandsOpen(false)} /> : null}
+  </div>;
 }
