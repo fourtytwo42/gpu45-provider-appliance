@@ -43,6 +43,13 @@ and reports the failed runtime validation in the UI.
 Result: the Q3 profile is disabled and reports the RAM/swap validation failure.
 The original A14B and evaluation weights remain untouched pending a storage review.
 
+## Quarantine
+
+New evaluation-only Hunyuan and A14B quantized assets were moved to
+`/models/.trash/video-upgrade-20260711` after both profiles failed validation.
+They are retained for seven days before purge. The pre-existing WAN A14B tree,
+production WAN models, job metadata, and generated outputs were not moved.
+
 ## Decision
 
 WAN 2.2 TI2V 5B remains the best stable production choice on this specific 32 GB

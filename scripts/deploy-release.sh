@@ -120,9 +120,6 @@ fi
 ln -sfn "$release_dir" "$current_link"
 systemctl daemon-reload
 systemctl enable gpu45-resource-manager.service
-if [[ -x /opt/hunyuan-video-venv/bin/python && -d /opt/hunyuan-video-1.5/ComfyUI ]]; then
-  systemctl enable --now hunyuan-video-comfy.service
-fi
 systemctl restart gpu45-resource-manager.service
 systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer
 systemctl restart gpu45-responses-proxy.service gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
