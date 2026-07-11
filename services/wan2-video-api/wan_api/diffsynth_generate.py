@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import torch
+from PIL import Image
 from diffsynth.pipelines.wan_video import ModelConfig, WanVideoPipeline
 from diffsynth.utils.data import save_video
 
@@ -32,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--frame-num", type=int, default=45)
     parser.add_argument("--fps", type=int, default=6)
     parser.add_argument("--seed", type=int, default=-1)
+    parser.add_argument("--input-image")
     return parser
 
 
@@ -88,6 +90,14 @@ def main() -> None:
     print(f"pipeline loaded in {time.time() - started:.1f}s", flush=True)
 
     generate_started = time.time()
+    input_image = None
+    if args.input_image:
+        input_image = Image.open(args.input_image).convert("RGB")
+        input_image.thumbnail((width, height), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGB", (width, height), "black")
+        canvas.paste(input_image, ((width - input_image.width) // 2, (height - input_image.height) // 2))
+        input_image = canvas
+
     video = pipe(
         prompt=args.prompt,
         negative_prompt=args.negative_prompt,
@@ -97,6 +107,7 @@ def main() -> None:
         num_inference_steps=args.steps,
         cfg_scale=5.0,
         seed=None if args.seed < 0 else args.seed,
+        input_image=input_image,
         tiled=True,
         tile_size=(24, 40),
         tile_stride=(12, 20),

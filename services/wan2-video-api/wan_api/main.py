@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from gpu45_resource import acquire_lease
@@ -32,11 +32,13 @@ HF_REPO = os.environ.get("WAN2_HF_REPO", "Wan-AI/Wan2.2-TI2V-5B")
 JOBS_PATH = DATA_DIR / "jobs.json"
 OUTPUT_DIR = DATA_DIR / "outputs"
 LOG_DIR = DATA_DIR / "logs"
+UPLOAD_DIR = DATA_DIR / "uploads"
 _job_store = JobStore(JOBS_PATH)
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 lock = threading.Lock()
 runner_thread: threading.Thread | None = None
@@ -49,10 +51,10 @@ DEFAULT_NEGATIVE_PROMPT = (
 )
 
 PROFILES: dict[str, dict[str, Any]] = {
-    "wan22-a14b-q4": {
-        "id": "wan22-a14b-q4",
-        "name": "Wan2.2 A14B Q4 Turbo",
-        "description": "Dual-expert A14B quality profile with the four-step LightX2V accelerator.",
+    "wan22-a14b-q3": {
+        "id": "wan22-a14b-q3",
+        "name": "Wan2.2 A14B Q3 Turbo",
+        "description": "Dual-expert A14B profile sized for 32GB with the four-step LightX2V accelerator.",
         "repo": "QuantStack/Wan2.2-T2V-A14B-GGUF",
         "model_dir": DATA_DIR,
         "backend": "hunyuan-comfy",
@@ -62,17 +64,19 @@ PROFILES: dict[str, dict[str, Any]] = {
         "step_counts": [4],
         "default_steps": 4,
         "default_fps": 12,
-        "expected_vram_gb": 28,
+        "expected_vram_gb": 26,
         "required_files": [
-            "Wan2.2-T2V-A14B-GGUF/HighNoise/Wan2.2-T2V-A14B-HighNoise-Q4_K_M.gguf",
-            "Wan2.2-T2V-A14B-GGUF/LowNoise/Wan2.2-T2V-A14B-LowNoise-Q4_K_M.gguf",
+            "Wan2.2-T2V-A14B-GGUF/HighNoise/Wan2.2-T2V-A14B-HighNoise-Q3_K_M.gguf",
+            "Wan2.2-T2V-A14B-GGUF/LowNoise/Wan2.2-T2V-A14B-LowNoise-Q3_K_M.gguf",
             "comfy-assets/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
             "comfy-assets/split_files/vae/wan_2.1_vae.safetensors",
             "comfy-assets/split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
             "comfy-assets/split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
         ],
         "index_file": None,
-        "ready_detail": "Wan2.2 A14B Q4 Turbo",
+        "ready_detail": "Wan2.2 A14B Q3 Turbo",
+        "enabled": False,
+        "availability_reason": "Validation failed: dual-expert switching exhausted 32GB system RAM and entered swap.",
     },
     "hunyuan15-t2v-q5": {
         "id": "hunyuan15-t2v-q5",
@@ -96,6 +100,8 @@ PROFILES: dict[str, dict[str, Any]] = {
         ],
         "index_file": None,
         "ready_detail": "HunyuanVideo 1.5 Q5",
+        "enabled": False,
+        "availability_reason": "Validation failed: ROCm VAE decode exceeded the practical runtime limit.",
     },
     "wan22-ti2v-5b": {
         "id": "wan22-ti2v-5b",
@@ -110,6 +116,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         ],
         "index_file": "diffusion_pytorch_model.safetensors.index.json",
         "ready_detail": "Wan2.2 TI2V-5B",
+        "modes": ["t2v", "i2v"],
     },
     "wan21-t2v-13b": {
         "id": "wan21-t2v-13b",
@@ -198,7 +205,9 @@ def public_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "description": profile["description"],
         "repo": profile["repo"],
         "model_dir": str(model_dir),
-        "ready": profile_ready(profile),
+        "ready": profile_ready(profile) and profile.get("enabled", True),
+        "assets_ready": profile_ready(profile),
+        "availability_reason": profile.get("availability_reason"),
         "backend": profile.get("backend", "wan-diffsynth"),
         "modes": profile.get("modes", ["t2v"]),
         "sizes": profile.get("sizes", sorted(SUPPORTED_SIZES)),
@@ -305,6 +314,8 @@ def delete_job_files(job_id: str, job: dict[str, Any]) -> list[str]:
         paths.append((candidate, OUTPUT_DIR))
     if job.get("output_path"):
         paths.append((Path(str(job["output_path"])), OUTPUT_DIR))
+    if job.get("source_image_path"):
+        paths.append((Path(str(job["source_image_path"])), UPLOAD_DIR))
 
     seen: set[Path] = set()
     for path, root in paths:
@@ -430,6 +441,8 @@ def run_job(job: dict[str, Any]) -> None:
             command.extend(["--negative-prompt", job["negative_prompt"]])
         if int(job.get("seed", -1)) >= 0:
             command.extend(["--seed", str(job["seed"])])
+        if job.get("source_image_path"):
+            command.extend(["--input-image", str(job["source_image_path"])])
 
     try:
         lease = acquire_lease(job_id, "video", 50, False, "atomic", timeout=1800)
@@ -486,6 +499,8 @@ def list_jobs() -> list[dict[str, Any]]:
 @app.post("/jobs", status_code=202)
 def create_job(body: CreateJobBody) -> dict[str, Any]:
     profile = get_profile(body.profile)
+    if not profile.get("enabled", True):
+        raise HTTPException(status_code=409, detail=profile.get("availability_reason") or "Profile is unavailable.")
     if not profile_ready(profile):
         raise HTTPException(status_code=409, detail=f"{profile['ready_detail']} model is not downloaded yet.")
     supported_sizes = set(profile.get("sizes", SUPPORTED_SIZES))
@@ -518,6 +533,60 @@ def create_job(body: CreateJobBody) -> dict[str, Any]:
         "completed_at": None,
         "output_path": None,
         "error": None,
+    }
+    with lock:
+        jobs = load_jobs()
+        jobs.append(job)
+        save_jobs(jobs)
+    ensure_runner()
+    return public_job(job)
+
+
+@app.post("/jobs/i2v", status_code=202)
+async def create_i2v_job(
+    file: UploadFile = File(...),
+    prompt: str = Form(...),
+    negative_prompt: str = Form(DEFAULT_NEGATIVE_PROMPT),
+    profile: str = Form("wan22-ti2v-5b"),
+    size: str = Form("832*480"),
+    steps: int = Form(8),
+    duration_seconds: int = Form(2),
+    seed: int = Form(-1),
+) -> dict[str, Any]:
+    selected = get_profile(profile)
+    if "i2v" not in selected.get("modes", []):
+        raise HTTPException(status_code=400, detail=f"{selected['name']} does not support image-to-video.")
+    if not profile_ready(selected) or not selected.get("enabled", True):
+        raise HTTPException(status_code=409, detail=selected.get("availability_reason") or "Profile is unavailable.")
+    suffix = Path(file.filename or "source.png").suffix.lower()
+    if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
+        raise HTTPException(status_code=400, detail="Source image must be PNG, JPEG, or WebP.")
+    payload = await file.read()
+    if not payload or len(payload) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Source image must be between 1 byte and 20 MB.")
+    body = CreateJobBody(
+        prompt=prompt, profile=profile, negative_prompt=negative_prompt,
+        size=size, steps=steps, duration_seconds=duration_seconds, seed=seed,
+    )
+    supported_sizes = set(selected.get("sizes", SUPPORTED_SIZES))
+    if body.size not in supported_sizes:
+        raise HTTPException(status_code=400, detail=f"Unsupported size for {selected['name']}: {body.size}.")
+    if selected.get("step_counts") and body.steps not in selected["step_counts"]:
+        raise HTTPException(status_code=400, detail=f"Unsupported step count for {selected['name']}: {body.steps}.")
+    if selected.get("durations") and body.duration_seconds not in selected["durations"]:
+        raise HTTPException(status_code=400, detail=f"Unsupported duration for {selected['name']}: {body.duration_seconds}s.")
+    fps = int(selected.get("default_fps", OUTPUT_FPS))
+    job_id = str(uuid.uuid4())
+    source_path = UPLOAD_DIR / f"{job_id}{suffix}"
+    source_path.write_bytes(payload)
+    job = {
+        "id": job_id, "profile": selected["id"], "profile_name": selected["name"],
+        "model_dir": str(selected["model_dir"]), "mode": "i2v", "source_image_path": str(source_path),
+        "prompt": body.prompt, "negative_prompt": (body.negative_prompt or DEFAULT_NEGATIVE_PROMPT).strip(),
+        "size": body.size, "steps": body.steps, "duration_seconds": body.duration_seconds,
+        "frame_num": duration_to_frame_num(body.duration_seconds), "fps": fps, "seed": body.seed,
+        "status": "queued", "created_at": now(), "started_at": None, "completed_at": None,
+        "output_path": None, "error": None,
     }
     with lock:
         jobs = load_jobs()

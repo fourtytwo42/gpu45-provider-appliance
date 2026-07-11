@@ -31,6 +31,8 @@ export type VideoProfile = {
   repo: string;
   model_dir: string;
   ready: boolean;
+  assets_ready?: boolean;
+  availability_reason?: string | null;
   backend?: string;
   modes?: Array<"t2v" | "i2v">;
   sizes?: string[];

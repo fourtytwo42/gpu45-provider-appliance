@@ -76,8 +76,8 @@ def t2v_workflow(args: argparse.Namespace) -> dict[str, Any]:
 
 def wan22_a14b_workflow(args: argparse.Namespace) -> dict[str, Any]:
     return {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "Wan2.2-T2V-A14B-HighNoise-Q4_K_M.gguf"}},
-        "2": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "Wan2.2-T2V-A14B-LowNoise-Q4_K_M.gguf"}},
+        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "Wan2.2-T2V-A14B-HighNoise-Q3_K_M.gguf"}},
+        "2": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "Wan2.2-T2V-A14B-LowNoise-Q3_K_M.gguf"}},
         "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"}},
         "4": {"class_type": "CLIPTextEncode", "inputs": {"text": args.prompt, "clip": ["3", 0]}},
         "5": {"class_type": "CLIPTextEncode", "inputs": {"text": args.negative_prompt, "clip": ["3", 0]}},
@@ -128,7 +128,7 @@ def find_saved_video(history: dict[str, Any], output_root: Path) -> Path:
 def run(args: argparse.Namespace) -> None:
     client_id = str(uuid.uuid4())
     started = time.time()
-    workflow = wan22_a14b_workflow(args) if args.profile == "wan22-a14b-q4" else t2v_workflow(args)
+    workflow = wan22_a14b_workflow(args) if args.profile == "wan22-a14b-q3" else t2v_workflow(args)
     submitted = request_json(f"{args.comfy_url}/prompt", {"prompt": workflow, "client_id": client_id})
     prompt_id = str(submitted["prompt_id"])
     print(f"stage=submitted prompt_id={prompt_id}", flush=True)

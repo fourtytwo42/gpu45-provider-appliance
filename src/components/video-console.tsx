@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Download, Film, Loader2, RefreshCw, Square, Trash2, Wand2 } from "lucide-react";
+import { Download, Film, ImageIcon, Loader2, RefreshCw, Square, Trash2, Type, Wand2 } from "lucide-react";
 import { SectionCard } from "./section-card";
 import { cn } from "@/lib/cn";
 import type { VideoJob, VideoProfile, VideoSnapshot } from "@/lib/video";
@@ -32,13 +32,15 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [state, setState] = useState<RunState>("idle");
   const [message, setMessage] = useState("");
-  const [selectedProfile, setSelectedProfile] = useState(initialSnapshot.profiles[0]?.id ?? "wan22-ti2v-5b");
+  const [mode, setMode] = useState<"t2v" | "i2v">("t2v");
+  const [selectedProfile, setSelectedProfile] = useState(initialSnapshot.profiles.find((profile) => profile.ready)?.id ?? "wan22-ti2v-5b");
   const [preset, setPreset] = useState<keyof typeof VIDEO_PRESETS>("preview");
   const [size, setSize] = useState(VIDEO_PRESETS.preview.size);
   const [steps, setSteps] = useState(VIDEO_PRESETS.preview.steps);
   const [duration, setDuration] = useState(VIDEO_PRESETS.preview.duration);
   const activeJob = useMemo(() => snapshot.jobs.find((job) => job.status === "running" || job.status === "queued"), [snapshot.jobs]);
   const selectedProfileInfo = useMemo(() => snapshot.profiles.find((profile) => profile.id === selectedProfile), [selectedProfile, snapshot.profiles]);
+  const modeProfiles = useMemo(() => snapshot.profiles.filter((profile) => profile.modes?.includes(mode) ?? mode === "t2v"), [mode, snapshot.profiles]);
   const availableSizes = selectedProfileInfo?.sizes?.length ? selectedProfileInfo.sizes : ["832*480", "480*832", "1280*704", "704*1280"];
   const availableSteps = selectedProfileInfo?.step_counts?.length ? selectedProfileInfo.step_counts : Array.from({ length: 24 }, (_, index) => index + 1);
   const availableDurations = selectedProfileInfo?.durations?.length ? selectedProfileInfo.durations : Array.from({ length: 14 }, (_, index) => index + 2);
@@ -51,6 +53,12 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
     setSteps(profile.default_steps ?? profile.step_counts?.[0] ?? 8);
     setDuration(profile.durations?.[0] ?? 2);
     setPreset("custom");
+  }
+
+  function chooseMode(nextMode: "t2v" | "i2v"): void {
+    setMode(nextMode);
+    const nextProfile = snapshot.profiles.find((profile) => profile.ready && (profile.modes?.includes(nextMode) ?? nextMode === "t2v"));
+    if (nextProfile) chooseProfile(nextProfile.id);
   }
 
   async function refresh(): Promise<void> {
@@ -92,22 +100,30 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
 
   async function createJob(formData: FormData): Promise<void> {
     await run(async () => {
-      const response = await fetch("/api/video", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "createJob",
-          profile: formData.get("profile"),
-          prompt: formData.get("prompt"),
-          negative_prompt: formData.get("negative_prompt"),
-          size,
-          steps,
-          duration_seconds: duration,
-          seed: Number(formData.get("seed") || -1),
-        }),
-      });
+      let response: Response;
+      if (mode === "i2v") {
+        formData.set("size", size);
+        formData.set("steps", String(steps));
+        formData.set("duration_seconds", String(duration));
+        response = await fetch("/api/video/i2v", { method: "POST", body: formData });
+      } else {
+        response = await fetch("/api/video", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "createJob",
+            profile: formData.get("profile"),
+            prompt: formData.get("prompt"),
+            negative_prompt: formData.get("negative_prompt"),
+            size,
+            steps,
+            duration_seconds: duration,
+            seed: Number(formData.get("seed") || -1),
+          }),
+        });
+      }
       await parseJson(response);
-      setMessage("Video job queued. The LLM will be stopped while Wan uses the GPU.");
+      setMessage(`${mode === "i2v" ? "Image-to-video" : "Text-to-video"} job queued. The LLM will be restored afterward.`);
     }, "Queueing video generation job.");
   }
 
@@ -171,6 +187,10 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
 
       <SectionCard title="Generate" description="Wan uses the GPU. The service stops the LLM during a generation job and restarts it afterward.">
         <form action={(formData) => void createJob(formData)} className="grid gap-3">
+          <div className="grid grid-cols-2 border border-white/10 bg-black/20 p-1" role="group" aria-label="Generation mode">
+            <button type="button" onClick={() => chooseMode("t2v")} className={cn("inline-flex items-center justify-center gap-2 px-3 py-2 text-sm", mode === "t2v" ? "bg-fuchsia-400/15 text-fuchsia-100" : "text-slate-400 hover:text-white")}><Type className="h-4 w-4" />Text to video</button>
+            <button type="button" onClick={() => chooseMode("i2v")} className={cn("inline-flex items-center justify-center gap-2 px-3 py-2 text-sm", mode === "i2v" ? "bg-fuchsia-400/15 text-fuchsia-100" : "text-slate-400 hover:text-white")}><ImageIcon className="h-4 w-4" />Image to video</button>
+          </div>
           <label className="grid gap-1 text-xs text-slate-400">
             Model
             <select
@@ -179,7 +199,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
               onChange={(event) => chooseProfile(event.target.value)}
               className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
             >
-              {snapshot.profiles.map((profile) => (
+              {modeProfiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>{profile.name}{profile.ready ? "" : " (not installed)"}</option>
               ))}
             </select>
@@ -189,6 +209,12 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
               <span>{selectedProfileInfo.description}</span>
               <span className="text-slate-400">{selectedProfileInfo.backend ?? "WAN"} · {selectedProfileInfo.modes?.join(" / ") ?? "T2V"}{selectedProfileInfo.expected_vram_gb ? ` · about ${selectedProfileInfo.expected_vram_gb} GB VRAM` : ""}</span>
             </div>
+          ) : null}
+          {mode === "i2v" ? (
+            <label className="grid gap-1 text-xs text-slate-400">
+              Source image
+              <input name="file" type="file" required accept="image/png,image/jpeg,image/webp" className="border border-dashed border-fuchsia-400/30 bg-black/30 px-3 py-3 text-sm text-slate-200 file:mr-3 file:border-0 file:bg-fuchsia-400/10 file:px-3 file:py-2 file:text-fuchsia-100" />
+            </label>
           ) : null}
           <textarea
             name="prompt"
@@ -282,10 +308,11 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                   <div className="mt-1 text-xs text-slate-500">{profile.repo}</div>
                 </div>
                 <span className={cn("border px-2 py-1 text-xs", profile.ready ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : "border-amber-400/40 bg-amber-400/10 text-amber-200")}>
-                  {profile.ready ? "installed" : "missing"}
+              {profile.ready ? "validated" : profile.availability_reason ? "failed validation" : "missing"}
                 </span>
               </div>
               <div>{profile.description}</div>
+              {!profile.ready && profile.availability_reason ? <div className="border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">{profile.availability_reason}</div> : null}
               <div className="grid grid-cols-2 gap-2 text-xs text-slate-400">
                 <span>{profile.modes?.join(" / ").toUpperCase() ?? "T2V"}</span>
                 <span>{profile.sizes?.join(", ") ?? "Profile defaults"}</span>
