@@ -4,9 +4,10 @@ import { deleteImageJob, getImageSnapshot } from "./images";
 import { deleteTtsAudiobook, deleteTtsModel, deleteTtsPresentation, deleteTtsSynthesisJob, deleteTtsVoiceJob, getTtsSnapshot, stopTtsAudiobook, stopTtsPresentation } from "./tts";
 import { cancelVideoJob, deleteVideoJob, getVideoSnapshot } from "./video";
 import { deleteWhisperJob, getWhisperSnapshot } from "./whisper";
+import { deletePocketTtsJob, getPocketTtsSnapshot } from "./pocket-tts";
 
 export type UnifiedJobStatus = "queued" | "running" | "paused" | "unknown" | "completed" | "failed" | "cancelled" | "stopped" | "needs_review";
-export type UnifiedJobKind = "download" | "benchmark" | "tts" | "audiobook" | "whisper" | "image" | "video" | "model-training" | "voice" | "presentation";
+export type UnifiedJobKind = "download" | "benchmark" | "tts" | "pocket-tts" | "audiobook" | "whisper" | "image" | "video" | "model-training" | "voice" | "presentation";
 export type UnifiedJobAction = "cancel" | "delete" | "retry" | "download";
 
 export type UnifiedJob = {
@@ -54,7 +55,7 @@ function actionsFor(kind: UnifiedJobKind, status: UnifiedJobStatus, hasOutput = 
   if (kind === "audiobook" && (status === "running" || status === "queued")) actions.push("cancel");
   if (kind === "presentation" && (status === "running" || status === "queued")) actions.push("cancel");
   if (kind === "video" && (status === "running" || status === "queued")) actions.push("cancel");
-  if (["download", "tts", "audiobook", "presentation", "whisper", "image", "video", "model-training", "voice"].includes(kind) && !["running", "unknown"].includes(status)) actions.push("delete");
+  if (["download", "tts", "pocket-tts", "audiobook", "presentation", "whisper", "image", "video", "model-training", "voice"].includes(kind) && !["running", "unknown"].includes(status)) actions.push("delete");
   return actions;
 }
 
@@ -67,10 +68,11 @@ function withActions(job: UnifiedJob): UnifiedJob {
 
 export async function getUnifiedJobs(): Promise<{ jobs: UnifiedJob[]; summary: JobsSummary }> {
   const jobs: UnifiedJob[] = [];
-  const [downloads, benchmarks, tts, images, videos, whisper] = await Promise.all([
+  const [downloads, benchmarks, tts, pocketTts, images, videos, whisper] = await Promise.all([
     prisma.downloadJob.findMany({ orderBy: { updatedAt: "desc" }, take: 50 }).catch(() => []),
     prisma.benchmarkRun.findMany({ orderBy: { createdAt: "desc" }, take: 30 }).catch(() => []),
     getTtsSnapshot().catch(() => null),
+    getPocketTtsSnapshot().catch(() => null),
     getImageSnapshot().catch(() => null),
     getVideoSnapshot().catch(() => null),
     getWhisperSnapshot().catch(() => null),
@@ -88,6 +90,19 @@ export async function getUnifiedJobs(): Promise<{ jobs: UnifiedJob[]; summary: J
     for (const job of tts.synthesisJobs) { const status = normalizeStatus(job.status); jobs.push({ id: `tts:${job.id}`, sourceId: job.id, kind: "tts", title: job.model_name ? `Speech: ${job.model_name}` : "Speech synthesis", subtitle: `${job.text_chars.toLocaleString()} characters`, status, progressPercent: job.progress_percent, progressLabel: job.progress_label, etaSeconds: job.eta_seconds, createdAt: job.created_at, updatedAt: job.updated_at, startedAt: job.started_at, finishedAt: job.finished_at, outputUrl: status === "completed" ? `/api/tts/synthesis/audio?id=${encodeURIComponent(job.id)}&download=1` : null, error: job.error, model: job.model_name }); }
     for (const job of tts.audiobookJobs) { const status = normalizeStatus(job.status); jobs.push({ id: `audiobook:${job.id}`, sourceId: job.id, kind: "audiobook", title: job.title, subtitle: `${job.completed_chunks}/${job.total_chunks} chunks - ${job.source_filename}`, status, progressPercent: job.progress_percent, progressLabel: job.progress_label, createdAt: job.created_at, updatedAt: job.updated_at, startedAt: job.started_at, finishedAt: job.finished_at, outputUrl: `/api/tts/audiobook/audio?id=${encodeURIComponent(job.id)}&download=1`, error: job.error, model: job.model_name }); }
     for (const job of tts.presentationJobs) { const status = normalizeStatus(job.status); jobs.push({ id: `presentation:${job.id}`, sourceId: job.id, kind: "presentation", title: job.title, subtitle: `${job.completed_slides}/${job.total_slides} slides - ${job.source_filename}`, status, progressPercent: job.progress_percent, progressLabel: job.progress_label, createdAt: job.created_at, updatedAt: job.updated_at, startedAt: job.started_at, finishedAt: job.finished_at, outputUrl: job.output_path || status === "completed" ? `/api/tts/presentation/output?id=${encodeURIComponent(job.id)}&download=1` : null, error: job.error, model: job.model_name }); }
+  }
+  if (pocketTts) {
+    for (const job of pocketTts.jobs) {
+      const status = normalizeStatus(job.status);
+      jobs.push({
+        id: `pocket-tts:${job.id}`, sourceId: job.id, kind: "pocket-tts",
+        title: `Pocket speech: ${job.voice_name}`, subtitle: `${job.language} - ${job.text_chars.toLocaleString()} characters`,
+        status, progressPercent: job.progress_percent, progressLabel: job.progress_label,
+        createdAt: job.created_at, updatedAt: job.updated_at, finishedAt: job.finished_at,
+        outputUrl: status === "completed" ? `/api/tts/pocket/audio?id=${encodeURIComponent(job.id)}&download=1` : null,
+        error: job.error, model: "Pocket TTS", resourceImpact: "CPU only; the active LLM remains loaded.",
+      });
+    }
   }
   if (images) for (const job of images.jobs) { const status = normalizeStatus(job.status); jobs.push({ id: `image:${job.id}`, sourceId: job.id, kind: "image", title: job.profile_name ?? job.profile, subtitle: job.prompt, status, progressPercent: job.progress_percent ?? (status === "completed" ? 100 : null), progressLabel: job.progress_label ?? (job.progress_step && job.progress_total ? `${job.progress_step}/${job.progress_total} steps` : null), etaSeconds: job.eta_seconds, createdAt: job.created_at, updatedAt: job.updated_at ?? job.completed_at ?? job.started_at ?? job.created_at, startedAt: job.started_at, finishedAt: job.completed_at, outputUrl: status === "completed" ? `/api/images/output?id=${encodeURIComponent(job.id)}` : null, error: job.error, model: job.profile_name ?? job.profile }); }
   if (videos) for (const job of videos.jobs) { const status = normalizeStatus(job.status); jobs.push({ id: `video:${job.id}`, sourceId: job.id, kind: "video", title: job.profile_name ?? job.profile ?? "Video generation", subtitle: job.prompt, status, progressPercent: job.progress_percent ?? (status === "completed" ? 100 : null), progressLabel: job.progress_label ?? job.progress_stage, createdAt: job.created_at, updatedAt: job.completed_at ?? job.started_at ?? job.created_at, startedAt: job.started_at, finishedAt: job.completed_at, outputUrl: status === "completed" ? `/api/video/output?id=${encodeURIComponent(job.id)}` : null, error: job.error, model: job.profile_name ?? job.profile }); }
@@ -109,6 +124,7 @@ export async function performUnifiedJobAction(id: string, action: UnifiedJobActi
     return { ok, message: ok ? "Download queue record deleted." : "Active or unknown download cannot be deleted." };
   }
   if (kind === "tts" && action === "delete") { await deleteTtsSynthesisJob(sourceId); return { ok: true, message: "Speech job deleted." }; }
+  if (kind === "pocket-tts" && action === "delete") { await deletePocketTtsJob(sourceId); return { ok: true, message: "Pocket TTS job deleted." }; }
   if (kind === "audiobook" && action === "cancel") { await stopTtsAudiobook(sourceId); return { ok: true, message: "Audiobook stop requested." }; }
   if (kind === "audiobook" && action === "delete") { await deleteTtsAudiobook(sourceId); return { ok: true, message: "Audiobook deleted." }; }
   if (kind === "presentation" && action === "cancel") { await stopTtsPresentation(sourceId); return { ok: true, message: "Presentation stop requested." }; }
@@ -122,4 +138,3 @@ export async function performUnifiedJobAction(id: string, action: UnifiedJobActi
 
   return { ok: false, message: `${action} is not supported for ${kind} jobs.` };
 }
-

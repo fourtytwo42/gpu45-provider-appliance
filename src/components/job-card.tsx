@@ -6,7 +6,7 @@ import { cn } from "@/lib/cn";
 import type { UnifiedJob, UnifiedJobAction } from "@/lib/jobs";
 import { StatusBadge } from "./status-badge";
 
-const iconMap = { download: Download, benchmark: TerminalSquare, tts: Mic2, audiobook: FileAudio, whisper: FileText, image: ImageIcon, video: Film, "model-training": PackageCheck, voice: Mic2, presentation: FileAudio };
+const iconMap = { download: Download, benchmark: TerminalSquare, tts: Mic2, "pocket-tts": Mic2, audiobook: FileAudio, whisper: FileText, image: ImageIcon, video: Film, "model-training": PackageCheck, voice: Mic2, presentation: FileAudio };
 const toneMap = { queued: "info", running: "success", paused: "warning", unknown: "neutral", completed: "success", failed: "danger", cancelled: "warning", stopped: "warning", needs_review: "warning" } as const;
 const actionIcons = { cancel: Square, delete: Trash2, retry: RotateCcw, download: ExternalLink };
 
