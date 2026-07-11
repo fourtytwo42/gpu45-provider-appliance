@@ -31,6 +31,15 @@ export type VideoProfile = {
   repo: string;
   model_dir: string;
   ready: boolean;
+  backend?: string;
+  modes?: Array<"t2v" | "i2v">;
+  sizes?: string[];
+  durations?: number[];
+  step_counts?: number[];
+  default_steps?: number;
+  default_fps?: number;
+  expected_vram_gb?: number | null;
+  known_limitations?: string[];
 };
 
 export type VideoSnapshot = {

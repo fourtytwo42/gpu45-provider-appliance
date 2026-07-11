@@ -65,17 +65,7 @@ def t2v_workflow(args: argparse.Namespace) -> dict[str, Any]:
             },
         },
         "12": {"class_type": "VAELoader", "inputs": {"vae_name": "hunyuanvideo15_vae_fp16.safetensors"}},
-        "13": {
-            "class_type": "VAEDecodeTiled",
-            "inputs": {
-                "samples": ["11", 0],
-                "vae": ["12", 0],
-                "tile_size": 256,
-                "overlap": 64,
-                "temporal_size": 4096,
-                "temporal_overlap": 8,
-            },
-        },
+        "13": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["12", 0]}},
         "14": {"class_type": "CreateVideo", "inputs": {"images": ["13", 0], "fps": args.fps}},
         "15": {
             "class_type": "SaveVideo",

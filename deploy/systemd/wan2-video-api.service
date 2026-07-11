@@ -15,6 +15,8 @@ Environment=WAN2_PYTHON=/opt/wan2-video-venv/bin/python
 Environment=WAN2_HF_CLI=/opt/wan2-video-venv/bin/huggingface-cli
 Environment=WAN2_API_DATA=/models/wan2-video
 Environment=WAN2_MODEL_DIR=/models/wan2-video/Wan2.2-TI2V-5B
+Environment=HUNYUAN_PYTHON=/opt/hunyuan-video-venv/bin/python
+Environment=HUNYUAN_MODEL_ROOT=/models/hunyuan-video-1.5
 Environment=WAN2_LLM_SERVICE=llama-openai.service
 Environment=WAN2_RESTART_LLM_AFTER=true
 Environment=WAN2_VAE_CPU_DECODE=false

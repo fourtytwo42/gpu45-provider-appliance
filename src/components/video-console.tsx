@@ -17,7 +17,13 @@ const VIDEO_PRESETS = {
 };
 
 async function parseJson(response: Response): Promise<Record<string, unknown>> {
-  const data = await response.json() as Record<string, unknown>;
+  const text = await response.text();
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new Error(response.ok ? "Video service returned an invalid response." : `Video request failed (${response.status}).`);
+  }
   if (!response.ok) throw new Error(String(data.error ?? "Video request failed"));
   return data;
 }
@@ -33,6 +39,19 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
   const [duration, setDuration] = useState(VIDEO_PRESETS.preview.duration);
   const activeJob = useMemo(() => snapshot.jobs.find((job) => job.status === "running" || job.status === "queued"), [snapshot.jobs]);
   const selectedProfileInfo = useMemo(() => snapshot.profiles.find((profile) => profile.id === selectedProfile), [selectedProfile, snapshot.profiles]);
+  const availableSizes = selectedProfileInfo?.sizes?.length ? selectedProfileInfo.sizes : ["832*480", "480*832", "1280*704", "704*1280"];
+  const availableSteps = selectedProfileInfo?.step_counts?.length ? selectedProfileInfo.step_counts : Array.from({ length: 24 }, (_, index) => index + 1);
+  const availableDurations = selectedProfileInfo?.durations?.length ? selectedProfileInfo.durations : Array.from({ length: 14 }, (_, index) => index + 2);
+
+  function chooseProfile(profileId: string): void {
+    const profile = snapshot.profiles.find((item) => item.id === profileId);
+    setSelectedProfile(profileId);
+    if (!profile) return;
+    setSize(profile.sizes?.[0] ?? "832*480");
+    setSteps(profile.default_steps ?? profile.step_counts?.[0] ?? 8);
+    setDuration(profile.durations?.[0] ?? 2);
+    setPreset("custom");
+  }
 
   async function refresh(): Promise<void> {
     const response = await fetch("/api/video", { cache: "no-store" });
@@ -157,7 +176,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
             <select
               name="profile"
               value={selectedProfile}
-              onChange={(event) => setSelectedProfile(event.target.value)}
+              onChange={(event) => chooseProfile(event.target.value)}
               className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
             >
               {snapshot.profiles.map((profile) => (
@@ -166,8 +185,9 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
             </select>
           </label>
           {selectedProfileInfo ? (
-            <div className={cn("border px-3 py-2 text-xs", selectedProfileInfo.ready ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-100" : "border-amber-400/30 bg-amber-400/10 text-amber-100")}>
-              {selectedProfileInfo.description}
+            <div className={cn("grid gap-1 border px-3 py-2 text-xs", selectedProfileInfo.ready ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-100" : "border-amber-400/30 bg-amber-400/10 text-amber-100")}>
+              <span>{selectedProfileInfo.description}</span>
+              <span className="text-slate-400">{selectedProfileInfo.backend ?? "WAN"} · {selectedProfileInfo.modes?.join(" / ") ?? "T2V"}{selectedProfileInfo.expected_vram_gb ? ` · about ${selectedProfileInfo.expected_vram_gb} GB VRAM` : ""}</span>
             </div>
           ) : null}
           <textarea
@@ -193,9 +213,9 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                   const nextPreset = event.target.value as keyof typeof VIDEO_PRESETS;
                   const values = VIDEO_PRESETS[nextPreset];
                   setPreset(nextPreset);
-                  setSize(values.size);
-                  setSteps(values.steps);
-                  setDuration(values.duration);
+                  setSize(availableSizes.includes(values.size) ? values.size : availableSizes[0]);
+                  setSteps(availableSteps.includes(values.steps) ? values.steps : selectedProfileInfo?.default_steps ?? availableSteps[0]);
+                  setDuration(availableDurations.includes(values.duration) ? values.duration : availableDurations[0]);
                 }}
                 className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
               >
@@ -213,23 +233,19 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                 onChange={(event) => { setSize(event.target.value); setPreset("custom"); }}
                 className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
               >
-                <option value="832*480">832x480</option>
-                <option value="480*832">480x832</option>
-                <option value="1280*704">1280x704</option>
-                <option value="704*1280">704x1280</option>
+                {availableSizes.map((value) => <option key={value} value={value}>{value.replace("*", "x")}</option>)}
               </select>
             </label>
             <label className="grid gap-1 text-xs text-slate-400">
               Steps
-              <input
+              <select
                 name="steps"
-                type="number"
-                min={1}
-                max={24}
                 value={steps}
                 onChange={(event) => { setSteps(Number(event.target.value)); setPreset("custom"); }}
                 className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
-              />
+              >
+                {availableSteps.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
             </label>
             <label className="grid gap-1 text-xs text-slate-400">
               Duration
@@ -239,7 +255,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                 onChange={(event) => { setDuration(Number(event.target.value)); setPreset("custom"); }}
                 className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
               >
-                {Array.from({ length: 14 }, (_, index) => index + 2).map((seconds) => (
+                {availableDurations.map((seconds) => (
                   <option key={seconds} value={seconds}>{seconds}s</option>
                 ))}
               </select>
@@ -270,6 +286,12 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                 </span>
               </div>
               <div>{profile.description}</div>
+              <div className="grid grid-cols-2 gap-2 text-xs text-slate-400">
+                <span>{profile.modes?.join(" / ").toUpperCase() ?? "T2V"}</span>
+                <span>{profile.sizes?.join(", ") ?? "Profile defaults"}</span>
+                <span>{profile.step_counts?.join(" / ") ?? "Variable"} steps</span>
+                <span>{profile.expected_vram_gb ? `~${profile.expected_vram_gb} GB VRAM` : "VRAM varies"}</span>
+              </div>
               <button disabled={state === "working" || profile.ready} className="inline-flex items-center justify-center gap-2 border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50" onClick={() => void downloadModel(profile.id)}>
                 <Download className="h-4 w-4" />
                 {profile.ready ? "Model Installed" : "Download Model"}

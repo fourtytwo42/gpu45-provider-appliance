@@ -23,6 +23,8 @@ WAN_ROOT = Path(os.environ.get("WAN2_ROOT", "/opt/wan2.2"))
 DATA_DIR = Path(os.environ.get("WAN2_API_DATA", "/models/wan2-video"))
 MODEL_DIR = Path(os.environ.get("WAN2_MODEL_DIR", "/models/wan2-video/Wan2.2-TI2V-5B"))
 PYTHON = os.environ.get("WAN2_PYTHON", "/opt/wan2-video-venv/bin/python")
+HUNYUAN_PYTHON = os.environ.get("HUNYUAN_PYTHON", "/opt/hunyuan-video-venv/bin/python")
+HUNYUAN_MODEL_ROOT = Path(os.environ.get("HUNYUAN_MODEL_ROOT", "/models/hunyuan-video-1.5"))
 HF_CLI = os.environ.get("WAN2_HF_CLI", str(Path(PYTHON).with_name("huggingface-cli")))
 LLM_SERVICE = os.environ.get("WAN2_LLM_SERVICE", "llama-openai.service")
 RESTART_LLM = os.environ.get("WAN2_RESTART_LLM_AFTER", "true").lower() in {"1", "true", "yes", "on"}
@@ -47,6 +49,29 @@ DEFAULT_NEGATIVE_PROMPT = (
 )
 
 PROFILES: dict[str, dict[str, Any]] = {
+    "hunyuan15-t2v-q5": {
+        "id": "hunyuan15-t2v-q5",
+        "name": "HunyuanVideo 1.5 480p Q5",
+        "description": "Quality-focused 480p text-to-video using the CFG-distilled Q5 transformer.",
+        "repo": "jayn7/HunyuanVideo-1.5_T2V_480p-GGUF",
+        "model_dir": HUNYUAN_MODEL_ROOT,
+        "backend": "hunyuan-comfy",
+        "modes": ["t2v"],
+        "sizes": ["848*480", "480*848"],
+        "durations": [2, 3, 4, 5],
+        "step_counts": [20, 30, 50],
+        "default_steps": 20,
+        "default_fps": 12,
+        "expected_vram_gb": 22,
+        "required_files": [
+            "480p_distilled/hunyuanvideo1.5_480p_t2v_cfg_distilled-Q5_K_S.gguf",
+            "comfy/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+            "comfy/split_files/text_encoders/byt5_small_glyphxl_fp16.safetensors",
+            "comfy/split_files/vae/hunyuanvideo15_vae_fp16.safetensors",
+        ],
+        "index_file": None,
+        "ready_detail": "HunyuanVideo 1.5 Q5",
+    },
     "wan22-ti2v-5b": {
         "id": "wan22-ti2v-5b",
         "name": "Wan2.2 TI2V 5B",
@@ -149,6 +174,15 @@ def public_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "repo": profile["repo"],
         "model_dir": str(model_dir),
         "ready": profile_ready(profile),
+        "backend": profile.get("backend", "wan-diffsynth"),
+        "modes": profile.get("modes", ["t2v"]),
+        "sizes": profile.get("sizes", sorted(SUPPORTED_SIZES)),
+        "durations": profile.get("durations", list(range(2, 16))),
+        "step_counts": profile.get("step_counts", list(range(1, 25))),
+        "default_steps": profile.get("default_steps", 8),
+        "default_fps": profile.get("default_fps", OUTPUT_FPS),
+        "expected_vram_gb": profile.get("expected_vram_gb"),
+        "known_limitations": profile.get("known_limitations", []),
     }
 
 
@@ -183,6 +217,20 @@ def job_progress(job: dict[str, Any]) -> dict[str, Any]:
         save_percent = int(save_matches[-1]) if save_matches else 0
         percent = min(99, 90 + round(save_percent * 0.09))
         return {"progress_percent": percent, "progress_label": f"Saving video {save_percent}%", "progress_stage": "saving"}
+
+    stages = re.findall(r"stage=([a-z_]+)(?:\s+elapsed=([0-9.]+)s)?", log_text)
+    if stages:
+        stage, _elapsed = stages[-1]
+        stage_progress = {
+            "submitted": (4, "Submitting workflow"),
+            "queued": (6, "Waiting for GPU backend"),
+            "loading": (10, "Loading Hunyuan models"),
+            "denoising": (20, "Denoising video"),
+            "decoding": (88, "Decoding frames"),
+            "completed": (100, "Complete"),
+        }
+        percent, label = stage_progress.get(stage, (5, stage.replace("_", " ").title()))
+        return {"progress_percent": percent, "progress_label": label, "progress_stage": stage}
 
     generated_match = re.search(r"generated\s+\d+\s+frames", log_text)
     if generated_match:
@@ -301,10 +349,39 @@ def run_job(job: dict[str, Any]) -> None:
     out_prefix = OUTPUT_DIR / job_id
     update_job(job_id, status="running", started_at=now())
     lease = None
-    command = [
-        PYTHON,
-        "-m",
-        "wan_api.diffsynth_generate",
+    profile = get_profile(job["profile"])
+    if profile.get("backend") == "hunyuan-comfy":
+        width, height = str(job["size"]).split("*", 1)
+        command = [
+            HUNYUAN_PYTHON,
+            "-m",
+            "wan_api.comfy_generate",
+            "--job-id",
+            job_id,
+            "--output",
+            str(out_prefix.with_suffix(".mp4")),
+            "--prompt",
+            job["prompt"],
+            "--negative-prompt",
+            job["negative_prompt"],
+            "--width",
+            width,
+            "--height",
+            height,
+            "--frames",
+            str(job["frame_num"]),
+            "--steps",
+            str(job["steps"]),
+            "--fps",
+            str(job.get("fps", profile.get("default_fps", 12))),
+            "--seed",
+            str(job["seed"] if int(job.get("seed", -1)) >= 0 else int(time.time())),
+        ]
+    else:
+        command = [
+            PYTHON,
+            "-m",
+            "wan_api.diffsynth_generate",
         "--profile",
         job["profile"],
         "--model-dir",
@@ -320,12 +397,12 @@ def run_job(job: dict[str, Any]) -> None:
         "--frame-num",
         str(job["frame_num"]),
         "--fps",
-        str(job.get("fps", OUTPUT_FPS)),
-    ]
-    if job.get("negative_prompt"):
-        command.extend(["--negative-prompt", job["negative_prompt"]])
-    if int(job.get("seed", -1)) >= 0:
-        command.extend(["--seed", str(job["seed"])])
+            str(job.get("fps", OUTPUT_FPS)),
+        ]
+        if job.get("negative_prompt"):
+            command.extend(["--negative-prompt", job["negative_prompt"]])
+        if int(job.get("seed", -1)) >= 0:
+            command.extend(["--seed", str(job["seed"])])
 
     try:
         lease = acquire_lease(job_id, "video", 50, False, "atomic", timeout=1800)
@@ -384,8 +461,17 @@ def create_job(body: CreateJobBody) -> dict[str, Any]:
     profile = get_profile(body.profile)
     if not profile_ready(profile):
         raise HTTPException(status_code=409, detail=f"{profile['ready_detail']} model is not downloaded yet.")
-    if body.size not in SUPPORTED_SIZES:
-        raise HTTPException(status_code=400, detail=f"Unsupported Wan size: {body.size}.")
+    supported_sizes = set(profile.get("sizes", SUPPORTED_SIZES))
+    if body.size not in supported_sizes:
+        raise HTTPException(status_code=400, detail=f"Unsupported size for {profile['name']}: {body.size}.")
+    supported_steps = profile.get("step_counts")
+    if supported_steps and body.steps not in supported_steps:
+        raise HTTPException(status_code=400, detail=f"Unsupported step count for {profile['name']}: {body.steps}.")
+    supported_durations = profile.get("durations")
+    if supported_durations and body.duration_seconds not in supported_durations:
+        raise HTTPException(status_code=400, detail=f"Unsupported duration for {profile['name']}: {body.duration_seconds}s.")
+    fps = int(profile.get("default_fps", OUTPUT_FPS))
+    frame_num = duration_to_frame_num(body.duration_seconds) if profile.get("backend") != "hunyuan-comfy" else max(5, ((body.duration_seconds * fps - 1) // 4) * 4 + 1)
     job = {
         "id": str(uuid.uuid4()),
         "profile": profile["id"],
@@ -396,8 +482,8 @@ def create_job(body: CreateJobBody) -> dict[str, Any]:
         "size": body.size,
         "steps": body.steps,
         "duration_seconds": body.duration_seconds,
-        "frame_num": duration_to_frame_num(body.duration_seconds),
-        "fps": OUTPUT_FPS,
+        "frame_num": frame_num,
+        "fps": fps,
         "seed": body.seed,
         "status": "queued",
         "created_at": now(),

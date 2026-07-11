@@ -35,6 +35,8 @@ media/
 audio/
 video/
 videos/
+!/src/app/api/video/
+!/src/app/api/video/**
 images/
 !/src/app/api/images/
 !/src/app/api/images/**

@@ -1,0 +1,18 @@
+[Unit]
+Description=HunyuanVideo 1.5 ComfyUI backend for GPU45
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hendo420
+Group=hendo420
+WorkingDirectory=/opt/hunyuan-video-1.5/ComfyUI
+Environment=HSA_OVERRIDE_GFX_VERSION=10.3.0
+Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+ExecStart=/opt/hunyuan-video-venv/bin/python /opt/hunyuan-video-1.5/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --disable-auto-launch --output-directory /models/hunyuan-video-1.5/outputs
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

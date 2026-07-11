@@ -102,6 +102,7 @@ install -m 0644 deploy/systemd/qwen3-tts-api.service /etc/systemd/system/qwen3-t
 install -m 0644 deploy/systemd/gpu45-image-api.service /etc/systemd/system/gpu45-image-api.service
 install -m 0644 deploy/systemd/gpu45-whisper-api.service /etc/systemd/system/gpu45-whisper-api.service
 install -m 0644 deploy/systemd/wan2-video-api.service /etc/systemd/system/wan2-video-api.service
+install -m 0644 deploy/systemd/hunyuan-video-comfy.service /etc/systemd/system/hunyuan-video-comfy.service
 install -m 0755 scripts/configure-service-user.sh /usr/local/sbin/gpu45-configure-service-user
 /usr/local/sbin/gpu45-configure-service-user
 install -m 0755 deploy/usr/local/bin/gpu45-responses-proxy /usr/local/bin/gpu45-responses-proxy
@@ -119,6 +120,9 @@ fi
 ln -sfn "$release_dir" "$current_link"
 systemctl daemon-reload
 systemctl enable gpu45-resource-manager.service
+if [[ -x /opt/hunyuan-video-venv/bin/python && -d /opt/hunyuan-video-1.5/ComfyUI ]]; then
+  systemctl enable --now hunyuan-video-comfy.service
+fi
 systemctl restart gpu45-resource-manager.service
 systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer
 systemctl restart gpu45-responses-proxy.service gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
