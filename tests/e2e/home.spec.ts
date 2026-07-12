@@ -4,7 +4,7 @@ async function expectHealthyHome(page: Page) {
   const consoleErrors: string[] = [];
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /Ready for Codex|Restoring the LLM|Appliance needs attention/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Ready for Codex|Ready on demand|Starting the LLM|Restoring the LLM|Appliance needs attention/ })).toBeVisible();
   await expect(page.getByText("Junction", { exact: true })).toBeVisible();
   await expect(page.getByText("VRAM", { exact: true })).toBeVisible();
   await expect(page.getByText("Power", { exact: true })).toBeVisible();

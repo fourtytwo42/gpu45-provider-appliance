@@ -38,9 +38,10 @@ const contextLinks: Record<string, Array<{ href: string; label: string }>> = {
 function isPathActive(pathname: string, href: string) { return href === "/" ? pathname === "/" : pathname.startsWith(href); }
 function shortModelName(model?: string) { return !model || model === "unknown" ? "No model" : (model.split("/").pop() ?? model).replace(/\.gguf$/i, ""); }
 function readinessTone(status?: string): "success" | "warning" | "danger" | "info" | "neutral" {
-  if (status === "idle" || status === "generating") return "success";
-  if (status === "loading" || status === "restarting") return "warning";
-  if (status === "error" || status === "offline") return "danger";
+  if (status === "ready" || status === "busy") return "success";
+  if (status === "starting" || status === "releasing" || status === "restoring") return "warning";
+  if (status === "failed") return "danger";
+  if (status === "unloaded") return "info";
   return status ? "info" : "neutral";
 }
 

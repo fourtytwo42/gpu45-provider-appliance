@@ -54,6 +54,31 @@ class ResourceManagerTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT status FROM leases WHERE lease_id='tts'").fetchone()[0], "interrupted")
             self.assertEqual(db.execute("SELECT value FROM state WHERE key='resume_tts'").fetchone()[0], "1")
 
+    def test_llm_grant_records_starting_transition(self):
+        with rm.connect() as db:
+            db.execute(
+                "INSERT INTO leases VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("llm", "codex", "llm", 100, 0, "keep-loaded", "queued", rm.now(), None, None, None, "{}"),
+            )
+            rm.grant_next(db)
+            self.assertEqual(db.execute("SELECT value FROM state WHERE key='transition'").fetchone()[0], "starting")
+
+    def test_restoring_stopped_llm_records_transition(self):
+        with rm.connect() as db:
+            db.execute(
+                "INSERT INTO leases VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("image", "image", "image", 70, 0, "restart", "active", rm.now(), rm.now(), rm.now(), None,
+                 '{"stoppedServices":["llama-openai.service"]}'),
+            )
+            lease = db.execute("SELECT * FROM leases WHERE lease_id='image'").fetchone()
+            original_action = rm.service_action
+            rm.service_action = lambda _action, _service: None
+            try:
+                rm.restore_after_release(db, lease)
+            finally:
+                rm.service_action = original_action
+            self.assertEqual(db.execute("SELECT value FROM state WHERE key='transition'").fetchone()[0], "restoring")
+
 
 if __name__ == "__main__":
     unittest.main()

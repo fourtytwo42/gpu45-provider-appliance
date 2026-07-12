@@ -15,7 +15,7 @@ export async function GET(): Promise<Response> {
     ]);
     const collectedAt = new Date(snapshot.collectedAt);
     const telemetryFresh = Date.now() - collectedAt.getTime() < 30_000;
-    const providerHealthy = !["error", "offline"].includes(snapshot.provider.status);
+    const providerHealthy = snapshot.provider.status !== "failed";
     const status = telemetryFresh && providerHealthy ? "ok" : "degraded";
 
     return Response.json({
@@ -27,6 +27,11 @@ export async function GET(): Promise<Response> {
         model: snapshot.provider.model,
         activeRequests: snapshot.provider.activeRequests,
         lastError: snapshot.provider.lastError,
+        processStatus: snapshot.provider.processStatus,
+        proxyReady: snapshot.provider.proxyReady,
+        backendReady: snapshot.provider.backendReady,
+        resourceOwner: snapshot.provider.resourceOwner,
+        transition: snapshot.provider.transition,
       },
       resources: {
         gpuUsage: snapshot.system.gpuUsage,
@@ -40,6 +45,9 @@ export async function GET(): Promise<Response> {
       checks: {
         telemetryFresh,
         providerHealthy,
+        providerProxy: snapshot.provider.proxyReady,
+        providerBackend: snapshot.provider.backendReady,
+        providerProcess: snapshot.provider.processStatus,
         database: true,
         resourceManager: resourceState.status !== "offline",
       },

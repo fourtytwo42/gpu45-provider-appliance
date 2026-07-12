@@ -29,6 +29,8 @@ export type ResourceState = {
   suspended: ResourceQueueItem[];
   vram: { usedBytes: number | null; totalBytes: number | null; freeBytes: number | null };
   recovery: { reclaimedLeases: number; lastEvent: string | null };
+  transition: { status: "releasing" | "restoring" | "starting"; startedAt: string } | null;
+  services: Record<string, "active" | "activating" | "deactivating" | "inactive" | "failed" | "unknown">;
 };
 
 export async function getResourceState(): Promise<ResourceState> {
@@ -51,6 +53,8 @@ export async function getResourceState(): Promise<ResourceState> {
       suspended: [],
       vram: { usedBytes: null, totalBytes: null, freeBytes: null },
       recovery: { reclaimedLeases: 0, lastEvent: null },
+      transition: null,
+      services: {},
     };
   } finally {
     clearTimeout(timer);

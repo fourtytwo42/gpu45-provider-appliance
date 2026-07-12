@@ -25,7 +25,7 @@ function buildSeries(kind: MetricSeries["kind"], label: string, unit: string, co
 }
 
 const provider: ProviderSnapshot = {
-  status: "idle",
+  status: "ready",
   model: "gpu45-llm",
   providerUrl: "http://127.0.0.1:30000",
   activeRequests: 0,
@@ -38,6 +38,11 @@ const provider: ProviderSnapshot = {
     tokens_predicted_total: 490,
   },
   lastError: null,
+  processStatus: "active",
+  proxyReady: true,
+  backendReady: true,
+  resourceOwner: null,
+  transition: null,
 };
 
 const system: SystemSnapshot = {

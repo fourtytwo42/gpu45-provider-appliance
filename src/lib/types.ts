@@ -1,12 +1,15 @@
 export type RuntimeMode = "live" | "mock";
 
 export type ProviderStatus =
-  | "idle"
-  | "loading"
-  | "generating"
-  | "restarting"
-  | "error"
-  | "offline";
+  | "unloaded"
+  | "starting"
+  | "ready"
+  | "busy"
+  | "releasing"
+  | "restoring"
+  | "failed";
+
+export type ProviderProcessStatus = "active" | "activating" | "deactivating" | "inactive" | "failed" | "unknown";
 
 export type MetricKind =
   | "gpu_temp_edge"
@@ -51,6 +54,11 @@ export type ProviderSnapshot = {
   tokensPerSecond: number;
   metrics: Record<string, number>;
   lastError?: string | null;
+  processStatus: ProviderProcessStatus;
+  proxyReady: boolean;
+  backendReady: boolean;
+  resourceOwner: string | null;
+  transition: "releasing" | "restoring" | "starting" | null;
 };
 
 export type SystemSnapshot = {

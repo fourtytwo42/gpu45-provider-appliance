@@ -32,9 +32,12 @@ function Metric({ label, value, detail, icon: Icon, tone }: { label: string; val
 }
 
 function operationalState(live: LiveTelemetry, activeJob?: UnifiedJob) {
-  if (live.provider.status === "error" || live.provider.status === "offline") return { title: "Appliance needs attention", body: "The LLM provider is unavailable. Open System for diagnostics.", tone: "danger" as const, icon: AlertTriangle };
+  if (live.provider.status === "failed") return { title: "Appliance needs attention", body: "The provider proxy or LLM process failed. Open System for diagnostics.", tone: "danger" as const, icon: AlertTriangle };
   if (activeJob) return { title: `${activeJob.kind === "audiobook" ? "Audio Studio" : "Studio"} is using the appliance`, body: activeJob.waitReason || `${activeJob.title} is ${activeJob.status}. The LLM will be restored when the workflow releases the GPU.`, tone: "warning" as const, icon: Activity };
-  if (live.provider.status === "loading" || live.provider.status === "restarting") return { title: "Restoring the LLM", body: "The provider is loading the active model and will become available automatically.", tone: "warning" as const, icon: Bot };
+  if (live.provider.status === "releasing") return { title: "Preparing the GPU", body: "The LLM is releasing GPU memory for the next queued workflow.", tone: "warning" as const, icon: Bot };
+  if (live.provider.status === "restoring") return { title: "Restoring the LLM", body: "The previous model is loading and will become available automatically.", tone: "warning" as const, icon: Bot };
+  if (live.provider.status === "starting") return { title: "Starting the LLM", body: "The selected model is loading for an interactive request.", tone: "warning" as const, icon: Bot };
+  if (live.provider.status === "unloaded") return { title: "Ready on demand", body: "The GPU is free and the selected LLM will load automatically with the next Codex request.", tone: "info" as const, icon: Bot };
   return { title: "Ready for Codex", body: "The provider is online, the queue is clear, and the active model can accept requests.", tone: "success" as const, icon: CheckCircle2 };
 }
 

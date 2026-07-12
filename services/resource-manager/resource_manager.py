@@ -78,6 +78,31 @@ def service_active(service: str) -> bool:
         return False
 
 
+def service_status(service: str) -> str:
+    try:
+        result = subprocess.run(["systemctl", "is-active", service], capture_output=True, text=True, check=False, timeout=5)
+        status = result.stdout.strip()
+        return status if status in {"active", "activating", "deactivating", "inactive", "failed"} else "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+def backend_ready() -> bool:
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:30000/v1/models", timeout=2) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
+def set_transition(db: sqlite3.Connection, status: str | None) -> None:
+    if status is None:
+        db.execute("DELETE FROM state WHERE key IN ('transition', 'transition_started_at')")
+        return
+    db.execute("INSERT OR REPLACE INTO state(key,value) VALUES('transition',?)", (status,))
+    db.execute("INSERT OR REPLACE INTO state(key,value) VALUES('transition_started_at',?)", (now(),))
+
+
 def service_action(action: str, service: str) -> None:
     if action != "stop":
         subprocess.run(["systemctl", action, service], check=True, timeout=30)
@@ -99,8 +124,12 @@ def post_local(url: str, payload: dict | None = None) -> None:
 def transition_before_grant(db: sqlite3.Connection, row: sqlite3.Row) -> None:
     metadata = json.loads(row["metadata_json"] or "{}")
     stopped = []
+    if row["kind"] == "llm":
+        set_transition(db, "starting")
     if row["kind"] != "llm" and service_active("llama-openai.service"):
+        set_transition(db, "releasing")
         service_action("stop", "llama-openai.service"); stopped.append("llama-openai.service")
+        set_transition(db, None)
     metadata["stoppedServices"] = stopped
     db.execute("UPDATE leases SET metadata_json=? WHERE lease_id=?", (json.dumps(metadata), row["lease_id"]))
 
@@ -108,6 +137,8 @@ def transition_before_grant(db: sqlite3.Connection, row: sqlite3.Row) -> None:
 def restore_after_release(db: sqlite3.Connection, row: sqlite3.Row) -> None:
     metadata = json.loads(row["metadata_json"] or "{}")
     for service in metadata.get("stoppedServices", []):
+        if service == "llama-openai.service":
+            set_transition(db, "restoring")
         service_action("start", service)
     resume_tts = db.execute("SELECT value FROM state WHERE key='resume_tts'").fetchone()
     if resume_tts and resume_tts[0] == "1":
@@ -211,6 +242,17 @@ def state() -> dict[str, object]:
     with LOCK, connect() as db:
         reclaim_expired(db)
         owner = grant_next(db)
+        transition_row = db.execute("SELECT value FROM state WHERE key='transition'").fetchone()
+        transition_started = db.execute("SELECT value FROM state WHERE key='transition_started_at'").fetchone()
+        transition = transition_row[0] if transition_row else None
+        if transition in {"starting", "restoring"} and backend_ready():
+            set_transition(db, None)
+            transition = None
+            transition_started = None
+        if transition and not owner and service_status("llama-openai.service") in {"inactive", "failed", "unknown"}:
+            set_transition(db, None)
+            transition = None
+            transition_started = None
         queue = db.execute("SELECT * FROM leases WHERE status='queued' ORDER BY priority DESC, requested_at").fetchall()
         suspended = db.execute("SELECT * FROM leases WHERE status='suspended' ORDER BY priority DESC, requested_at").fetchall()
         reclaimed = int(db.execute("SELECT value FROM state WHERE key='reclaimed_leases'").fetchone()[0])
@@ -221,6 +263,14 @@ def state() -> dict[str, object]:
             "suspended": [row_dict(item, True) for item in suspended],
             "vram": read_vram(),
             "recovery": {"reclaimedLeases": reclaimed, "lastEvent": last[0] if last else None},
+            "transition": {"status": transition, "startedAt": transition_started[0]} if transition and transition_started else None,
+            "services": {
+                "llm": service_status("llama-openai.service"),
+                "tts": service_status("qwen3-tts-api.service"),
+                "image": service_status("gpu45-image-api.service"),
+                "video": service_status("wan2-video-api.service"),
+                "whisper": service_status("gpu45-whisper-api.service"),
+            },
         }
 
 
