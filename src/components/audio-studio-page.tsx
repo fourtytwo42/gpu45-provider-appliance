@@ -1,7 +1,7 @@
 import { Mic2 } from "lucide-react";
 import { StudioShell } from "@/components/studio-shell";
 import { TtsConsole, type TtsSection } from "@/components/tts-console";
-import { getTtsSnapshot } from "@/lib/tts";
+import { getStoredTtsSnapshot } from "@/lib/job-history";
 
 const copy: Record<TtsSection, { title: string; eyebrow: string; description: string }> = {
   speech: { title: "Speech", eyebrow: "Audio Studio", description: "Generate speech with a trained Qwen voice or lightweight Pocket TTS." },
@@ -12,7 +12,7 @@ const copy: Record<TtsSection, { title: string; eyebrow: string; description: st
 };
 
 export async function AudioStudioPage({ section }: { section: TtsSection }) {
-  const snapshot = await getTtsSnapshot();
+  const snapshot = getStoredTtsSnapshot();
   const page = copy[section];
   return <StudioShell title={page.title} eyebrow={page.eyebrow} description={page.description} icon={Mic2} accent="#a78bfa" activeHref={`/studio/${section}`} noticeTone="warning" noticeTitle="Resource-aware audio" noticeBody="GPU audio pauses resumable work at a safe boundary and restores the previous LLM automatically. Pocket TTS remains CPU-only."><TtsConsole initialSnapshot={snapshot} section={section} /></StudioShell>;
 }

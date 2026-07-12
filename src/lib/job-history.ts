@@ -1,13 +1,15 @@
 import fs from "node:fs";
 import Database from "better-sqlite3";
+import { getConfig } from "./config";
 import type { ImageJob } from "./images";
 import type { PocketTtsJob } from "./pocket-tts";
-import type { TtsAudiobookJob, TtsModel, TtsPresentationJob, TtsSynthesisJob, TtsVoiceJob } from "./tts";
+import type { TtsAudiobookJob, TtsModel, TtsPresentationJob, TtsSnapshot, TtsSynthesisJob, TtsVoice, TtsVoiceJob } from "./tts";
 import type { VideoJob } from "./video";
-import type { WhisperJob } from "./whisper";
+import { WHISPER_MODELS, type WhisperJob } from "./whisper";
 
 type StoredJobHistory = {
   tts: {
+    voices: TtsVoice[];
     voiceJobs: TtsVoiceJob[];
     models: TtsModel[];
     synthesisJobs: TtsSynthesisJob[];
@@ -47,6 +49,7 @@ export function readStoredJobHistory(): StoredJobHistory {
   const tts = <T>(store: string) => readPayloadRows<T>(ttsDb, "SELECT payload_json FROM records WHERE store_name=? ORDER BY position DESC LIMIT 250", [store]);
   return {
     tts: {
+      voices: tts<TtsVoice>("voices"),
       voiceJobs: tts<TtsVoiceJob>("voice_jobs"),
       models: tts<TtsModel>("models"),
       synthesisJobs: tts<TtsSynthesisJob>("synthesis_jobs"),
@@ -58,4 +61,24 @@ export function readStoredJobHistory(): StoredJobHistory {
     videos: readPayloadRows<VideoJob>(process.env.GPU45_VIDEO_JOB_DB ?? "/models/wan2-video/jobs.db", "SELECT payload_json FROM jobs ORDER BY position DESC LIMIT 250"),
     whisper: readPayloadRows<WhisperJob>(process.env.GPU45_WHISPER_JOB_DB ?? "/models/whisper/jobs.db", "SELECT payload_json FROM jobs ORDER BY position DESC LIMIT 250"),
   };
+}
+
+export function getStoredTtsSnapshot(): TtsSnapshot {
+  const stored = readStoredJobHistory().tts;
+  return { healthy: true, sleeping: true, serviceUrl: getConfig().ttsUrl, ...stored };
+}
+
+export function getStoredImageSnapshot() {
+  const stored = readStoredJobHistory();
+  return { healthy: true, sleeping: true, serviceUrl: getConfig().imageUrl, profiles: [], jobs: stored.images };
+}
+
+export function getStoredVideoSnapshot() {
+  const stored = readStoredJobHistory();
+  return { healthy: true, sleeping: true, serviceUrl: getConfig().videoUrl, modelReady: false, profiles: [], jobs: stored.videos };
+}
+
+export function getStoredWhisperSnapshot() {
+  const stored = readStoredJobHistory();
+  return { healthy: true, sleeping: true, serviceUrl: getConfig().whisperUrl, models: WHISPER_MODELS, jobs: stored.whisper };
 }
