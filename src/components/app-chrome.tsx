@@ -32,7 +32,7 @@ const contextLinks: Record<string, Array<{ href: string; label: string }>> = {
   Work: [{ href: "/jobs", label: "Jobs" }, { href: "/outputs", label: "Outputs" }],
   Models: [{ href: "/models", label: "Library" }, { href: "/benchmarks", label: "Benchmarks" }, { href: "/keys", label: "API access" }],
   Studio: [{ href: "/studio/speech", label: "Speech" }, { href: "/studio/audiobooks", label: "Audiobooks" }, { href: "/studio/presentations", label: "Presentations" }, { href: "/studio/voices", label: "Voice Library" }, { href: "/studio/training", label: "Training" }, { href: "/whisper", label: "Transcription" }, { href: "/images", label: "Images" }, { href: "/video", label: "Video" }, { href: "/research", label: "Research" }],
-  System: [{ href: "/settings", label: "Health & controls" }, { href: "/timeline", label: "Timeline" }, { href: "/logs", label: "Logs" }],
+  System: [{ href: "/settings", label: "Health & controls" }, { href: "/system/metrics", label: "Metrics" }, { href: "/timeline", label: "Timeline" }, { href: "/logs", label: "Logs" }],
 };
 
 function isPathActive(pathname: string, href: string) { return href === "/" ? pathname === "/" : pathname.startsWith(href); }

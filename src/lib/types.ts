@@ -25,6 +25,7 @@ export type MetricKind =
   | "ram_total"
   | "disk_used"
   | "disk_free"
+  | "disk_total"
   | "fan_rpm"
   | "fan_pwm"
   | "tokens_per_second"
