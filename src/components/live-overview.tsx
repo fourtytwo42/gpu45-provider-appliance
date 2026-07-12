@@ -8,6 +8,7 @@ import { StatusBadge } from "./status-badge";
 import { formatBytes, formatNumber } from "@/lib/format";
 import type { DashboardSnapshot, LiveTelemetry, MetricSeries } from "@/lib/types";
 import type { UnifiedJob } from "@/lib/jobs";
+import { subscribeApplianceEvent } from "@/lib/appliance-events";
 
 const MAX_POINTS = 180;
 type JobsPayload = { summary: { active: number; queued: number; failed: number; completed: number; total: number }; jobs: UnifiedJob[] };
@@ -44,7 +45,11 @@ function operationalState(live: LiveTelemetry, activeJob?: UnifiedJob) {
 export function LiveOverview({ initial }: { initial: DashboardSnapshot; endpoint: { allowAnonymous: boolean; visibleModels: number; endpointBase: string } }) {
   const [live, setLive] = useState<LiveTelemetry>({ collectedAt: initial.collectedAt, provider: initial.provider, system: initial.system });
   const [charts, setCharts] = useState(initial.charts); const [jobs, setJobs] = useState<JobsPayload | null>(null);
-  useEffect(() => { const source = new EventSource("/api/events?topics=telemetry,operational-jobs"); source.addEventListener("telemetry", (event) => { const next = JSON.parse((event as MessageEvent).data) as LiveTelemetry; setLive(next); setCharts((current) => updateCharts(current, next)); }); source.addEventListener("operational-jobs", (event) => setJobs(JSON.parse((event as MessageEvent).data) as JobsPayload)); return () => source.close(); }, []);
+  useEffect(() => {
+    const telemetry = subscribeApplianceEvent<LiveTelemetry>("telemetry", (next) => { setLive(next); setCharts((current) => updateCharts(current, next)); });
+    const operationalJobs = subscribeApplianceEvent<JobsPayload>("operational-jobs", setJobs);
+    return () => { telemetry(); operationalJobs(); };
+  }, []);
   const s = live.system; const activeJob = jobs?.jobs.find((job) => ["running", "queued", "paused"].includes(job.status)); const state = operationalState(live, activeJob); const StateIcon = state.icon;
   const latestFailures = jobs?.jobs.filter((job) => job.status === "failed" || job.status === "needs_review").slice(0, 3) ?? [];
   const vramFree = s.vramUsedBytes !== null && s.vramTotalBytes !== null ? s.vramTotalBytes - s.vramUsedBytes : null;
