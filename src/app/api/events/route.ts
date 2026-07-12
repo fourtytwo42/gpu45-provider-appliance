@@ -1,6 +1,6 @@
 import { getUnifiedJobs } from "@/lib/jobs";
 import { getImageSnapshot } from "@/lib/images";
-import { collectLiveTelemetry } from "@/lib/live-telemetry";
+import { getOperationalJobs, getPersistedOperationalTelemetry } from "@/lib/operational-state";
 import { getPocketTtsSnapshot } from "@/lib/pocket-tts";
 import { getResourceState } from "@/lib/resource-manager";
 import { getTtsSnapshot } from "@/lib/tts";
@@ -10,9 +10,9 @@ import { getWhisperSnapshot } from "@/lib/whisper";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-type Topic = "telemetry" | "provider" | "resources" | "jobs" | "tts" | "pocket-tts" | "images" | "video" | "whisper";
-const DEFAULT_TOPICS: Topic[] = ["telemetry", "resources", "jobs"];
-const VALID_TOPICS = new Set<Topic>([...DEFAULT_TOPICS, "provider", "tts", "pocket-tts", "images", "video", "whisper"]);
+type Topic = "telemetry" | "provider" | "resources" | "jobs" | "operational-jobs" | "tts" | "pocket-tts" | "images" | "video" | "whisper";
+const DEFAULT_TOPICS: Topic[] = ["telemetry", "resources", "operational-jobs"];
+const VALID_TOPICS = new Set<Topic>([...DEFAULT_TOPICS, "provider", "operational-jobs", "tts", "pocket-tts", "images", "video", "whisper"]);
 
 function requestedTopics(request: Request): Topic[] {
   const values = new URL(request.url).searchParams.get("topics")?.split(",") ?? DEFAULT_TOPICS;
@@ -21,10 +21,11 @@ function requestedTopics(request: Request): Topic[] {
 }
 
 async function readTopic(topic: Topic): Promise<unknown> {
-  if (topic === "telemetry") return collectLiveTelemetry();
-  if (topic === "provider") return (await collectLiveTelemetry()).provider;
+  if (topic === "telemetry") return getPersistedOperationalTelemetry(await getResourceState());
+  if (topic === "provider") return (await getPersistedOperationalTelemetry(await getResourceState())).provider;
   if (topic === "resources") return getResourceState();
   if (topic === "jobs") return getUnifiedJobs();
+  if (topic === "operational-jobs") { const resources = await getResourceState(); return getOperationalJobs(resources); }
   if (topic === "tts") return getTtsSnapshot();
   if (topic === "pocket-tts") return getPocketTtsSnapshot();
   if (topic === "images") return getImageSnapshot();

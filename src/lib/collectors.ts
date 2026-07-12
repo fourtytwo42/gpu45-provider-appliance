@@ -10,6 +10,8 @@ import {
   parseCurvePoints,
 } from "./parsers";
 import { collectProviderRuntimeSnapshot } from "./provider-state";
+import { getPersistedOperationalTelemetry } from "./operational-state";
+import { getResourceState } from "./resource-manager";
 import type {
   AuditEvent,
   BenchmarkRun,
@@ -719,6 +721,16 @@ export async function pruneTelemetry(): Promise<void> {
   await prisma.$executeRawUnsafe("PRAGMA wal_checkpoint(PASSIVE)");
   await prisma.$executeRawUnsafe("PRAGMA optimize");
   await prisma.$executeRawUnsafe("PRAGMA incremental_vacuum(2000)");
+}
+
+export async function collectOverviewSnapshot(): Promise<DashboardSnapshot> {
+  if (!isLiveRuntime()) return demoSnapshot;
+  const resources = await getResourceState();
+  const [telemetry, charts] = await Promise.all([
+    getPersistedOperationalTelemetry(resources),
+    collectCharts().catch(() => demoSnapshot.charts),
+  ]);
+  return { ...demoSnapshot, collectedAt: telemetry.collectedAt, provider: telemetry.provider, system: telemetry.system, charts };
 }
 
 export async function aggregateTelemetry(): Promise<void> {

@@ -116,7 +116,7 @@ function CommandPalette({ close }: { close: () => void }) {
 export function AppChrome({ children, version, initialTelemetry }: { children: React.ReactNode; version: ApplianceVersion; initialTelemetry: LiveTelemetry }) {
   const pathname = usePathname(); const [mobileNav, setMobileNav] = useState(false); const [jobsOpen, setJobsOpen] = useState(false); const [commandsOpen, setCommandsOpen] = useState(false); const [accountOpen, setAccountOpen] = useState(false); const [jobs, setJobs] = useState<JobsPayload | null>(null);
   useEffect(() => { const listener = () => setCommandsOpen(true); window.addEventListener("gpu45:commands", listener); const key = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setCommandsOpen(true); } }; window.addEventListener("keydown", key); return () => { window.removeEventListener("gpu45:commands", listener); window.removeEventListener("keydown", key); }; }, []);
-  useEffect(() => { const source = new EventSource("/api/events?topics=jobs"); source.addEventListener("jobs", (event) => setJobs(JSON.parse((event as MessageEvent).data) as JobsPayload)); return () => source.close(); }, []);
+  useEffect(() => { const source = new EventSource("/api/events?topics=operational-jobs"); source.addEventListener("operational-jobs", (event) => setJobs(JSON.parse((event as MessageEvent).data) as JobsPayload)); return () => source.close(); }, []);
   if (pathname === "/login") return children;
   const drawerJobs = jobs?.jobs.filter((job) => ["queued", "running", "paused", "failed", "needs_review"].includes(job.status)).slice(0, 8) ?? [];
   return <div className="min-h-screen overflow-x-hidden bg-[#070a0f] text-[#e6edf5]">

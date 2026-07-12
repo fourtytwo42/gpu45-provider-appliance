@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import { demoSnapshot } from "./demo-data";
-import type { JobsSummary } from "./jobs";
+import type { JobsSummary, UnifiedJob } from "./jobs";
 import type { ResourceState } from "./resource-manager";
 import type { LiveTelemetry, MetricKind, ProviderProcessStatus, ProviderSnapshot, ProviderStatus, SystemSnapshot } from "./types";
 
@@ -120,4 +120,101 @@ export async function getOperationalJobsSummary(resourceState: ResourceState): P
     failed,
     completed,
   };
+}
+
+export async function getOperationalJobs(resourceState: ResourceState): Promise<{ jobs: UnifiedJob[]; summary: JobsSummary }> {
+  const jobs: UnifiedJob[] = [];
+  if (resourceState.owner) {
+    jobs.push({
+      id: `resource:${resourceState.owner.leaseId}`,
+      sourceId: resourceState.owner.jobId,
+      kind: resourceState.owner.kind as UnifiedJob["kind"],
+      title: `${resourceState.owner.kind.replaceAll("-", " ")} job`,
+      subtitle: resourceState.owner.jobId,
+      status: "running",
+      displayStatus: "Running",
+      stage: "GPU allocated",
+      createdAt: resourceState.owner.acquiredAt,
+      updatedAt: resourceState.owner.heartbeatAt,
+      resourceOwner: resourceState.owner.kind,
+      preemptible: resourceState.owner.preemptible,
+      resumePolicy: resourceState.owner.resumePolicy,
+      actions: [],
+      availableActions: [],
+    });
+  }
+  for (const item of resourceState.queue) {
+    jobs.push({
+      id: `resource:${item.requestId}`,
+      sourceId: item.jobId,
+      kind: item.kind as UnifiedJob["kind"],
+      title: `${item.kind.replaceAll("-", " ")} job`,
+      subtitle: item.jobId,
+      status: "queued",
+      displayStatus: "Waiting for GPU",
+      stage: "Queued",
+      createdAt: item.requestedAt,
+      updatedAt: item.requestedAt,
+      resourceOwner: resourceState.owner?.kind ?? null,
+      waitReason: item.waitReason,
+      preemptible: item.preemptible,
+      resumePolicy: item.resumePolicy,
+      actions: [],
+      availableActions: [],
+    });
+  }
+  for (const item of resourceState.suspended) {
+    jobs.push({
+      id: `resource:${item.requestId}`,
+      sourceId: item.jobId,
+      kind: item.kind as UnifiedJob["kind"],
+      title: `${item.kind.replaceAll("-", " ")} job`,
+      subtitle: item.jobId,
+      status: "paused",
+      displayStatus: "Paused",
+      stage: "Paused at a safe boundary",
+      createdAt: item.requestedAt,
+      updatedAt: item.requestedAt,
+      resourceOwner: resourceState.owner?.kind ?? null,
+      waitReason: item.waitReason,
+      preemptible: item.preemptible,
+      resumePolicy: item.resumePolicy,
+      actions: [],
+      availableActions: [],
+    });
+  }
+  const downloads = await prisma.downloadJob.findMany({
+    where: { status: { in: ["queued", "downloading", "failed"] } },
+    orderBy: { updatedAt: "desc" },
+    take: 20,
+  }).catch(() => []);
+  for (const job of downloads) {
+    const status = job.status === "downloading" ? "running" : job.status as UnifiedJob["status"];
+    jobs.push({
+      id: `download:${job.id}`,
+      sourceId: job.id,
+      kind: "download",
+      title: job.fileName,
+      subtitle: job.repoId,
+      status,
+      displayStatus: status === "running" ? "Downloading" : status.charAt(0).toUpperCase() + status.slice(1),
+      progressPercent: Number(job.totalBytes) > 0 ? Math.round((Number(job.bytesDownloaded) / Number(job.totalBytes)) * 1000) / 10 : null,
+      createdAt: job.createdAt.toISOString(),
+      updatedAt: job.updatedAt.toISOString(),
+      error: job.error,
+      technicalError: job.error,
+      userMessage: job.error,
+      actions: status === "failed" ? ["delete"] : [],
+      availableActions: status === "failed" ? ["delete"] : [],
+    });
+  }
+  const summary = jobs.reduce<JobsSummary>((value, job) => {
+    value.total += 1;
+    if (["running", "queued", "paused"].includes(job.status)) value.active += 1;
+    if (job.status === "queued") value.queued += 1;
+    if (job.status === "failed") value.failed += 1;
+    if (job.status === "completed") value.completed += 1;
+    return value;
+  }, { total: 0, active: 0, queued: 0, failed: 0, completed: 0 });
+  return { jobs, summary };
 }

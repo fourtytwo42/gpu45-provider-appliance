@@ -3,7 +3,8 @@ import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 import { AppChrome } from "@/components/app-chrome";
 import { getApplianceVersion } from "@/lib/version";
 import "./globals.css";
-import { collectLiveTelemetry } from "@/lib/live-telemetry";
+import { getPersistedOperationalTelemetry } from "@/lib/operational-state";
+import { getResourceState } from "@/lib/resource-manager";
 
 const spaceGrotesk = Space_Grotesk({
   variable: "--font-sans",
@@ -26,7 +27,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const initialTelemetry = await collectLiveTelemetry();
+  const initialTelemetry = await getPersistedOperationalTelemetry(await getResourceState());
   return (
     <html lang="en" className={`${spaceGrotesk.variable} ${ibmMono.variable} h-full antialiased`}>
       <body className="min-h-full">
