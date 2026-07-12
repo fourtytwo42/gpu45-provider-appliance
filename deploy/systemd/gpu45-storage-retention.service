@@ -1,0 +1,7 @@
+[Unit]
+Description=GPU45 storage and crash retention
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gpu45-storage-retention
