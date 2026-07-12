@@ -6,6 +6,7 @@ import { SectionCard } from "./section-card";
 import { cn } from "@/lib/cn";
 import type { ImageJob, ImageProfile, ImageSnapshot } from "@/lib/images";
 import { imageOutputUrl } from "@/lib/images";
+import { subscribeApplianceEvent } from "@/lib/appliance-events";
 
 type RunState = "idle" | "working" | "error";
 
@@ -81,10 +82,7 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
   }
 
   useEffect(() => {
-    const source = new EventSource("/api/events?topics=images");
-    source.addEventListener("images", (event) => setSnapshot(JSON.parse((event as MessageEvent).data) as ImageSnapshot));
-    source.onerror = () => void refresh().catch(() => undefined);
-    return () => source.close();
+    return subscribeApplianceEvent<ImageSnapshot>("images", setSnapshot);
   }, []);
 
   async function downloadModel(profile: string): Promise<void> {

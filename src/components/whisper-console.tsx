@@ -6,6 +6,7 @@ import { SectionCard } from "./section-card";
 import { cn } from "@/lib/cn";
 import type { WhisperJob, WhisperSnapshot } from "@/lib/whisper";
 import { WHISPER_MODELS, whisperTranscriptUrl } from "@/lib/whisper";
+import { subscribeApplianceEvent } from "@/lib/appliance-events";
 
 type Status = "idle" | "working" | "error";
 
@@ -51,10 +52,7 @@ export function WhisperConsole({ initialSnapshot }: { initialSnapshot: WhisperSn
   }
 
   useEffect(() => {
-    const source = new EventSource("/api/events?topics=whisper");
-    source.addEventListener("whisper", (event) => setSnapshot(JSON.parse((event as MessageEvent).data) as WhisperSnapshot));
-    source.onerror = () => void refresh().catch(() => undefined);
-    return () => source.close();
+    return subscribeApplianceEvent<WhisperSnapshot>("whisper", setSnapshot);
   }, []);
 
   async function submit(formData: FormData): Promise<void> {

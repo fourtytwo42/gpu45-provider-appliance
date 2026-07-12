@@ -7,6 +7,7 @@ import type { TtsAudiobookJob, TtsModel, TtsPresentationJob, TtsSnapshot, TtsSyn
 import { ttsAudiobookAudioUrl, ttsPresentationOutputUrl, ttsPresentationSlideAudioUrl, ttsSampleUrl, ttsSynthesisAudioUrl } from "@/lib/tts";
 import { cn } from "@/lib/cn";
 import type { PocketTtsSnapshot } from "@/lib/pocket-tts";
+import { subscribeApplianceEvent } from "@/lib/appliance-events";
 
 type Status = "idle" | "working" | "error";
 const AUDIOBOOK_CHUNKS_PER_PAGE = 8;
@@ -179,18 +180,10 @@ export function TtsConsole({ initialSnapshot, section = "speech" }: { initialSna
   }
 
   useEffect(() => {
-    const source = new EventSource("/api/events?topics=tts,pocket-tts");
-    source.addEventListener("tts", (event) => {
-      applySnapshot(JSON.parse((event as MessageEvent).data) as TtsSnapshot);
-    });
-    source.addEventListener("pocket-tts", (event) => {
-      setPocket(JSON.parse((event as MessageEvent).data) as PocketTtsSnapshot);
-    });
-    source.onerror = () => {
-      void Promise.all([refresh(), refreshPocket()]).catch(() => undefined);
-    };
-    return () => source.close();
-  }, [applySnapshot, refresh, refreshPocket]);
+    const tts = subscribeApplianceEvent<TtsSnapshot>("tts", applySnapshot);
+    const pocketTts = subscribeApplianceEvent<PocketTtsSnapshot>("pocket-tts", setPocket);
+    return () => { tts(); pocketTts(); };
+  }, [applySnapshot]);
 
   async function createVoice(formData: FormData): Promise<void> {
     await run(async () => {

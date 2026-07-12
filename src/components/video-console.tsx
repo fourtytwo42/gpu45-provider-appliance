@@ -6,6 +6,7 @@ import { SectionCard } from "./section-card";
 import { cn } from "@/lib/cn";
 import type { VideoJob, VideoProfile, VideoSnapshot } from "@/lib/video";
 import { videoOutputUrl } from "@/lib/video";
+import { subscribeApplianceEvent } from "@/lib/appliance-events";
 
 type RunState = "idle" | "working" | "error";
 const DEFAULT_NEGATIVE_PROMPT = "abstract colors, smoke only, overexposed, blown out highlights, blurry, low quality, distorted subject, missing subject, text, watermark, painting, cartoon";
@@ -80,10 +81,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
   }
 
   useEffect(() => {
-    const source = new EventSource("/api/events?topics=video");
-    source.addEventListener("video", (event) => setSnapshot(JSON.parse((event as MessageEvent).data) as VideoSnapshot));
-    source.onerror = () => void refresh().catch(() => undefined);
-    return () => source.close();
+    return subscribeApplianceEvent<VideoSnapshot>("video", setSnapshot);
   }, []);
 
   async function downloadModel(profile: string): Promise<void> {
