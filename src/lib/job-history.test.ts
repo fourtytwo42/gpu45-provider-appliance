@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { readPayloadRows } from "./job-history";
+import { normalizeStoredAudiobookJob, readPayloadRows } from "./job-history";
+import type { TtsAudiobookJob } from "./tts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -23,5 +24,10 @@ describe("readPayloadRows", () => {
 
   it("returns an empty history when a service database is absent", () => {
     expect(readPayloadRows("/missing/gpu45/jobs.db", "SELECT payload_json FROM jobs")).toEqual([]);
+  });
+
+  it("normalizes migrated audiobook parents without embedded chunks", () => {
+    const job = { id: "book", items_truncated: undefined, chunks: undefined } as unknown as TtsAudiobookJob;
+    expect(normalizeStoredAudiobookJob(job)).toMatchObject({ chunks: [], items_truncated: true });
   });
 });

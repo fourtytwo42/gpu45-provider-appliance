@@ -44,6 +44,14 @@ function readJsonArray<T>(filePath: string): T[] {
   }
 }
 
+export function normalizeStoredAudiobookJob(job: TtsAudiobookJob): TtsAudiobookJob {
+  return { ...job, chunks: job.chunks ?? [], items_truncated: job.items_truncated ?? !job.chunks };
+}
+
+export function normalizeStoredPresentationJob(job: TtsPresentationJob): TtsPresentationJob {
+  return { ...job, slides: job.slides ?? [], items_truncated: job.items_truncated ?? !job.slides };
+}
+
 export function readStoredJobHistory(): StoredJobHistory {
   const ttsDb = process.env.GPU45_TTS_JOB_DB ?? "/models/qwen3-tts/api_data/jobs.db";
   const tts = <T>(store: string) => readPayloadRows<T>(ttsDb, "SELECT payload_json FROM records WHERE store_name=? ORDER BY position DESC LIMIT 250", [store]);
@@ -53,8 +61,8 @@ export function readStoredJobHistory(): StoredJobHistory {
       voiceJobs: tts<TtsVoiceJob>("voice_jobs"),
       models: tts<TtsModel>("models"),
       synthesisJobs: tts<TtsSynthesisJob>("synthesis_jobs"),
-      audiobookJobs: tts<TtsAudiobookJob>("audiobook_jobs"),
-      presentationJobs: tts<TtsPresentationJob>("presentation_jobs"),
+      audiobookJobs: tts<TtsAudiobookJob>("audiobook_jobs").map(normalizeStoredAudiobookJob),
+      presentationJobs: tts<TtsPresentationJob>("presentation_jobs").map(normalizeStoredPresentationJob),
     },
     pocketTts: readJsonArray<PocketTtsJob>(process.env.GPU45_POCKET_TTS_JOBS ?? "/models/pocket-tts/data/jobs.json"),
     images: readPayloadRows<ImageJob>(process.env.GPU45_IMAGE_JOB_DB ?? "/models/image-gen/jobs.db", "SELECT payload_json FROM jobs ORDER BY position DESC LIMIT 250"),
