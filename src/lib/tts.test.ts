@@ -8,7 +8,7 @@ afterEach(() => {
 describe("tts client", () => {
   it("collects a healthy TTS snapshot", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.endsWith("/snapshot")) return Response.json({
+      if (url.endsWith("/snapshot?view=summary")) return Response.json({
         voices: [{ id: "voice-1", name: "Narrator", instruct: "Warm", language: "English", created_at: "now" }],
         voiceJobs: [],
         models: [{ id: "model-1", name: "Narrator clone", voice_id: "voice-1", status: "ready", created_at: "now" }],

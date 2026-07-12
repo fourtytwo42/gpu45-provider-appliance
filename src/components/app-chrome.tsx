@@ -75,15 +75,11 @@ function StatusBar({ initial, onJobs, onMenu, jobs }: { initial: LiveTelemetry; 
   const [resources, setResources] = useState<ResourceState | null>(null);
   const [telemetryOpen, setTelemetryOpen] = useState(false);
   useEffect(() => {
-    const source = new EventSource("/api/live");
+    const source = new EventSource("/api/events?topics=telemetry,resources");
     source.addEventListener("telemetry", (event) => { setLive(JSON.parse((event as MessageEvent).data) as LiveTelemetry); setConnected(true); });
+    source.addEventListener("resources", (event) => { setResources(JSON.parse((event as MessageEvent).data) as ResourceState); });
     source.onerror = () => setConnected(false);
     return () => source.close();
-  }, []);
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => { try { const response = await fetch("/api/resources/state", { cache: "no-store" }); if (response.ok && !cancelled) setResources(await response.json() as ResourceState); } catch { if (!cancelled) setResources(null); } };
-    void load(); const timer = window.setInterval(() => void load(), 5000); return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
   const s = live.system; const provider = live.provider; const owner = resources?.owner?.kind ?? ((jobs?.summary.active ?? 0) > 0 ? "working" : "idle");
   return <header className="sticky top-0 z-30 border-b border-[#1b2736] bg-[#0b1119]/95 backdrop-blur">
@@ -120,7 +116,7 @@ function CommandPalette({ close }: { close: () => void }) {
 export function AppChrome({ children, version, initialTelemetry }: { children: React.ReactNode; version: ApplianceVersion; initialTelemetry: LiveTelemetry }) {
   const pathname = usePathname(); const [mobileNav, setMobileNav] = useState(false); const [jobsOpen, setJobsOpen] = useState(false); const [commandsOpen, setCommandsOpen] = useState(false); const [accountOpen, setAccountOpen] = useState(false); const [jobs, setJobs] = useState<JobsPayload | null>(null);
   useEffect(() => { const listener = () => setCommandsOpen(true); window.addEventListener("gpu45:commands", listener); const key = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setCommandsOpen(true); } }; window.addEventListener("keydown", key); return () => { window.removeEventListener("gpu45:commands", listener); window.removeEventListener("keydown", key); }; }, []);
-  useEffect(() => { let cancelled = false; const load = async () => { try { const response = await fetch("/api/jobs", { cache: "no-store" }); if (response.ok && !cancelled) setJobs(await response.json() as JobsPayload); } catch { if (!cancelled) setJobs(null); } }; void load(); const timer = window.setInterval(() => void load(), 5000); return () => { cancelled = true; window.clearInterval(timer); }; }, []);
+  useEffect(() => { const source = new EventSource("/api/events?topics=jobs"); source.addEventListener("jobs", (event) => setJobs(JSON.parse((event as MessageEvent).data) as JobsPayload)); return () => source.close(); }, []);
   if (pathname === "/login") return children;
   const drawerJobs = jobs?.jobs.filter((job) => ["queued", "running", "paused", "failed", "needs_review"].includes(job.status)).slice(0, 8) ?? [];
   return <div className="min-h-screen overflow-x-hidden bg-[#070a0f] text-[#e6edf5]">

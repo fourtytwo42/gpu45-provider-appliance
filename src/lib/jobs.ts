@@ -1,7 +1,7 @@
 import { prisma } from "./db";
 import { deleteDownloadJob } from "./downloads";
 import { deleteImageJob, getImageSnapshot } from "./images";
-import { deleteTtsAudiobook, deleteTtsModel, deleteTtsPresentation, deleteTtsSynthesisJob, deleteTtsVoiceJob, getTtsSnapshot, stopTtsAudiobook, stopTtsPresentation } from "./tts";
+import { deleteTtsAudiobook, deleteTtsModel, deleteTtsPresentation, deleteTtsSynthesisJob, deleteTtsVoiceJob, getTtsAudiobook, getTtsPresentation, getTtsSnapshot, stopTtsAudiobook, stopTtsPresentation } from "./tts";
 import { cancelVideoJob, deleteVideoJob, getVideoSnapshot } from "./video";
 import { deleteWhisperJob, getWhisperSnapshot } from "./whisper";
 import { deletePocketTtsJob, getPocketTtsSnapshot } from "./pocket-tts";
@@ -120,6 +120,34 @@ export async function getUnifiedJobs(): Promise<{ jobs: UnifiedJob[]; summary: J
   normalizedJobs.sort((a, b) => sortDate(b).localeCompare(sortDate(a)));
   const summary = normalizedJobs.reduce<JobsSummary>((acc, job) => { acc.total += 1; if (job.status === "queued") acc.queued += 1; if (job.status === "failed") acc.failed += 1; if (job.status === "completed") acc.completed += 1; if (isActive(job.status)) acc.active += 1; return acc; }, { total: 0, active: 0, queued: 0, failed: 0, completed: 0 });
   return { jobs: normalizedJobs, summary };
+}
+
+export async function getUnifiedJob(id: string): Promise<UnifiedJob | null> {
+  const { jobs } = await getUnifiedJobs();
+  return jobs.find((job) => job.id === id) ?? null;
+}
+
+export function paginateItems<T>(items: T[], cursor = 0, limit = 50): {
+  items: T[];
+  nextCursor: number | null;
+  total: number;
+} {
+  const offset = Math.max(0, Math.floor(Number.isFinite(cursor) ? cursor : 0));
+  const pageSize = Math.max(1, Math.min(100, Math.floor(Number.isFinite(limit) ? limit : 50)));
+  const page = items.slice(offset, offset + pageSize);
+  return { items: page, nextCursor: offset + page.length < items.length ? offset + page.length : null, total: items.length };
+}
+
+export async function getUnifiedJobItems(id: string, cursor = 0, limit = 50): Promise<{
+  items: unknown[];
+  nextCursor: number | null;
+  total: number;
+}> {
+  const [kind, sourceId] = id.split(":", 2);
+  let items: unknown[] = [];
+  if (kind === "audiobook" && sourceId) items = (await getTtsAudiobook(sourceId)).chunks;
+  if (kind === "presentation" && sourceId) items = (await getTtsPresentation(sourceId)).slides;
+  return paginateItems(items, cursor, limit);
 }
 
 export async function performUnifiedJobAction(id: string, action: UnifiedJobAction): Promise<{ ok: boolean; message: string }> {

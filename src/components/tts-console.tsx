@@ -73,6 +73,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const [activeSynthesisId, setActiveSynthesisId] = useState<string | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState<string | null>(null);
   const [audiobookChunkPages, setAudiobookChunkPages] = useState<Record<string, number>>({});
   const [audiobookEngine, setAudiobookEngine] = useState<"qwen" | "pocket">("qwen");
   const [presentationEngine, setPresentationEngine] = useState<"qwen" | "pocket">("qwen");
@@ -95,14 +96,11 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
       .slice()
       .sort((a, b) => String(b.updated_at ?? b.created_at).localeCompare(String(a.updated_at ?? a.created_at)))
   ), [snapshot.audiobookJobs]);
-  const activeAudiobookJobs = useMemo(() => audiobookJobs.filter((job) => job.status === "queued" || job.status === "running"), [audiobookJobs]);
   const presentationJobs = useMemo(() => (
     snapshot.presentationJobs
       .slice()
       .sort((a, b) => String(b.updated_at ?? b.created_at).localeCompare(String(a.updated_at ?? a.created_at)))
   ), [snapshot.presentationJobs]);
-  const activePresentationJobs = useMemo(() => presentationJobs.filter((job) => job.status === "queued" || job.status === "running"), [presentationJobs]);
-  const activePocketJobs = useMemo(() => pocket.jobs.filter((job) => job.status === "queued" || job.status === "running"), [pocket.jobs]);
 
   const reconcileSynthesisStatus = useCallback((next: TtsSnapshot, id = activeSynthesisId): void => {
     if (!id) return;
@@ -118,12 +116,47 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
     }
   }, [activeSynthesisId]);
 
+  const mergeSnapshotDetails = useCallback((current: TtsSnapshot, next: TtsSnapshot): TtsSnapshot => ({
+    ...next,
+    audiobookJobs: next.audiobookJobs.map((job) => {
+      if (!job.items_truncated) return job;
+      const loaded = current.audiobookJobs.find((item) => item.id === job.id && !item.items_truncated);
+      return loaded ? { ...job, chunks: loaded.chunks, items_truncated: false } : job;
+    }),
+    presentationJobs: next.presentationJobs.map((job) => {
+      if (!job.items_truncated) return job;
+      const loaded = current.presentationJobs.find((item) => item.id === job.id && !item.items_truncated);
+      return loaded ? { ...job, slides: loaded.slides, items_truncated: false } : job;
+    }),
+  }), []);
+
+  const applySnapshot = useCallback((next: TtsSnapshot, activeId = activeSynthesisId): void => {
+    setSnapshot((current) => mergeSnapshotDetails(current, next));
+    reconcileSynthesisStatus(next, activeId);
+  }, [activeSynthesisId, mergeSnapshotDetails, reconcileSynthesisStatus]);
+
   const refresh = useCallback(async (activeId = activeSynthesisId): Promise<void> => {
     const response = await fetch("/api/tts", { cache: "no-store" });
     const next = await response.json() as TtsSnapshot;
-    setSnapshot(next);
-    reconcileSynthesisStatus(next, activeId);
-  }, [activeSynthesisId, reconcileSynthesisStatus]);
+    applySnapshot(next, activeId);
+  }, [activeSynthesisId, applySnapshot]);
+
+  const loadJobDetail = useCallback(async (kind: "audiobook" | "presentation", id: string): Promise<void> => {
+    setLoadingDetail(`${kind}:${id}`);
+    try {
+      const response = await fetch(`/api/tts?kind=${kind}&id=${encodeURIComponent(id)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(await response.text());
+      const detail = await response.json() as TtsAudiobookJob | TtsPresentationJob;
+      setSnapshot((current) => kind === "audiobook"
+        ? { ...current, audiobookJobs: current.audiobookJobs.map((job) => job.id === id ? detail as TtsAudiobookJob : job) }
+        : { ...current, presentationJobs: current.presentationJobs.map((job) => job.id === id ? detail as TtsPresentationJob : job) });
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Could not load job details.");
+    } finally {
+      setLoadingDetail(null);
+    }
+  }, []);
 
   const refreshPocket = useCallback(async (): Promise<void> => {
     const response = await fetch("/api/tts/pocket", { cache: "no-store" });
@@ -144,28 +177,18 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
   }
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
-
-  useEffect(() => {
-    if (activeSynthesisJobs.length === 0 && activeAudiobookJobs.length === 0 && activePresentationJobs.length === 0) return undefined;
-    const timer = window.setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [activeSynthesisJobs.length, activeAudiobookJobs.length, activePresentationJobs.length, refresh]);
-
-  useEffect(() => {
-    const initial = window.setTimeout(() => void refreshPocket().catch(() => undefined), 0);
-    const timer = window.setInterval(() => void refreshPocket().catch(() => undefined), activePocketJobs.length > 0 ? 1000 : 5000);
-    return () => {
-      window.clearTimeout(initial);
-      window.clearInterval(timer);
+    const source = new EventSource("/api/events?topics=tts,pocket-tts");
+    source.addEventListener("tts", (event) => {
+      applySnapshot(JSON.parse((event as MessageEvent).data) as TtsSnapshot);
+    });
+    source.addEventListener("pocket-tts", (event) => {
+      setPocket(JSON.parse((event as MessageEvent).data) as PocketTtsSnapshot);
+    });
+    source.onerror = () => {
+      void Promise.all([refresh(), refreshPocket()]).catch(() => undefined);
     };
-  }, [activePocketJobs.length, refreshPocket]);
+    return () => source.close();
+  }, [applySnapshot, refresh, refreshPocket]);
 
   async function createVoice(formData: FormData): Promise<void> {
     await run(async () => {
@@ -675,6 +698,17 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                 </div>
                 <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400"><span>{job.progress_label}</span><span className="flex items-center gap-3"><span>{audiobookProgressValue(job).toFixed(1)}%</span>{canStop ? <span className="inline-flex items-center gap-1 text-cyan-200"><Clock className="h-3.5 w-3.5" />ETA {formatEta(job.eta_seconds, true)}</span> : null}</span></div>
                 {job.error ? <p className="mt-2 text-sm text-red-200">{job.error}</p> : null}
+                {job.items_truncated ? (
+                  <button
+                    type="button"
+                    disabled={loadingDetail === `audiobook:${job.id}`}
+                    className="mt-3 inline-flex items-center gap-2 border border-cyan-400/30 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-400/10 disabled:opacity-50"
+                    onClick={() => void loadJobDetail("audiobook", job.id)}
+                  >
+                    <BookOpen className="h-3.5 w-3.5" />
+                    {loadingDetail === `audiobook:${job.id}` ? "Loading chunks..." : `Load ${job.total_chunks} chunks`}
+                  </button>
+                ) : null}
                 {hasAudio ? <audio className="mt-3 w-full" controls src={ttsAudiobookAudioUrl(job.id, { version: audioVersion })} /> : null}
                 {hasAudio ? (
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border border-white/10 bg-black/20 px-2 py-2 text-xs text-slate-300">
@@ -784,6 +818,17 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                 </div>
                 <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400"><span>{job.progress_label}</span><span className="flex items-center gap-3"><span>{presentationProgressValue(job).toFixed(1)}%</span>{canStop ? <span className="inline-flex items-center gap-1 text-violet-200"><Clock className="h-3.5 w-3.5" />ETA {formatEta(job.eta_seconds, true)}</span> : null}</span></div>
                 {job.error ? <p className="mt-2 text-sm text-red-200">{job.error}</p> : null}
+                {job.items_truncated ? (
+                  <button
+                    type="button"
+                    disabled={loadingDetail === `presentation:${job.id}`}
+                    className="mt-3 inline-flex items-center gap-2 border border-violet-400/30 px-3 py-2 text-xs text-violet-100 hover:bg-violet-400/10 disabled:opacity-50"
+                    onClick={() => void loadJobDetail("presentation", job.id)}
+                  >
+                    <Play className="h-3.5 w-3.5" />
+                    {loadingDetail === `presentation:${job.id}` ? "Loading slides..." : `Load ${job.total_slides} slides`}
+                  </button>
+                ) : null}
                 {narratedSlides.length > 0 ? (
                   <div className="mt-3 grid gap-2 md:grid-cols-2">
                     {narratedSlides.map((slide) => (

@@ -100,6 +100,7 @@ export type TtsAudiobookJob = {
   stitched_audio_url?: string;
   text_chars: number;
   chunks: TtsAudiobookChunk[];
+  items_truncated?: boolean;
   error?: string;
   created_at: string;
   started_at?: string;
@@ -147,6 +148,7 @@ export type TtsPresentationJob = {
   output_path?: string;
   output_bytes?: number;
   slides: TtsPresentationSlide[];
+  items_truncated?: boolean;
   error?: string;
   created_at: string;
   started_at?: string;
@@ -220,14 +222,14 @@ export async function getTtsSnapshot(): Promise<TtsSnapshot> {
   if (snapshotRequest) return snapshotRequest;
   snapshotRequest = (async () => {
     try {
-      const payload = await fetchJson<Omit<TtsSnapshot, "healthy" | "serviceUrl">>("/snapshot", undefined, false);
+      const payload = await fetchJson<Omit<TtsSnapshot, "healthy" | "serviceUrl">>("/snapshot?view=summary", undefined, false);
       const value: TtsSnapshot = { healthy: true, serviceUrl, ...payload };
       snapshotCache = { value, expiresAt: Date.now() + 2000 };
       return value;
     } catch (error) {
       if (snapshotCache) return { ...snapshotCache.value, sleeping: true };
       try {
-        const payload = await fetchJson<Omit<TtsSnapshot, "healthy" | "serviceUrl">>("/snapshot", undefined, true);
+        const payload = await fetchJson<Omit<TtsSnapshot, "healthy" | "serviceUrl">>("/snapshot?view=summary", undefined, true);
         const value: TtsSnapshot = { healthy: true, sleeping: false, serviceUrl, ...payload };
         snapshotCache = { value, expiresAt: Date.now() + 2000 };
         return value;
@@ -267,6 +269,10 @@ export async function createTtsAudiobook(formData: FormData): Promise<TtsAudiobo
   return await response.json() as TtsAudiobookJob;
 }
 
+export async function getTtsAudiobook(id: string): Promise<TtsAudiobookJob> {
+  return await fetchJson<TtsAudiobookJob>(`/audiobooks/${encodeURIComponent(id)}`, undefined, true);
+}
+
 export async function stopTtsAudiobook(id: string): Promise<TtsAudiobookJob> {
   return await fetchJson<TtsAudiobookJob>(`/audiobooks/${encodeURIComponent(id)}/stop`, { method: "POST" });
 }
@@ -299,6 +305,10 @@ export async function createTtsPresentation(formData: FormData): Promise<TtsPres
   }, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
   return await response.json() as TtsPresentationJob;
+}
+
+export async function getTtsPresentation(id: string): Promise<TtsPresentationJob> {
+  return await fetchJson<TtsPresentationJob>(`/presentations/${encodeURIComponent(id)}`, undefined, true);
 }
 
 export async function stopTtsPresentation(id: string): Promise<TtsPresentationJob> {

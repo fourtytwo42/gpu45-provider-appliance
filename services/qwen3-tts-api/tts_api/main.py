@@ -196,9 +196,9 @@ def health():
 
 
 @app.get("/snapshot")
-def snapshot():
-    """Return the complete console snapshot with one store-lock acquisition."""
-    return store.load_snapshot()
+def snapshot(view: str = "full"):
+    """Return a compact console summary or the backward-compatible full snapshot."""
+    return store.load_snapshot(include_items=view != "summary")
 
 
 def _run_create_voice_job(job_id: str, body: CreateVoiceBody) -> None:
