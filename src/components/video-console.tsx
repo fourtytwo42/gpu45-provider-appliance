@@ -80,10 +80,10 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
   }
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, 5000);
-    return () => window.clearInterval(timer);
+    const source = new EventSource("/api/events?topics=video");
+    source.addEventListener("video", (event) => setSnapshot(JSON.parse((event as MessageEvent).data) as VideoSnapshot));
+    source.onerror = () => void refresh().catch(() => undefined);
+    return () => source.close();
   }, []);
 
   async function downloadModel(profile: string): Promise<void> {

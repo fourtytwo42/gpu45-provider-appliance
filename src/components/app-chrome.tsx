@@ -23,16 +23,16 @@ const areas = [
   { href: "/", label: "Home", icon: Home, match: ["/"] },
   { href: "/jobs", label: "Work", icon: BriefcaseBusiness, match: ["/jobs", "/outputs"] },
   { href: "/models", label: "Models", icon: Bot, match: ["/models", "/benchmarks", "/keys"] },
-  { href: "/tts", label: "Studio", icon: Sparkles, match: ["/tts", "/whisper", "/images", "/video", "/research"] },
-  { href: "/settings", label: "System", icon: Settings2, match: ["/settings", "/timeline", "/logs"] },
+  { href: "/studio/speech", label: "Studio", icon: Sparkles, match: ["/studio", "/tts", "/whisper", "/images", "/video", "/research"] },
+  { href: "/settings", label: "System", icon: Settings2, match: ["/system", "/settings", "/timeline", "/logs"] },
 ];
 
 const contextLinks: Record<string, Array<{ href: string; label: string }>> = {
   Home: [{ href: "/", label: "Command center" }],
   Work: [{ href: "/jobs", label: "Jobs" }, { href: "/outputs", label: "Outputs" }],
   Models: [{ href: "/models", label: "Library" }, { href: "/benchmarks", label: "Benchmarks" }, { href: "/keys", label: "API access" }],
-  Studio: [{ href: "/tts", label: "Audio" }, { href: "/whisper", label: "Transcription" }, { href: "/images", label: "Images" }, { href: "/video", label: "Video" }, { href: "/research", label: "Research" }],
-  System: [{ href: "/settings", label: "Health & settings" }, { href: "/timeline", label: "Timeline" }, { href: "/logs", label: "Logs" }],
+  Studio: [{ href: "/studio/speech", label: "Speech" }, { href: "/studio/audiobooks", label: "Audiobooks" }, { href: "/studio/presentations", label: "Presentations" }, { href: "/studio/voices", label: "Voice Library" }, { href: "/studio/training", label: "Training" }, { href: "/whisper", label: "Transcription" }, { href: "/images", label: "Images" }, { href: "/video", label: "Video" }, { href: "/research", label: "Research" }],
+  System: [{ href: "/settings", label: "Health & controls" }, { href: "/timeline", label: "Timeline" }, { href: "/logs", label: "Logs" }],
 };
 
 function isPathActive(pathname: string, href: string) { return href === "/" ? pathname === "/" : pathname.startsWith(href); }

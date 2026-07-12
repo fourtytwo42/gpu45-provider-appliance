@@ -81,10 +81,10 @@ export function ImageConsole({ initialSnapshot }: { initialSnapshot: ImageSnapsh
   }
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, 4000);
-    return () => window.clearInterval(timer);
+    const source = new EventSource("/api/events?topics=images");
+    source.addEventListener("images", (event) => setSnapshot(JSON.parse((event as MessageEvent).data) as ImageSnapshot));
+    source.onerror = () => void refresh().catch(() => undefined);
+    return () => source.close();
   }, []);
 
   async function downloadModel(profile: string): Promise<void> {

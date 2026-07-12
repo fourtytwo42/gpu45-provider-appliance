@@ -51,10 +51,10 @@ export function WhisperConsole({ initialSnapshot }: { initialSnapshot: WhisperSn
   }
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, 4000);
-    return () => window.clearInterval(timer);
+    const source = new EventSource("/api/events?topics=whisper");
+    source.addEventListener("whisper", (event) => setSnapshot(JSON.parse((event as MessageEvent).data) as WhisperSnapshot));
+    source.onerror = () => void refresh().catch(() => undefined);
+    return () => source.close();
   }, []);
 
   async function submit(formData: FormData): Promise<void> {

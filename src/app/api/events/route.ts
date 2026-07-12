@@ -1,15 +1,18 @@
 import { getUnifiedJobs } from "@/lib/jobs";
+import { getImageSnapshot } from "@/lib/images";
 import { collectLiveTelemetry } from "@/lib/live-telemetry";
 import { getPocketTtsSnapshot } from "@/lib/pocket-tts";
 import { getResourceState } from "@/lib/resource-manager";
 import { getTtsSnapshot } from "@/lib/tts";
+import { getVideoSnapshot } from "@/lib/video";
+import { getWhisperSnapshot } from "@/lib/whisper";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-type Topic = "telemetry" | "provider" | "resources" | "jobs" | "tts" | "pocket-tts";
+type Topic = "telemetry" | "provider" | "resources" | "jobs" | "tts" | "pocket-tts" | "images" | "video" | "whisper";
 const DEFAULT_TOPICS: Topic[] = ["telemetry", "resources", "jobs"];
-const VALID_TOPICS = new Set<Topic>([...DEFAULT_TOPICS, "provider", "tts", "pocket-tts"]);
+const VALID_TOPICS = new Set<Topic>([...DEFAULT_TOPICS, "provider", "tts", "pocket-tts", "images", "video", "whisper"]);
 
 function requestedTopics(request: Request): Topic[] {
   const values = new URL(request.url).searchParams.get("topics")?.split(",") ?? DEFAULT_TOPICS;
@@ -23,7 +26,10 @@ async function readTopic(topic: Topic): Promise<unknown> {
   if (topic === "resources") return getResourceState();
   if (topic === "jobs") return getUnifiedJobs();
   if (topic === "tts") return getTtsSnapshot();
-  return getPocketTtsSnapshot();
+  if (topic === "pocket-tts") return getPocketTtsSnapshot();
+  if (topic === "images") return getImageSnapshot();
+  if (topic === "video") return getVideoSnapshot();
+  return getWhisperSnapshot();
 }
 
 export async function GET(request: Request): Promise<Response> {
