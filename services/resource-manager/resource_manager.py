@@ -22,7 +22,14 @@ TOKEN = os.environ.get("GPU45_RESOURCE_MANAGER_TOKEN", "")
 HOST = os.environ.get("GPU45_RESOURCE_MANAGER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("GPU45_RESOURCE_MANAGER_PORT", "8040"))
 LEASE_TIMEOUT = int(os.environ.get("GPU45_RESOURCE_LEASE_TIMEOUT", "90"))
+WORKER_IDLE_SECONDS = int(os.environ.get("GPU45_WORKER_IDLE_SECONDS", "120"))
 LOCK = threading.RLock()
+WORKER_SERVICES = {
+    "tts": "qwen3-tts-api.service",
+    "image": "gpu45-image-api.service",
+    "video": "wan2-video-api.service",
+    "whisper": "gpu45-whisper-api.service",
+}
 
 
 def now() -> str:
@@ -87,6 +94,18 @@ def service_status(service: str) -> str:
         return "unknown"
 
 
+def service_memory(service: str) -> int | None:
+    try:
+        result = subprocess.run(
+            ["systemctl", "show", service, "--property=MemoryCurrent", "--value"],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        value = int(result.stdout.strip())
+        return value if value >= 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def backend_ready() -> bool:
     try:
         with urllib.request.urlopen("http://127.0.0.1:30000/v1/models", timeout=2) as response:
@@ -101,6 +120,73 @@ def set_transition(db: sqlite3.Connection, status: str | None) -> None:
         return
     db.execute("INSERT OR REPLACE INTO state(key,value) VALUES('transition',?)", (status,))
     db.execute("INSERT OR REPLACE INTO state(key,value) VALUES('transition_started_at',?)", (now(),))
+
+
+def touch_worker(db: sqlite3.Connection, kind: str) -> dict[str, object]:
+    if kind not in WORKER_SERVICES:
+        raise KeyError(kind)
+    service = WORKER_SERVICES[kind]
+    stamp = now()
+    db.execute("INSERT OR REPLACE INTO state(key,value) VALUES(?,?)", (f"worker:{kind}:last_activity", stamp))
+    if not service_active(service):
+        service_action("start", service)
+        event(db, "worker.started", None, None, kind=kind, service=service)
+    return worker_snapshot(db, kind)
+
+
+def worker_snapshot(db: sqlite3.Connection, kind: str) -> dict[str, object]:
+    service = WORKER_SERVICES[kind]
+    row = db.execute("SELECT value FROM state WHERE key=?", (f"worker:{kind}:last_activity",)).fetchone()
+    last_activity = row[0] if row else None
+    idle_deadline = None
+    if last_activity:
+        try:
+            idle_deadline = datetime.fromtimestamp(
+                datetime.fromisoformat(last_activity).timestamp() + WORKER_IDLE_SECONDS,
+                timezone.utc,
+            ).isoformat()
+        except (TypeError, ValueError):
+            idle_deadline = None
+    return {
+        "kind": kind,
+        "service": service,
+        "workerStatus": service_status(service),
+        "loadedModel": None,
+        "idleDeadline": idle_deadline,
+        "memoryBytes": service_memory(service),
+        "heartbeatAt": last_activity,
+    }
+
+
+def reap_idle_workers_once(now_epoch: float | None = None) -> None:
+    with LOCK, connect() as db:
+        current_epoch = now_epoch if now_epoch is not None else time.time()
+        for kind, service in WORKER_SERVICES.items():
+            if not service_active(service):
+                continue
+            lease = db.execute(
+                "SELECT 1 FROM leases WHERE kind=? AND status IN ('active','queued') LIMIT 1", (kind,)
+            ).fetchone()
+            if lease:
+                continue
+            row = db.execute("SELECT value FROM state WHERE key=?", (f"worker:{kind}:last_activity",)).fetchone()
+            if not row:
+                db.execute("INSERT OR REPLACE INTO state(key,value) VALUES(?,?)", (f"worker:{kind}:last_activity", now()))
+                continue
+            try:
+                idle_for = current_epoch - datetime.fromisoformat(row[0]).timestamp()
+            except (TypeError, ValueError):
+                idle_for = 0
+            if idle_for < WORKER_IDLE_SECONDS:
+                continue
+            service_action("stop", service)
+            event(db, "worker.idle_stopped", None, None, kind=kind, service=service, idleSeconds=round(idle_for))
+
+
+def worker_reaper() -> None:
+    while True:
+        time.sleep(10)
+        reap_idle_workers_once()
 
 
 def service_action(action: str, service: str) -> None:
@@ -271,6 +357,7 @@ def state() -> dict[str, object]:
                 "video": service_status("wan2-video-api.service"),
                 "whisper": service_status("gpu45-whisper-api.service"),
             },
+            "workers": {kind: worker_snapshot(db, kind) for kind in WORKER_SERVICES},
         }
 
 
@@ -339,6 +426,11 @@ class Handler(BaseHTTPRequestHandler):
                     })
                     return
                 parts = path.strip("/").split("/")
+                if len(parts) == 4 and parts[:2] == ["v1", "workers"] and parts[3] == "touch":
+                    kind = parts[2]
+                    if kind not in WORKER_SERVICES:
+                        self.send_json(HTTPStatus.NOT_FOUND, {"error": "unknown worker kind"}); return
+                    self.send_json(HTTPStatus.OK, touch_worker(db, kind)); return
                 if len(parts) == 4 and parts[:2] == ["v1", "leases"]:
                     lease_id, action = parts[2], parts[3]
                     lease = db.execute("SELECT * FROM leases WHERE lease_id=?", (lease_id,)).fetchone()
@@ -362,5 +454,6 @@ if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("GPU45_RESOURCE_MANAGER_TOKEN must be set")
     init_db()
+    threading.Thread(target=worker_reaper, daemon=True, name="gpu45-worker-reaper").start()
     print(f"GPU45 resource manager listening on {HOST}:{PORT}", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

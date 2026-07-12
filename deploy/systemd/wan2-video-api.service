@@ -33,6 +33,10 @@ Environment=PYTHONPATH=/opt/gpu45/current/services/common
 ExecStart=/opt/wan2-video-venv/bin/python -m wan_api
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=60
+KillMode=control-group
+MemoryHigh=26G
+MemoryMax=29G
 
 [Install]
 WantedBy=multi-user.target

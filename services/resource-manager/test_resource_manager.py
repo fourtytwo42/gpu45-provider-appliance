@@ -79,6 +79,42 @@ class ResourceManagerTests(unittest.TestCase):
                 rm.service_action = original_action
             self.assertEqual(db.execute("SELECT value FROM state WHERE key='transition'").fetchone()[0], "restoring")
 
+    def test_idle_worker_stops_without_active_lease(self):
+        with rm.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO state(key,value) VALUES(?,?)",
+                ("worker:image:last_activity", "2000-01-01T00:00:00+00:00"),
+            )
+        stopped = []
+        original_active, original_action = rm.service_active, rm.service_action
+        rm.service_active = lambda service: service == rm.WORKER_SERVICES["image"]
+        rm.service_action = lambda action, service: stopped.append((action, service))
+        try:
+            rm.reap_idle_workers_once(now_epoch=rm.datetime(2026, 1, 1, tzinfo=rm.timezone.utc).timestamp())
+        finally:
+            rm.service_active, rm.service_action = original_active, original_action
+        self.assertEqual(stopped, [("stop", rm.WORKER_SERVICES["image"])])
+
+    def test_active_lease_protects_idle_worker(self):
+        with rm.connect() as db:
+            db.execute(
+                "INSERT INTO leases VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("image", "image", "image", 70, 0, "atomic", "active", rm.now(), rm.now(), rm.now(), None, "{}"),
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO state(key,value) VALUES(?,?)",
+                ("worker:image:last_activity", "2000-01-01T00:00:00+00:00"),
+            )
+        stopped = []
+        original_active, original_action = rm.service_active, rm.service_action
+        rm.service_active = lambda service: service == rm.WORKER_SERVICES["image"]
+        rm.service_action = lambda action, service: stopped.append((action, service))
+        try:
+            rm.reap_idle_workers_once(now_epoch=rm.datetime(2026, 1, 1, tzinfo=rm.timezone.utc).timestamp())
+        finally:
+            rm.service_active, rm.service_action = original_active, original_action
+        self.assertEqual(stopped, [])
+
 
 if __name__ == "__main__":
     unittest.main()

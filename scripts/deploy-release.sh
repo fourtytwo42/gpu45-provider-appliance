@@ -87,6 +87,21 @@ if [[ "$active_port" == "3011" ]]; then
   target_port="3010"
 fi
 
+health_json="$(curl -fsS --max-time 10 "http://127.0.0.1:$active_port/api/health/summary" || true)"
+if [[ -n "$health_json" ]]; then
+  active_jobs="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("jobs",{}).get("active",0))' <<<"$health_json")"
+  if (( active_jobs > 0 )); then
+    echo "Refusing deployment while $active_jobs job(s) are active" >&2
+    exit 1
+  fi
+fi
+source /etc/gpu45/resource-manager.env
+resource_json="$(curl -fsS --max-time 5 -H "Authorization: Bearer $GPU45_RESOURCE_MANAGER_TOKEN" http://127.0.0.1:8040/v1/state || true)"
+if [[ -n "$resource_json" ]] && ! python3 -c 'import json,sys; state=json.load(sys.stdin); raise SystemExit(0 if state.get("owner") is None and not state.get("queue") else 1)' <<<"$resource_json"; then
+  echo "Refusing deployment while the GPU resource manager has active or queued work" >&2
+  exit 1
+fi
+
 if [[ -L "$current_link" && "$(readlink -f "$current_link")" == "$release_dir" ]]; then
   echo "Release $short_commit is already active; refusing to replace its files" >&2
   exit 1
@@ -195,6 +210,7 @@ ln -sfn "$release_dir" "$current_link"
 printf '%s\n' "$target_port" > "$active_port_file"
 chmod 0644 "$active_port_file"
 systemctl restart gpu45-resource-manager.service gpu45-responses-proxy.service gpu45-provider-appliance-worker.service
+systemctl try-restart qwen3-tts-api.service gpu45-image-api.service gpu45-whisper-api.service wan2-video-api.service || true
 
 final_healthy=false
 for _ in $(seq 1 20); do

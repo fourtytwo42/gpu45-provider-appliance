@@ -31,6 +31,17 @@ export type ResourceState = {
   recovery: { reclaimedLeases: number; lastEvent: string | null };
   transition: { status: "releasing" | "restoring" | "starting"; startedAt: string } | null;
   services: Record<string, "active" | "activating" | "deactivating" | "inactive" | "failed" | "unknown">;
+  workers: Record<string, ResourceWorkerState>;
+};
+
+export type ResourceWorkerState = {
+  kind: string;
+  service: string;
+  workerStatus: "active" | "activating" | "deactivating" | "inactive" | "failed" | "unknown";
+  loadedModel: string | null;
+  idleDeadline: string | null;
+  memoryBytes: number | null;
+  heartbeatAt: string | null;
 };
 
 export async function getResourceState(): Promise<ResourceState> {
@@ -55,8 +66,24 @@ export async function getResourceState(): Promise<ResourceState> {
       recovery: { reclaimedLeases: 0, lastEvent: null },
       transition: null,
       services: {},
+      workers: {},
     };
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function touchResourceWorker(kind: "tts" | "image" | "video" | "whisper"): Promise<ResourceWorkerState> {
+  const cfg = getConfig();
+  const response = await fetch(`${cfg.resourceManagerUrl}/v1/workers/${kind}/touch`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      ...(cfg.resourceManagerToken ? { Authorization: `Bearer ${cfg.resourceManagerToken}` } : {}),
+    },
+    body: "{}",
+  });
+  if (!response.ok) throw new Error(`Could not start ${kind} worker: ${response.status}`);
+  return await response.json() as ResourceWorkerState;
 }

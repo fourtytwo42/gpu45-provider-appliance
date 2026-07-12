@@ -8,6 +8,7 @@ Type=simple
 User=root
 Group=root
 EnvironmentFile=/etc/gpu45/resource-manager.env
+Environment=GPU45_WORKER_IDLE_SECONDS=120
 ExecStart=/usr/bin/python3 /opt/gpu45/current/services/resource-manager/resource_manager.py
 Restart=always
 RestartSec=2
@@ -16,6 +17,8 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/gpu45
+MemoryHigh=512M
+MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target
