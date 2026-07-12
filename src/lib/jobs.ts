@@ -1,10 +1,11 @@
 import { prisma } from "./db";
 import { deleteDownloadJob } from "./downloads";
-import { deleteImageJob, getImageSnapshot } from "./images";
-import { deleteTtsAudiobook, deleteTtsModel, deleteTtsPresentation, deleteTtsSynthesisJob, deleteTtsVoiceJob, getTtsAudiobook, getTtsPresentation, getTtsSnapshot, stopTtsAudiobook, stopTtsPresentation } from "./tts";
-import { cancelVideoJob, deleteVideoJob, getVideoSnapshot } from "./video";
-import { deleteWhisperJob, getWhisperSnapshot } from "./whisper";
-import { deletePocketTtsJob, getPocketTtsSnapshot } from "./pocket-tts";
+import { deleteImageJob } from "./images";
+import { deleteTtsAudiobook, deleteTtsModel, deleteTtsPresentation, deleteTtsSynthesisJob, deleteTtsVoiceJob, getTtsAudiobook, getTtsPresentation, stopTtsAudiobook, stopTtsPresentation } from "./tts";
+import { cancelVideoJob, deleteVideoJob } from "./video";
+import { deleteWhisperJob } from "./whisper";
+import { deletePocketTtsJob } from "./pocket-tts";
+import { readStoredJobHistory } from "./job-history";
 
 export type UnifiedJobStatus = "queued" | "running" | "paused" | "unknown" | "completed" | "failed" | "cancelled" | "stopped" | "needs_review";
 export type UnifiedJobKind = "download" | "benchmark" | "tts" | "pocket-tts" | "audiobook" | "whisper" | "image" | "video" | "model-training" | "voice" | "presentation";
@@ -76,15 +77,16 @@ function withActions(job: UnifiedJob): UnifiedJob {
 
 export async function getUnifiedJobs(): Promise<{ jobs: UnifiedJob[]; summary: JobsSummary }> {
   const jobs: UnifiedJob[] = [];
-  const [downloads, benchmarks, tts, pocketTts, images, videos, whisper] = await Promise.all([
+  const [downloads, benchmarks] = await Promise.all([
     prisma.downloadJob.findMany({ orderBy: { updatedAt: "desc" }, take: 50 }).catch(() => []),
     prisma.benchmarkRun.findMany({ orderBy: { createdAt: "desc" }, take: 30 }).catch(() => []),
-    getTtsSnapshot().catch(() => null),
-    getPocketTtsSnapshot().catch(() => null),
-    getImageSnapshot().catch(() => null),
-    getVideoSnapshot().catch(() => null),
-    getWhisperSnapshot().catch(() => null),
   ]);
+  const stored = readStoredJobHistory();
+  const tts = stored.tts;
+  const pocketTts = { jobs: stored.pocketTts };
+  const images = { jobs: stored.images };
+  const videos = { jobs: stored.videos };
+  const whisper = { jobs: stored.whisper };
 
   for (const job of downloads) {
     jobs.push({ id: `download:${job.id}`, sourceId: job.id, kind: "download", title: job.fileName, subtitle: job.repoId, status: normalizeStatus(job.status), progressPercent: Number(job.totalBytes) > 0 ? Math.round((Number(job.bytesDownloaded) / Number(job.totalBytes)) * 1000) / 10 : null, progressLabel: `${Number(job.bytesDownloaded).toLocaleString()} / ${Number(job.totalBytes).toLocaleString()} bytes`, createdAt: job.createdAt.toISOString(), updatedAt: job.updatedAt.toISOString(), error: job.error });

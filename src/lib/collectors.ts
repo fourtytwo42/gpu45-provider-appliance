@@ -453,11 +453,17 @@ async function collectCharts(): Promise<DashboardSnapshot["charts"]> {
     orderBy: { capturedAt: "desc" },
     take: 65000,
   });
-  const values = (kind: string) =>
-    samples.filter((sample) => sample.kind === kind).reverse().map((sample) => ({
+  const values = (kind: string) => {
+    const points = samples.filter((sample) => sample.kind === kind).reverse().map((sample) => ({
       timestamp: sample.capturedAt.toISOString(),
       value: sample.value,
     }));
+    if (points.length <= 180) return points;
+    const stride = Math.ceil(points.length / 180);
+    const reduced = points.filter((_, index) => index % stride === 0);
+    if (reduced.at(-1)?.timestamp !== points.at(-1)?.timestamp) reduced.push(points.at(-1)!);
+    return reduced.slice(-180);
+  };
   const gpuTempEdgeValues = values("gpu_temp_edge");
   const gpuTempJunctionValues = values("gpu_temp_junction");
   const gpuTempMemoryValues = values("gpu_temp_memory");
