@@ -265,6 +265,7 @@ if [[ "$active_port" != "$target_port" ]]; then
 fi
 systemctl disable llama-openai.service || true
 systemctl stop llama-openai.service || true
+systemctl disable qwen3-tts-api.service gpu45-image-api.service gpu45-whisper-api.service wan2-video-api.service || true
 
 mapfile -t old_releases < <(find "$releases_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2-)
 for old_release in "${old_releases[@]:-}"; do
