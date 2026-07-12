@@ -27,6 +27,54 @@ DB_PATH = os.environ.get("GPU45_DB_PATH", "/opt/gpu45-provider-appliance/prisma/
 PROFILE_PATH = os.environ.get("GPU45_PROFILE_PATH", "/etc/gpu45/provider-profile.json")
 PROVIDER_SERVICE = os.environ.get("GPU45_PROVIDER_SERVICE", "llama-openai.service")
 MODEL_REQUEST_LOCK = threading.RLock()
+LLM_IDLE_SECONDS = float(os.environ.get("GPU45_LLM_IDLE_SECONDS", "120"))
+LLM_IDLE_LOCK = threading.Lock()
+LLM_IDLE_TIMER = None
+LLM_IDLE_GENERATION = 0
+
+
+def cancel_llm_idle_unload():
+    global LLM_IDLE_TIMER, LLM_IDLE_GENERATION
+    with LLM_IDLE_LOCK:
+        LLM_IDLE_GENERATION += 1
+        if LLM_IDLE_TIMER is not None:
+            LLM_IDLE_TIMER.cancel()
+            LLM_IDLE_TIMER = None
+
+
+def unload_llm_after_idle(generation):
+    global LLM_IDLE_TIMER
+    with LLM_IDLE_LOCK:
+        if generation != LLM_IDLE_GENERATION:
+            return
+        LLM_IDLE_TIMER = None
+    if not MODEL_REQUEST_LOCK.acquire(blocking=False):
+        with LLM_IDLE_LOCK:
+            if generation == LLM_IDLE_GENERATION:
+                LLM_IDLE_TIMER = threading.Timer(5, unload_llm_after_idle, args=(generation,))
+                LLM_IDLE_TIMER.daemon = True
+                LLM_IDLE_TIMER.start()
+        return
+    try:
+        with LLM_IDLE_LOCK:
+            if generation != LLM_IDLE_GENERATION:
+                return
+        subprocess.run(["systemctl", "stop", PROVIDER_SERVICE], check=False, timeout=30)
+        print(f"stopped {PROVIDER_SERVICE} after {LLM_IDLE_SECONDS:g}s idle", flush=True)
+    finally:
+        MODEL_REQUEST_LOCK.release()
+
+
+def schedule_llm_idle_unload():
+    global LLM_IDLE_TIMER, LLM_IDLE_GENERATION
+    with LLM_IDLE_LOCK:
+        LLM_IDLE_GENERATION += 1
+        generation = LLM_IDLE_GENERATION
+        if LLM_IDLE_TIMER is not None:
+            LLM_IDLE_TIMER.cancel()
+        LLM_IDLE_TIMER = threading.Timer(LLM_IDLE_SECONDS, unload_llm_after_idle, args=(generation,))
+        LLM_IDLE_TIMER.daemon = True
+        LLM_IDLE_TIMER.start()
 
 
 @contextmanager
@@ -802,6 +850,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 if not selected_model:
                     self.send_json(503, {"error": {"message": "No primary model is available", "type": "server_error"}})
                     return
+                cancel_llm_idle_unload()
                 MODEL_REQUEST_LOCK.acquire()
                 lock_acquired = True
                 if path != "/v1/responses":
@@ -907,6 +956,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 MODEL_REQUEST_LOCK.release()
             if resource_lease is not None:
                 resource_lease.release()
+            if inference_request:
+                schedule_llm_idle_unload()
 
     def proxy_upstream_response(self, req, path, request_body, namespace_map, api_key_id, model, requested_model, inference_request):
         with urllib.request.urlopen(req, timeout=600) as resp:
