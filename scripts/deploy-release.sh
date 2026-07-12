@@ -194,9 +194,11 @@ fi
 
 ln -sfn "$release_dir" "$current_link"
 printf '%s\n' "$target_port" > "$active_port_file"
+chmod 0644 "$active_port_file"
 systemctl restart gpu45-responses-proxy.service gpu45-provider-appliance-worker.service
 systemctl stop gpu45-provider-appliance.service || true
 systemctl disable gpu45-provider-appliance.service || true
+systemctl reset-failed gpu45-provider-appliance.service || true
 if [[ "$active_port" != "$target_port" ]]; then
   systemctl stop "gpu45-provider-appliance@$active_port.service" || true
 fi
