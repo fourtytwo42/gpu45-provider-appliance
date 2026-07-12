@@ -197,6 +197,7 @@ systemctl enable gpu45-pocket-tts-api.service
 systemctl restart gpu45-pocket-tts-api.service
 systemctl enable gpu45-resource-manager.service
 systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer gpu45-storage-retention.timer
+systemctl enable "gpu45-provider-appliance@$target_port.service"
 systemctl restart "gpu45-provider-appliance@$target_port.service"
 
 healthy=false
@@ -260,7 +261,10 @@ systemctl disable gpu45-provider-appliance.service || true
 systemctl reset-failed gpu45-provider-appliance.service || true
 if [[ "$active_port" != "$target_port" ]]; then
   systemctl stop "gpu45-provider-appliance@$active_port.service" || true
+  systemctl disable "gpu45-provider-appliance@$active_port.service" || true
 fi
+systemctl disable llama-openai.service || true
+systemctl stop llama-openai.service || true
 
 mapfile -t old_releases < <(find "$releases_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2-)
 for old_release in "${old_releases[@]:-}"; do
