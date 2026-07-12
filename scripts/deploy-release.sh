@@ -8,16 +8,23 @@ released_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 releases_root="/opt/gpu45/releases"
 release_dir="$releases_root/$short_commit"
 current_link="/opt/gpu45/current"
+slots_root="/opt/gpu45/slots"
+shared_root="/opt/gpu45/shared"
 data_dir="/var/lib/gpu45"
 database_path="$data_dir/appliance.db"
 previous_target=""
+active_port_file="/var/lib/gpu45/active-web-port"
+active_port="3010"
+target_port="3011"
+caddy_upstream="/etc/caddy/gpu45-upstream.caddy"
+dependency_root=""
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "deploy-release.sh must run as root" >&2
   exit 1
 fi
 
-mkdir -p "$releases_root" "$data_dir" /etc/gpu45
+mkdir -p "$releases_root" "$slots_root" "$shared_root" "$data_dir" /etc/gpu45 /etc/caddy
 
 if [[ ! -f /etc/gpu45/resource-manager.env ]]; then
   umask 077
@@ -73,12 +80,33 @@ sed -i '/^GPU45_RESOURCE_MANAGER_TOKEN=/d' /etc/gpu45/appliance.env
 grep '^GPU45_RESOURCE_MANAGER_TOKEN=' /etc/gpu45/resource-manager.env >> /etc/gpu45/appliance.env
 chmod 600 /etc/gpu45/appliance.env
 
+if [[ -f "$active_port_file" ]]; then
+  active_port="$(cat "$active_port_file")"
+fi
+if [[ "$active_port" == "3011" ]]; then
+  target_port="3010"
+fi
+
+if [[ -L "$current_link" && "$(readlink -f "$current_link")" == "$release_dir" ]]; then
+  echo "Release $short_commit is already active; refusing to replace its files" >&2
+  exit 1
+fi
+
 rm -rf "$release_dir"
 mkdir -p "$release_dir"
 git -C "$repo_root" archive "$commit" | tar -x -C "$release_dir"
+
+lock_hash="$(sha256sum "$release_dir/package-lock.json" | cut -c1-16)"
+dependency_root="$shared_root/$lock_hash"
+if [[ ! -x "$dependency_root/node_modules/.bin/next" ]]; then
+  mkdir -p "$dependency_root"
+  cp "$release_dir/package.json" "$release_dir/package-lock.json" "$dependency_root/"
+  npm ci --prefix "$dependency_root"
+fi
+ln -s "$dependency_root/node_modules" "$release_dir/node_modules"
 cd "$release_dir"
-npm ci
 DATABASE_URL="file:$database_path" npm run build
+DATABASE_URL="file:$database_path" "$dependency_root/node_modules/.bin/tsx" src/scripts/init-db.ts
 
 if [[ ! -f "$data_dir/.telemetry-retention-v2" ]]; then
   systemctl stop gpu45-provider-appliance-worker.service gpu45-provider-appliance.service || true
@@ -94,7 +122,7 @@ GPU45_RELEASED_AT=$released_at
 EOF
 chmod 644 /etc/gpu45/release.env
 
-install -m 0644 deploy/systemd/gpu45-provider-appliance.service /etc/systemd/system/gpu45-provider-appliance.service
+install -m 0644 deploy/systemd/gpu45-provider-appliance@.service /etc/systemd/system/gpu45-provider-appliance@.service
 install -m 0644 deploy/systemd/gpu45-provider-appliance-worker.service /etc/systemd/system/gpu45-provider-appliance-worker.service
 install -m 0644 deploy/systemd/gpu45-resource-manager.service /etc/systemd/system/gpu45-resource-manager.service
 install -m 0644 deploy/systemd/gpu45-responses-proxy.service /etc/systemd/system/gpu45-responses-proxy.service
@@ -120,18 +148,24 @@ done
 if [[ -L "$current_link" ]]; then
   previous_target="$(readlink -f "$current_link")"
 fi
-ln -sfn "$release_dir" "$current_link"
+ln -sfn "$release_dir" "$slots_root/$target_port"
+
+if [[ ! -f "$caddy_upstream" ]]; then
+  printf 'reverse_proxy 127.0.0.1:%s\n' "$active_port" > "$caddy_upstream"
+fi
+install -m 0644 deploy/caddy/Caddyfile /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile
 systemctl daemon-reload
 systemctl enable gpu45-pocket-tts-api.service
 systemctl restart gpu45-pocket-tts-api.service
 systemctl enable gpu45-resource-manager.service
 systemctl restart gpu45-resource-manager.service
 systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer
-systemctl restart gpu45-responses-proxy.service gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
+systemctl restart "gpu45-provider-appliance@$target_port.service"
 
 healthy=false
 for _ in $(seq 1 30); do
-  if curl -fsS --max-time 5 http://127.0.0.1:3010/api/health/summary >/dev/null; then
+  if curl -fsS --max-time 5 "http://127.0.0.1:$target_port/api/health/summary" | grep -q "$commit"; then
     healthy=true
     break
   fi
@@ -139,17 +173,44 @@ for _ in $(seq 1 30); do
 done
 
 if [[ "$healthy" != "true" ]]; then
-  echo "Release health check failed; rolling back" >&2
-  if [[ -n "$previous_target" && -d "$previous_target" ]]; then
-    ln -sfn "$previous_target" "$current_link"
-    systemctl restart gpu45-responses-proxy.service gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
-  fi
+  echo "Release health check failed before traffic switch" >&2
+  systemctl stop "gpu45-provider-appliance@$target_port.service" || true
   exit 1
+fi
+
+previous_upstream="$(cat "$caddy_upstream")"
+printf 'reverse_proxy 127.0.0.1:%s\n' "$target_port" > "$caddy_upstream.tmp"
+mv "$caddy_upstream.tmp" "$caddy_upstream"
+caddy validate --config /etc/caddy/Caddyfile
+systemctl reload caddy
+
+if ! curl -fsS --max-time 10 http://127.0.0.1/api/health/summary -H 'Host: 192-168-50-189.nip.io' | grep -q "$commit"; then
+  echo "Release failed after traffic switch; restoring previous upstream" >&2
+  printf '%s\n' "$previous_upstream" > "$caddy_upstream"
+  systemctl reload caddy
+  systemctl stop "gpu45-provider-appliance@$target_port.service" || true
+  exit 1
+fi
+
+ln -sfn "$release_dir" "$current_link"
+printf '%s\n' "$target_port" > "$active_port_file"
+systemctl restart gpu45-responses-proxy.service gpu45-provider-appliance-worker.service
+systemctl stop gpu45-provider-appliance.service || true
+systemctl disable gpu45-provider-appliance.service || true
+if [[ "$active_port" != "$target_port" ]]; then
+  systemctl stop "gpu45-provider-appliance@$active_port.service" || true
 fi
 
 mapfile -t old_releases < <(find "$releases_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2-)
 for old_release in "${old_releases[@]:-}"; do
   [[ -n "$old_release" ]] && rm -rf -- "$old_release"
+done
+
+for dependency_dir in "$shared_root"/*; do
+  [[ -d "$dependency_dir" ]] || continue
+  if ! find "$releases_root" -maxdepth 2 -type l -name node_modules -lname "$dependency_dir/node_modules" | grep -q .; then
+    rm -rf -- "$dependency_dir"
+  fi
 done
 
 echo "Deployed GPU45 release $short_commit at $released_at"

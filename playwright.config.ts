@@ -6,7 +6,7 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:3010",
   },
   webServer: {
-    command: "npm run build && npm run start -- --port 3010",
+    command: "npm run build && node .next/standalone/server.js",
     port: 3010,
     timeout: 180_000,
     reuseExistingServer: !process.env.CI,
@@ -14,6 +14,8 @@ export default defineConfig({
       GPU45_MODE: "mock",
       DATABASE_URL: "file:./prisma/dev.db",
       GPU45_E2E_AUTH_BYPASS: "true",
+      PORT: "3010",
+      HOSTNAME: "127.0.0.1",
     },
   },
 });

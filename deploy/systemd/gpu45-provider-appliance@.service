@@ -1,5 +1,5 @@
 [Unit]
-Description=GPU45 provider appliance collector worker
+Description=GPU45 provider appliance console on port %i
 After=network-online.target gpu45-host-tune.service
 Wants=network-online.target
 
@@ -8,13 +8,17 @@ Type=simple
 User=gpu45
 Group=gpu45
 SupplementaryGroups=hendo420 video render
-WorkingDirectory=/opt/gpu45/current
+WorkingDirectory=/opt/gpu45/slots/%i/.next/standalone
 EnvironmentFile=-/etc/gpu45/appliance.env
 EnvironmentFile=-/etc/gpu45/release.env
-ExecStart=/opt/gpu45/current/node_modules/.bin/tsx src/worker.ts
+Environment=PORT=%i
+Environment=HOSTNAME=127.0.0.1
+ExecStart=/usr/bin/node server.js
 Restart=always
 RestartSec=5
 TimeoutStartSec=120
+TimeoutStopSec=15
+KillMode=control-group
 PrivateTmp=true
 ProtectHome=true
 NoNewPrivileges=false
