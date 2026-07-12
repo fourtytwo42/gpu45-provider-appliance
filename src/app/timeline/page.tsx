@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 function labelDate(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: "America/Chicago" });
 }
 
 function tone(status?: string | null): "neutral" | "info" | "success" | "warning" | "danger" {

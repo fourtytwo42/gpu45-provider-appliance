@@ -261,7 +261,7 @@ export function BenchmarkConsole({ model, models, initialRuns }: BenchmarkConsol
                     <div className="truncate font-mono text-xs text-cyan-200">{run.modelName}</div>
                     <div className="mt-1 text-xs text-slate-500">{run.notes ?? "fixed benchmark"}</div>
                   </div>
-                  <time className="text-[11px] text-slate-600">{new Date(run.createdAt).toLocaleString()}</time>
+                  <time className="text-[11px] text-slate-600">{new Date(run.createdAt).toLocaleString("en-US", { timeZone: "America/Chicago" })}</time>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <Stat label="gen tok/s" value={formatNumber(run.generationTokensPerSecond, 1)} color="border-emerald-400" />

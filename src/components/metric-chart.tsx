@@ -57,7 +57,7 @@ export function MetricChart({
             <CartesianGrid stroke="rgba(148,163,184,0.16)" strokeDasharray="3 3" vertical={false} />
             <XAxis
               dataKey="timestamp"
-              tickFormatter={(value) => new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              tickFormatter={(value) => new Date(value).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "America/Chicago" })}
               stroke="#64748b"
               tick={{ fontSize: 10 }}
             />
@@ -69,7 +69,7 @@ export function MetricChart({
                 borderRadius: "8px",
                 color: "#f8fafc",
               }}
-              labelFormatter={(value) => new Date(value as string).toLocaleString()}
+              labelFormatter={(value) => new Date(value as string).toLocaleString("en-US", { timeZone: "America/Chicago" })}
             />
             <Area type="monotone" dataKey="value" stroke="none" fill={series.color} fillOpacity={0.12} />
             <Line
