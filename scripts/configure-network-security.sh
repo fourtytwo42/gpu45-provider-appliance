@@ -21,6 +21,9 @@ fi
 apt-get install -y caddy
 
 install -d -m 0755 /etc/caddy /var/lib/gpu45
+if [[ ! -f /etc/caddy/gpu45-upstream.caddy ]]; then
+  printf 'reverse_proxy 127.0.0.1:3010\n' > /etc/caddy/gpu45-upstream.caddy
+fi
 install -m 0644 "$repo_root/deploy/caddy/Caddyfile" /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile
 systemctl enable --now avahi-daemon caddy
@@ -30,6 +33,7 @@ install -m 0644 "$repo_root/deploy/systemd/gpu45-image-api.service" /etc/systemd
 install -m 0644 "$repo_root/deploy/systemd/gpu45-whisper-api.service" /etc/systemd/system/gpu45-whisper-api.service
 install -m 0644 "$repo_root/deploy/systemd/qwen3-tts-api.service" /etc/systemd/system/qwen3-tts-api.service
 install -m 0644 "$repo_root/deploy/systemd/wan2-video-api.service" /etc/systemd/system/wan2-video-api.service
+install -m 0644 "$repo_root/deploy/systemd/gpu45-provider-appliance@.service" /etc/systemd/system/gpu45-provider-appliance@.service
 install -m 0755 "$repo_root/scripts/gpu45-llm-server" /usr/local/bin/gpu45-llm-server
 systemctl daemon-reload
 

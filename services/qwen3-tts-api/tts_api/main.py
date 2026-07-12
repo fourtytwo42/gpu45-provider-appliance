@@ -195,6 +195,12 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/snapshot")
+def snapshot(view: str = "full"):
+    """Return a compact console summary or the backward-compatible full snapshot."""
+    return store.load_snapshot(include_items=view != "summary")
+
+
 def _run_create_voice_job(job_id: str, body: CreateVoiceBody) -> None:
     started = monotonic()
 
@@ -841,6 +847,7 @@ async def create_audiobook(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     model_id: str = Form(...),
+    engine: str = Form("qwen"),
     title: str | None = Form(None),
 ):
     suffix = Path(file.filename or "upload.txt").suffix or ".txt"
@@ -853,6 +860,7 @@ async def create_audiobook(
             source_filename=file.filename or "upload",
             model_id=model_id,
             title=title,
+            engine=engine,
         )
     except KeyError as e:
         try:
@@ -971,6 +979,7 @@ async def create_presentation(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     model_id: str = Form(...),
+    engine: str = Form("qwen"),
     title: str | None = Form(None),
 ):
     suffix = Path(file.filename or "upload.pptx").suffix or ".pptx"
@@ -983,6 +992,7 @@ async def create_presentation(
             source_filename=file.filename or "upload.pptx",
             model_id=model_id,
             title=title,
+            engine=engine,
         )
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))

@@ -26,6 +26,9 @@ ExecStart=/opt/qwen3-tts-venv/bin/python -m tts_api
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30
+KillMode=control-group
+MemoryHigh=16G
+MemoryMax=24G
 
 [Install]
 WantedBy=multi-user.target

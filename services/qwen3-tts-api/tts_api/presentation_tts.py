@@ -4,6 +4,7 @@ import os
 import posixpath
 import re
 import shutil
+from statistics import median
 import zipfile
 import base64
 from datetime import datetime
@@ -18,7 +19,8 @@ from pydub import AudioSegment
 from tts_api import store
 from tts_api.audio_convert import wav_to_mp3_bytes
 from tts_api.config import DEVICE
-from tts_api import synthesize as synthesize_module
+from contextlib import nullcontext
+from tts_api import engine_bridge
 from tts_api.document_tts import TARGET_CHUNK_CHARS, analyze_wav_quality, split_text
 from tts_api.resource_guard import tts_vram_guard
 
@@ -55,6 +57,27 @@ def qn(prefix: str, name: str) -> str:
 
 def utcnow() -> str:
     return datetime.utcnow().isoformat() + "Z"
+
+
+def estimate_presentation_eta(job: dict[str, Any]) -> float | None:
+    durations: list[float] = []
+    for slide in reversed(job.get("slides", [])):
+        if slide.get("status") != "completed" or not slide.get("started_at") or not slide.get("finished_at"):
+            continue
+        try:
+            started = datetime.fromisoformat(str(slide["started_at"]).replace("Z", "+00:00"))
+            finished = datetime.fromisoformat(str(slide["finished_at"]).replace("Z", "+00:00"))
+            duration = (finished - started).total_seconds()
+            if 1.0 <= duration <= 7200.0:
+                durations.append(duration)
+        except (TypeError, ValueError):
+            continue
+        if len(durations) >= 12:
+            break
+    if not durations:
+        return None
+    remaining = sum(1 for slide in job.get("slides", []) if slide.get("status") in ("pending", "running", "failed", "flagged"))
+    return round(median(durations) * remaining, 1)
 
 
 def rels_path_for(part_path: str) -> str:
@@ -237,17 +260,14 @@ def inspect_pptx(path: str) -> list[dict[str, Any]]:
         raise ValueError("Uploaded file is not a valid .pptx archive.") from exc
 
 
-def create_presentation_job(source_path: str, source_filename: str, model_id: str, title: str | None) -> dict[str, Any]:
+def create_presentation_job(source_path: str, source_filename: str, model_id: str, title: str | None, engine: str = "qwen") -> dict[str, Any]:
     ext = Path(source_filename or source_path).suffix.lower()
     if ext == ".ppt":
         raise ValueError("Legacy .ppt files are not supported. Save the presentation as .pptx and upload again.")
     if ext != ".pptx":
         raise ValueError("Only .pptx files are supported for narrated presentations.")
-    model = store.get_model_by_id(model_id)
-    if not model:
-        raise KeyError(f"Model not found: {model_id}")
-    if model.get("status") != "ready":
-        raise ValueError("Model is not ready")
+    selected_engine = engine_bridge.normalize_engine(engine)
+    voice = engine_bridge.resolve_voice(selected_engine, model_id)
     inspected = inspect_pptx(source_path)
     job_id = store.generate_id()
     os.makedirs(os.path.join(_presentation_dir(job_id), "slides"), exist_ok=True)
@@ -273,7 +293,8 @@ def create_presentation_job(source_path: str, source_filename: str, model_id: st
         "title": (title or Path(source_filename).stem or "Narrated presentation").strip(),
         "source_filename": source_filename,
         "model_id": model_id,
-        "model_name": model.get("name"),
+        "model_name": voice.get("name"),
+        "speech_engine": selected_engine,
         "total_slides": len(slides),
         "narration_slides": sum(1 for slide in slides if slide.get("status") == "pending"),
         "completed_slides": processed,
@@ -389,14 +410,14 @@ def _refresh_job_counts(job: dict[str, Any]) -> None:
     job["updated_at"] = utcnow()
 
 
-def _synthesize_slide_audio(job_id: str, slide: dict[str, Any], model_id: str) -> dict[str, Any]:
+def _synthesize_slide_audio(job_id: str, slide: dict[str, Any], model_id: str, engine: str = "qwen") -> dict[str, Any]:
     slide_index = int(slide["index"])
     text = str(slide.get("text") or "").strip()
     chunks = split_text(text, TARGET_CHUNK_CHARS) or [text]
     chunk_segments: list[AudioSegment] = []
     qualities: list[dict[str, Any]] = []
     for chunk_index, chunk_text in enumerate(chunks):
-        wav_bytes, sr = synthesize_module.synthesize(text=chunk_text, model_id=model_id)
+        wav_bytes, sr = engine_bridge.synthesize(text=chunk_text, engine=engine, voice_id=model_id)
         quality = analyze_wav_quality(wav_bytes, sr, chunk_text)
         qualities.append(quality)
         mp3_bytes = wav_to_mp3_bytes(wav_bytes)
@@ -429,11 +450,13 @@ def run_presentation_job(job_id: str) -> None:
     job = store.get_presentation_job_by_id(job_id)
     if not job or job.get("status") == "stopped" or job.get("stop_requested"):
         return
-    with tts_vram_guard("presentation", device=DEVICE):
+    engine = str(job.get("speech_engine") or "qwen")
+    guard = tts_vram_guard("presentation", device=DEVICE) if engine == "qwen" else nullcontext()
+    with guard:
         try:
             _run_presentation_job_inner(job_id, started)
         finally:
-            synthesize_module.unload_cached_models()
+            engine_bridge.unload(engine)
 
 
 def _run_presentation_job_inner(job_id: str, started: float) -> None:
@@ -472,11 +495,12 @@ def _run_presentation_job_inner(job_id: str, started: float) -> None:
                 status="running",
                 current_slide=idx,
                 progress_label=f"Generating slide {idx + 1} of {job.get('total_slides')}",
+                eta_seconds=estimate_presentation_eta(job),
                 elapsed_seconds=round(monotonic() - started, 1),
                 updated_at=utcnow(),
             )
             try:
-                quality = _synthesize_slide_audio(job_id, next_slide, str(job["model_id"]))
+                quality = _synthesize_slide_audio(job_id, next_slide, str(job["model_id"]), str(job.get("speech_engine") or "qwen"))
                 status = "completed" if quality.get("ok") else "flagged"
                 store.update_presentation_slide(
                     job_id,

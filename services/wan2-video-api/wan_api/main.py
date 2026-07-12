@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from gpu45_resource import acquire_lease
@@ -23,6 +23,8 @@ WAN_ROOT = Path(os.environ.get("WAN2_ROOT", "/opt/wan2.2"))
 DATA_DIR = Path(os.environ.get("WAN2_API_DATA", "/models/wan2-video"))
 MODEL_DIR = Path(os.environ.get("WAN2_MODEL_DIR", "/models/wan2-video/Wan2.2-TI2V-5B"))
 PYTHON = os.environ.get("WAN2_PYTHON", "/opt/wan2-video-venv/bin/python")
+HUNYUAN_PYTHON = os.environ.get("HUNYUAN_PYTHON", "/opt/hunyuan-video-venv/bin/python")
+HUNYUAN_MODEL_ROOT = Path(os.environ.get("HUNYUAN_MODEL_ROOT", "/models/hunyuan-video-1.5"))
 HF_CLI = os.environ.get("WAN2_HF_CLI", str(Path(PYTHON).with_name("huggingface-cli")))
 LLM_SERVICE = os.environ.get("WAN2_LLM_SERVICE", "llama-openai.service")
 RESTART_LLM = os.environ.get("WAN2_RESTART_LLM_AFTER", "true").lower() in {"1", "true", "yes", "on"}
@@ -30,27 +32,81 @@ HF_REPO = os.environ.get("WAN2_HF_REPO", "Wan-AI/Wan2.2-TI2V-5B")
 JOBS_PATH = DATA_DIR / "jobs.json"
 OUTPUT_DIR = DATA_DIR / "outputs"
 LOG_DIR = DATA_DIR / "logs"
+UPLOAD_DIR = DATA_DIR / "uploads"
 _job_store = JobStore(JOBS_PATH)
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 lock = threading.Lock()
 runner_thread: threading.Thread | None = None
 
 SUPPORTED_SIZES = {"832*480", "480*832", "1280*704", "704*1280"}
-OUTPUT_FPS = int(os.environ.get("WAN2_OUTPUT_FPS", "6"))
+OUTPUT_FPS = int(os.environ.get("WAN2_OUTPUT_FPS", "24"))
 DEFAULT_NEGATIVE_PROMPT = (
     "abstract colors, smoke only, overexposed, blown out highlights, blurry, low quality, "
     "distorted subject, missing subject, text, watermark, painting, cartoon"
 )
 
 PROFILES: dict[str, dict[str, Any]] = {
+    "wan22-a14b-q3": {
+        "id": "wan22-a14b-q3",
+        "name": "Wan2.2 A14B Q3 Turbo",
+        "description": "Dual-expert A14B profile sized for 32GB with the four-step LightX2V accelerator.",
+        "repo": "QuantStack/Wan2.2-T2V-A14B-GGUF",
+        "model_dir": DATA_DIR,
+        "backend": "hunyuan-comfy",
+        "modes": ["t2v"],
+        "sizes": ["832*480", "480*832"],
+        "durations": [2, 3, 4, 5],
+        "step_counts": [4],
+        "default_steps": 4,
+        "default_fps": 12,
+        "expected_vram_gb": 26,
+        "required_files": [
+            "Wan2.2-T2V-A14B-GGUF/HighNoise/Wan2.2-T2V-A14B-HighNoise-Q3_K_M.gguf",
+            "Wan2.2-T2V-A14B-GGUF/LowNoise/Wan2.2-T2V-A14B-LowNoise-Q3_K_M.gguf",
+            "comfy-assets/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "comfy-assets/split_files/vae/wan_2.1_vae.safetensors",
+            "comfy-assets/split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+            "comfy-assets/split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+        ],
+        "index_file": None,
+        "ready_detail": "Wan2.2 A14B Q3 Turbo",
+        "enabled": False,
+        "availability_reason": "Validation failed: dual-expert switching exhausted 32GB system RAM and entered swap.",
+    },
+    "hunyuan15-t2v-q5": {
+        "id": "hunyuan15-t2v-q5",
+        "name": "HunyuanVideo 1.5 480p Q5",
+        "description": "Quality-focused 480p text-to-video using the CFG-distilled Q5 transformer.",
+        "repo": "jayn7/HunyuanVideo-1.5_T2V_480p-GGUF",
+        "model_dir": HUNYUAN_MODEL_ROOT,
+        "backend": "hunyuan-comfy",
+        "modes": ["t2v"],
+        "sizes": ["848*480", "480*848"],
+        "durations": [2, 3, 4, 5],
+        "step_counts": [20, 30, 50],
+        "default_steps": 20,
+        "default_fps": 12,
+        "expected_vram_gb": 22,
+        "required_files": [
+            "480p_distilled/hunyuanvideo1.5_480p_t2v_cfg_distilled-Q5_K_S.gguf",
+            "comfy/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+            "comfy/split_files/text_encoders/byt5_small_glyphxl_fp16.safetensors",
+            "comfy/split_files/vae/hunyuanvideo15_vae_fp16.safetensors",
+        ],
+        "index_file": None,
+        "ready_detail": "HunyuanVideo 1.5 Q5",
+        "enabled": False,
+        "availability_reason": "Validation failed: ROCm VAE decode exceeded the practical runtime limit.",
+    },
     "wan22-ti2v-5b": {
         "id": "wan22-ti2v-5b",
         "name": "Wan2.2 TI2V 5B",
-        "description": "Quality target for text-to-video on this 32GB AMD GPU.",
+        "description": "Validated text-to-video and image-to-video profile for this 32GB AMD GPU.",
         "repo": "Wan-AI/Wan2.2-TI2V-5B",
         "model_dir": MODEL_DIR,
         "required_files": [
@@ -60,6 +116,17 @@ PROFILES: dict[str, dict[str, Any]] = {
         ],
         "index_file": "diffusion_pytorch_model.safetensors.index.json",
         "ready_detail": "Wan2.2 TI2V-5B",
+        "modes": ["t2v", "i2v"],
+        "sizes": ["832*480", "480*832", "1280*704", "704*1280"],
+        "durations": [2, 3, 4, 5],
+        "step_counts": [20, 30, 40, 50],
+        "default_steps": 30,
+        "default_fps": OUTPUT_FPS,
+        "expected_vram_gb": 28,
+        "known_limitations": [
+            "The base TI2V model is not distilled; 12 steps and below produce visibly degraded results.",
+            "Text-to-video is less compositionally reliable than image-to-video.",
+        ],
     },
     "wan21-t2v-13b": {
         "id": "wan21-t2v-13b",
@@ -75,6 +142,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         ],
         "index_file": None,
         "ready_detail": "Wan2.1 T2V-1.3B",
+        "sizes": ["832*480", "480*832", "1280*704", "704*1280"],
     },
 }
 
@@ -84,14 +152,14 @@ class CreateJobBody(BaseModel):
     profile: str = "wan22-ti2v-5b"
     negative_prompt: str | None = None
     size: str = "832*480"
-    steps: int = Field(default=8, ge=1, le=24)
+    steps: int = Field(default=30, ge=1, le=50)
     duration_seconds: int = Field(default=2, ge=1, le=15)
     seed: int = -1
 
 
 def duration_to_frame_num(seconds: int) -> int:
-    output_frames = max(5, seconds * OUTPUT_FPS)
-    return (output_frames - 1) * 4 + 1
+    target_frames = max(5, seconds * OUTPUT_FPS)
+    return round((target_frames - 1) / 4) * 4 + 1
 
 
 def now() -> str:
@@ -148,7 +216,18 @@ def public_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "description": profile["description"],
         "repo": profile["repo"],
         "model_dir": str(model_dir),
-        "ready": profile_ready(profile),
+        "ready": profile_ready(profile) and profile.get("enabled", True),
+        "assets_ready": profile_ready(profile),
+        "availability_reason": profile.get("availability_reason"),
+        "backend": profile.get("backend", "wan-diffsynth"),
+        "modes": profile.get("modes", ["t2v"]),
+        "sizes": profile.get("sizes", sorted(SUPPORTED_SIZES)),
+        "durations": profile.get("durations", list(range(2, 16))),
+        "step_counts": profile.get("step_counts", list(range(1, 25))),
+        "default_steps": profile.get("default_steps", 8),
+        "default_fps": profile.get("default_fps", OUTPUT_FPS),
+        "expected_vram_gb": profile.get("expected_vram_gb"),
+        "known_limitations": profile.get("known_limitations", []),
     }
 
 
@@ -183,6 +262,20 @@ def job_progress(job: dict[str, Any]) -> dict[str, Any]:
         save_percent = int(save_matches[-1]) if save_matches else 0
         percent = min(99, 90 + round(save_percent * 0.09))
         return {"progress_percent": percent, "progress_label": f"Saving video {save_percent}%", "progress_stage": "saving"}
+
+    stages = re.findall(r"stage=([a-z_]+)(?:\s+elapsed=([0-9.]+)s)?", log_text)
+    if stages:
+        stage, _elapsed = stages[-1]
+        stage_progress = {
+            "submitted": (4, "Submitting workflow"),
+            "queued": (6, "Waiting for GPU backend"),
+            "loading": (10, "Loading Hunyuan models"),
+            "denoising": (20, "Denoising video"),
+            "decoding": (88, "Decoding frames"),
+            "completed": (100, "Complete"),
+        }
+        percent, label = stage_progress.get(stage, (5, stage.replace("_", " ").title()))
+        return {"progress_percent": percent, "progress_label": label, "progress_stage": stage}
 
     generated_match = re.search(r"generated\s+\d+\s+frames", log_text)
     if generated_match:
@@ -232,6 +325,8 @@ def delete_job_files(job_id: str, job: dict[str, Any]) -> list[str]:
         paths.append((candidate, OUTPUT_DIR))
     if job.get("output_path"):
         paths.append((Path(str(job["output_path"])), OUTPUT_DIR))
+    if job.get("source_image_path"):
+        paths.append((Path(str(job["source_image_path"])), UPLOAD_DIR))
 
     seen: set[Path] = set()
     for path, root in paths:
@@ -244,8 +339,19 @@ def delete_job_files(job_id: str, job: dict[str, Any]) -> list[str]:
     return deleted
 
 
-def terminate_job_processes(job_id: str) -> list[int]:
+def terminate_job_processes(job_id: str, job: dict[str, Any] | None = None) -> list[int]:
     terminated: list[int] = []
+    recorded_pid = int((job or {}).get("process_pid") or 0)
+    use_process_group = bool((job or {}).get("process_group"))
+    if recorded_pid > 0:
+        try:
+            if use_process_group:
+                os.killpg(os.getpgid(recorded_pid), signal.SIGTERM)
+            else:
+                os.kill(recorded_pid, signal.SIGTERM)
+            terminated.append(recorded_pid)
+        except (ProcessLookupError, OSError):
+            pass
     try:
         result = subprocess.run(["/usr/bin/pgrep", "-f", f"wan_api.diffsynth_generate.*{job_id}"], check=False, capture_output=True, text=True)
     except OSError:
@@ -257,6 +363,8 @@ def terminate_job_processes(job_id: str) -> list[int]:
         except ValueError:
             continue
         if pid == os.getpid():
+            continue
+        if pid in terminated:
             continue
         try:
             os.kill(pid, signal.SIGTERM)
@@ -271,8 +379,11 @@ def terminate_job_processes(job_id: str) -> list[int]:
             except ProcessLookupError:
                 continue
             try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
+                if pid == recorded_pid and use_process_group:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                else:
+                    os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
                 continue
     return terminated
 
@@ -301,10 +412,41 @@ def run_job(job: dict[str, Any]) -> None:
     out_prefix = OUTPUT_DIR / job_id
     update_job(job_id, status="running", started_at=now())
     lease = None
-    command = [
-        PYTHON,
-        "-m",
-        "wan_api.diffsynth_generate",
+    profile = get_profile(job["profile"])
+    if profile.get("backend") == "hunyuan-comfy":
+        width, height = str(job["size"]).split("*", 1)
+        command = [
+            HUNYUAN_PYTHON,
+            "-m",
+            "wan_api.comfy_generate",
+            "--job-id",
+            job_id,
+            "--profile",
+            job["profile"],
+            "--output",
+            str(out_prefix.with_suffix(".mp4")),
+            "--prompt",
+            job["prompt"],
+            "--negative-prompt",
+            job["negative_prompt"],
+            "--width",
+            width,
+            "--height",
+            height,
+            "--frames",
+            str(job["frame_num"]),
+            "--steps",
+            str(job["steps"]),
+            "--fps",
+            str(job.get("fps", profile.get("default_fps", 12))),
+            "--seed",
+            str(job["seed"] if int(job.get("seed", -1)) >= 0 else int(time.time())),
+        ]
+    else:
+        command = [
+            PYTHON,
+            "-m",
+            "wan_api.diffsynth_generate",
         "--profile",
         job["profile"],
         "--model-dir",
@@ -320,29 +462,40 @@ def run_job(job: dict[str, Any]) -> None:
         "--frame-num",
         str(job["frame_num"]),
         "--fps",
-        str(job.get("fps", OUTPUT_FPS)),
-    ]
-    if job.get("negative_prompt"):
-        command.extend(["--negative-prompt", job["negative_prompt"]])
-    if int(job.get("seed", -1)) >= 0:
-        command.extend(["--seed", str(job["seed"])])
+            str(job.get("fps", OUTPUT_FPS)),
+        ]
+        if job.get("negative_prompt"):
+            command.extend(["--negative-prompt", job["negative_prompt"]])
+        if int(job.get("seed", -1)) >= 0:
+            command.extend(["--seed", str(job["seed"])])
+        if job.get("source_image_path"):
+            command.extend(["--input-image", str(job["source_image_path"])])
 
     try:
         lease = acquire_lease(job_id, "video", 50, False, "atomic", timeout=1800)
         with log_path.open("w", encoding="utf-8") as log:
             log.write("$ " + " ".join(command) + "\n\n")
             log.flush()
-            result = subprocess.run(command, cwd=WAN_ROOT, stdout=log, stderr=subprocess.STDOUT, text=True)
-        if result.returncode != 0:
-            update_job(job_id, status="failed", completed_at=now(), error=f"generate.py exited with {result.returncode}")
+            process = subprocess.Popen(
+                command,
+                cwd=WAN_ROOT,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+            update_job(job_id, process_pid=process.pid, process_group=True)
+            return_code = process.wait()
+        if return_code != 0:
+            update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error=f"generate.py exited with {return_code}", process_pid=None)
             return
         output = find_output(job_id)
         if not output:
-            update_job(job_id, status="failed", completed_at=now(), error="No output video found.")
+            update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error="No output video found.", process_pid=None)
             return
-        update_job(job_id, status="completed", completed_at=now(), output_path=str(output))
+        update_job_unless_cancelled(job_id, status="completed", completed_at=now(), output_path=str(output), process_pid=None)
     except Exception as exc:
-        update_job(job_id, status="failed", completed_at=now(), error=str(exc))
+        update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error=str(exc), process_pid=None)
     finally:
         if lease is not None:
             lease.release()
@@ -382,10 +535,21 @@ def list_jobs() -> list[dict[str, Any]]:
 @app.post("/jobs", status_code=202)
 def create_job(body: CreateJobBody) -> dict[str, Any]:
     profile = get_profile(body.profile)
+    if not profile.get("enabled", True):
+        raise HTTPException(status_code=409, detail=profile.get("availability_reason") or "Profile is unavailable.")
     if not profile_ready(profile):
         raise HTTPException(status_code=409, detail=f"{profile['ready_detail']} model is not downloaded yet.")
-    if body.size not in SUPPORTED_SIZES:
-        raise HTTPException(status_code=400, detail=f"Unsupported Wan size: {body.size}.")
+    supported_sizes = set(profile.get("sizes", SUPPORTED_SIZES))
+    if body.size not in supported_sizes:
+        raise HTTPException(status_code=400, detail=f"Unsupported size for {profile['name']}: {body.size}.")
+    supported_steps = profile.get("step_counts")
+    if supported_steps and body.steps not in supported_steps:
+        raise HTTPException(status_code=400, detail=f"Unsupported step count for {profile['name']}: {body.steps}.")
+    supported_durations = profile.get("durations")
+    if supported_durations and body.duration_seconds not in supported_durations:
+        raise HTTPException(status_code=400, detail=f"Unsupported duration for {profile['name']}: {body.duration_seconds}s.")
+    fps = int(profile.get("default_fps", OUTPUT_FPS))
+    frame_num = duration_to_frame_num(body.duration_seconds) if profile.get("backend") != "hunyuan-comfy" else max(5, ((body.duration_seconds * fps - 1) // 4) * 4 + 1)
     job = {
         "id": str(uuid.uuid4()),
         "profile": profile["id"],
@@ -396,8 +560,8 @@ def create_job(body: CreateJobBody) -> dict[str, Any]:
         "size": body.size,
         "steps": body.steps,
         "duration_seconds": body.duration_seconds,
-        "frame_num": duration_to_frame_num(body.duration_seconds),
-        "fps": OUTPUT_FPS,
+        "frame_num": frame_num,
+        "fps": fps,
         "seed": body.seed,
         "status": "queued",
         "created_at": now(),
@@ -414,21 +578,97 @@ def create_job(body: CreateJobBody) -> dict[str, Any]:
     return public_job(job)
 
 
+@app.post("/jobs/i2v", status_code=202)
+async def create_i2v_job(
+    file: UploadFile = File(...),
+    prompt: str = Form(...),
+    negative_prompt: str = Form(DEFAULT_NEGATIVE_PROMPT),
+    profile: str = Form("wan22-ti2v-5b"),
+    size: str = Form("832*480"),
+    steps: int = Form(30),
+    duration_seconds: int = Form(2),
+    seed: int = Form(-1),
+) -> dict[str, Any]:
+    selected = get_profile(profile)
+    if "i2v" not in selected.get("modes", []):
+        raise HTTPException(status_code=400, detail=f"{selected['name']} does not support image-to-video.")
+    if not profile_ready(selected) or not selected.get("enabled", True):
+        raise HTTPException(status_code=409, detail=selected.get("availability_reason") or "Profile is unavailable.")
+    suffix = Path(file.filename or "source.png").suffix.lower()
+    if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
+        raise HTTPException(status_code=400, detail="Source image must be PNG, JPEG, or WebP.")
+    payload = await file.read()
+    if not payload or len(payload) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Source image must be between 1 byte and 20 MB.")
+    body = CreateJobBody(
+        prompt=prompt, profile=profile, negative_prompt=negative_prompt,
+        size=size, steps=steps, duration_seconds=duration_seconds, seed=seed,
+    )
+    supported_sizes = set(selected.get("sizes", SUPPORTED_SIZES))
+    if body.size not in supported_sizes:
+        raise HTTPException(status_code=400, detail=f"Unsupported size for {selected['name']}: {body.size}.")
+    if selected.get("step_counts") and body.steps not in selected["step_counts"]:
+        raise HTTPException(status_code=400, detail=f"Unsupported step count for {selected['name']}: {body.steps}.")
+    if selected.get("durations") and body.duration_seconds not in selected["durations"]:
+        raise HTTPException(status_code=400, detail=f"Unsupported duration for {selected['name']}: {body.duration_seconds}s.")
+    fps = int(selected.get("default_fps", OUTPUT_FPS))
+    job_id = str(uuid.uuid4())
+    source_path = UPLOAD_DIR / f"{job_id}{suffix}"
+    source_path.write_bytes(payload)
+    job = {
+        "id": job_id, "profile": selected["id"], "profile_name": selected["name"],
+        "model_dir": str(selected["model_dir"]), "mode": "i2v", "source_image_path": str(source_path),
+        "prompt": body.prompt, "negative_prompt": (body.negative_prompt or DEFAULT_NEGATIVE_PROMPT).strip(),
+        "size": body.size, "steps": body.steps, "duration_seconds": body.duration_seconds,
+        "frame_num": duration_to_frame_num(body.duration_seconds), "fps": fps, "seed": body.seed,
+        "status": "queued", "created_at": now(), "started_at": None, "completed_at": None,
+        "output_path": None, "error": None,
+    }
+    with lock:
+        jobs = load_jobs()
+        jobs.append(job)
+        save_jobs(jobs)
+
+
+def update_job_unless_cancelled(job_id: str, **updates: Any) -> bool:
+    with lock:
+        jobs = load_jobs()
+        for job in jobs:
+            if job["id"] != job_id:
+                continue
+            if job.get("status") == "cancelled":
+                return False
+            job.update(updates)
+            save_jobs(jobs)
+            return True
+    return False
+    ensure_runner()
+    return public_job(job)
+
+
 @app.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str) -> dict[str, Any]:
     with lock:
         jobs = load_jobs()
         for job in jobs:
+            if job["id"] == job_id and job["status"] == "cancelled":
+                return {"ok": True, "already_cancelled": True}
+            if job["id"] == job_id and job["status"] == "failed" and "exited with -15" in str(job.get("error") or ""):
+                job["status"] = "cancelled"
+                job["error"] = "Cancelled by user."
+                save_jobs(jobs)
+                return {"ok": True, "reconciled": True}
             if job["id"] == job_id and job["status"] == "queued":
                 job["status"] = "cancelled"
                 job["completed_at"] = now()
                 save_jobs(jobs)
                 return {"ok": True}
             if job["id"] == job_id and job["status"] == "running":
-                terminated = terminate_job_processes(job_id)
+                terminated = terminate_job_processes(job_id, job)
                 job["status"] = "cancelled"
                 job["completed_at"] = now()
                 job["error"] = "Cancelled by user."
+                job["process_pid"] = None
                 save_jobs(jobs)
                 return {"ok": True, "terminated_pids": terminated}
     raise HTTPException(status_code=409, detail="Only queued or running jobs can be cancelled.")

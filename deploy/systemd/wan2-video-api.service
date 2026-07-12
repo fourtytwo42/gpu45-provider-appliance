@@ -15,6 +15,8 @@ Environment=WAN2_PYTHON=/opt/wan2-video-venv/bin/python
 Environment=WAN2_HF_CLI=/opt/wan2-video-venv/bin/huggingface-cli
 Environment=WAN2_API_DATA=/models/wan2-video
 Environment=WAN2_MODEL_DIR=/models/wan2-video/Wan2.2-TI2V-5B
+Environment=HUNYUAN_PYTHON=/opt/hunyuan-video-venv/bin/python
+Environment=HUNYUAN_MODEL_ROOT=/models/hunyuan-video-1.5
 Environment=WAN2_LLM_SERVICE=llama-openai.service
 Environment=WAN2_RESTART_LLM_AFTER=true
 Environment=WAN2_VAE_CPU_DECODE=false
@@ -23,7 +25,7 @@ Environment=FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE
 Environment=GPU_ARCHS=gfx1100
 Environment=AITER_USE_SYSTEM_TRITON=1
 Environment=PYTORCH_ALLOC_CONF=expandable_segments:True
-Environment=WAN2_OUTPUT_FPS=6
+Environment=WAN2_OUTPUT_FPS=24
 Environment=MIOPEN_FIND_MODE=2
 Environment=TOKENIZERS_PARALLELISM=false
 EnvironmentFile=/etc/gpu45/resource-manager.env
@@ -31,6 +33,10 @@ Environment=PYTHONPATH=/opt/gpu45/current/services/common
 ExecStart=/opt/wan2-video-venv/bin/python -m wan_api
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=60
+KillMode=control-group
+MemoryHigh=26G
+MemoryMax=29G
 
 [Install]
 WantedBy=multi-user.target

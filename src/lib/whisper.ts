@@ -1,4 +1,5 @@
 import { getConfig } from "./config";
+import { managedServiceFetch } from "./managed-service";
 
 export const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "turbo"] as const;
 
@@ -32,18 +33,20 @@ export type WhisperSnapshot = {
   serviceUrl: string;
   models: readonly WhisperModel[];
   jobs: WhisperJob[];
+  sleeping?: boolean;
   error?: string;
 };
+
+let lastSnapshot: WhisperSnapshot | null = null;
 
 function whisperUrl(path: string): string {
   return `${getConfig().whisperUrl.replace(/\/$/, "")}${path}`;
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(whisperUrl(path), {
+async function fetchJson<T>(path: string, init?: RequestInit, wake = true): Promise<T> {
+  const response = await managedServiceFetch("whisper", whisperUrl(path), {
     ...init,
-    cache: "no-store",
-  });
+  }, { wake });
   if (!response.ok) throw new Error(await response.text());
   return await response.json() as T;
 }
@@ -52,16 +55,28 @@ export async function getWhisperSnapshot(): Promise<WhisperSnapshot> {
   const serviceUrl = getConfig().whisperUrl;
   try {
     const [health, jobs] = await Promise.all([
-      fetchJson<{ status: string; models?: WhisperModel[] }>("/health"),
-      fetchJson<WhisperJob[]>("/jobs"),
+      fetchJson<{ status: string; models?: WhisperModel[] }>("/health", undefined, false),
+      fetchJson<WhisperJob[]>("/jobs", undefined, false),
     ]);
-    return {
+    const snapshot = {
       healthy: health.status === "ok",
       serviceUrl,
       models: health.models ?? WHISPER_MODELS,
       jobs,
     };
+    lastSnapshot = snapshot;
+    return snapshot;
   } catch (error) {
+    if (lastSnapshot) return { ...lastSnapshot, sleeping: true };
+    try {
+      const health = await fetchJson<{ status: string; models?: WhisperModel[] }>("/health", undefined, true);
+      const jobs = await fetchJson<WhisperJob[]>("/jobs", undefined, false);
+      const snapshot = { healthy: health.status === "ok", sleeping: false, serviceUrl, models: health.models ?? WHISPER_MODELS, jobs };
+      lastSnapshot = snapshot;
+      return snapshot;
+    } catch {
+      // Return the original connection failure below.
+    }
     return {
       healthy: false,
       serviceUrl,
@@ -84,7 +99,7 @@ export async function deleteWhisperJob(id: string): Promise<Record<string, unkno
 }
 
 export async function fetchWhisperTranscript(id: string): Promise<Response> {
-  const response = await fetch(whisperUrl(`/jobs/${encodeURIComponent(id)}/transcript`), { cache: "no-store" });
+  const response = await managedServiceFetch("whisper", whisperUrl(`/jobs/${encodeURIComponent(id)}/transcript`), undefined, { wake: true });
   if (!response.ok) throw new Error(await response.text());
   return response;
 }

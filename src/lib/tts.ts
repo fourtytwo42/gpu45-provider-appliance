@@ -1,4 +1,5 @@
 import { getConfig } from "./config";
+import { managedServiceFetch } from "./managed-service";
 
 export type TtsVoice = {
   id: string;
@@ -84,6 +85,7 @@ export type TtsAudiobookJob = {
   source_filename: string;
   model_id: string;
   model_name?: string;
+  speech_engine?: "qwen" | "pocket";
   chunk_chars?: number;
   split_strategy?: "sentence" | string;
   target_chunk_chars?: number;
@@ -93,10 +95,12 @@ export type TtsAudiobookJob = {
   current_chunk?: number | null;
   progress_label: string;
   progress_percent: number;
+  eta_seconds?: number | null;
   stop_requested?: boolean;
   stitched_audio_url?: string;
   text_chars: number;
   chunks: TtsAudiobookChunk[];
+  items_truncated?: boolean;
   error?: string;
   created_at: string;
   started_at?: string;
@@ -130,6 +134,7 @@ export type TtsPresentationJob = {
   source_filename: string;
   model_id: string;
   model_name?: string;
+  speech_engine?: "qwen" | "pocket";
   total_slides: number;
   narration_slides: number;
   completed_slides: number;
@@ -137,11 +142,13 @@ export type TtsPresentationJob = {
   current_slide?: number | null;
   progress_label: string;
   progress_percent: number;
+  eta_seconds?: number | null;
   stop_requested?: boolean;
   output_url?: string;
   output_path?: string;
   output_bytes?: number;
   slides: TtsPresentationSlide[];
+  items_truncated?: boolean;
   error?: string;
   created_at: string;
   started_at?: string;
@@ -181,24 +188,27 @@ export type TtsSnapshot = {
   synthesisJobs: TtsSynthesisJob[];
   audiobookJobs: TtsAudiobookJob[];
   presentationJobs: TtsPresentationJob[];
+  sleeping?: boolean;
   error?: string;
 };
 
 type JsonValue = Record<string, unknown>;
 
+let snapshotCache: { value: TtsSnapshot; expiresAt: number } | null = null;
+let snapshotRequest: Promise<TtsSnapshot> | null = null;
+
 function ttsUrl(path: string): string {
   return `${getConfig().ttsUrl.replace(/\/$/, "")}${path}`;
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(ttsUrl(path), {
+async function fetchJson<T>(path: string, init?: RequestInit, wake = true): Promise<T> {
+  const response = await managedServiceFetch("tts", ttsUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
-    cache: "no-store",
-  });
+  }, { wake, startupTimeoutMs: 120_000 });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `TTS request failed with HTTP ${response.status}`);
@@ -208,30 +218,30 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export async function getTtsSnapshot(): Promise<TtsSnapshot> {
   const serviceUrl = getConfig().ttsUrl;
-  try {
-    await fetchJson<{ status: string }>("/health");
-    const [voices, models] = await Promise.all([
-      fetchJson<TtsVoice[]>("/voices"),
-      fetchJson<TtsModel[]>("/models"),
-    ]);
-    const voiceJobs = await fetchJson<TtsVoiceJob[]>("/voice-jobs").catch(() => []);
-    const synthesisJobs = await fetchJson<TtsSynthesisJob[]>("/synthesis-jobs").catch(() => []);
-    const audiobookJobs = await fetchJson<TtsAudiobookJob[]>("/audiobooks").catch(() => []);
-    const presentationJobs = await fetchJson<TtsPresentationJob[]>("/presentations").catch(() => []);
-    return { healthy: true, serviceUrl, voices, voiceJobs, models, synthesisJobs, audiobookJobs, presentationJobs };
-  } catch (error) {
-    return {
-      healthy: false,
-      serviceUrl,
-      voices: [],
-      voiceJobs: [],
-      models: [],
-      synthesisJobs: [],
-      audiobookJobs: [],
-      presentationJobs: [],
-      error: error instanceof Error ? error.message : "TTS service unavailable",
-    };
-  }
+  if (snapshotCache && snapshotCache.expiresAt > Date.now()) return snapshotCache.value;
+  if (snapshotRequest) return snapshotRequest;
+  snapshotRequest = (async () => {
+    try {
+      const payload = await fetchJson<Omit<TtsSnapshot, "healthy" | "serviceUrl">>("/snapshot?view=summary", undefined, false);
+      const value: TtsSnapshot = { healthy: true, serviceUrl, ...payload };
+      snapshotCache = { value, expiresAt: Date.now() + 2000 };
+      return value;
+    } catch (error) {
+      if (snapshotCache) return { ...snapshotCache.value, sleeping: true };
+      try {
+        const payload = await fetchJson<Omit<TtsSnapshot, "healthy" | "serviceUrl">>("/snapshot?view=summary", undefined, true);
+        const value: TtsSnapshot = { healthy: true, sleeping: false, serviceUrl, ...payload };
+        snapshotCache = { value, expiresAt: Date.now() + 2000 };
+        return value;
+      } catch {
+        // Return the original connection failure below.
+      }
+      return { healthy: false, serviceUrl, voices: [], voiceJobs: [], models: [], synthesisJobs: [], audiobookJobs: [], presentationJobs: [], error: error instanceof Error ? error.message : "TTS service unavailable" };
+    } finally {
+      snapshotRequest = null;
+    }
+  })();
+  return snapshotRequest;
 }
 
 export async function createTtsVoice(payload: JsonValue): Promise<JsonValue> {
@@ -242,23 +252,25 @@ export async function createTtsVoice(payload: JsonValue): Promise<JsonValue> {
 }
 
 export async function importTtsVoice(formData: FormData): Promise<JsonValue> {
-  const response = await fetch(ttsUrl("/voices/import"), {
+  const response = await managedServiceFetch("tts", ttsUrl("/voices/import"), {
     method: "POST",
     body: formData,
-    cache: "no-store",
-  });
+  }, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
   return await response.json() as JsonValue;
 }
 
 export async function createTtsAudiobook(formData: FormData): Promise<TtsAudiobookJob> {
-  const response = await fetch(ttsUrl("/audiobooks"), {
+  const response = await managedServiceFetch("tts", ttsUrl("/audiobooks"), {
     method: "POST",
     body: formData,
-    cache: "no-store",
-  });
+  }, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
   return await response.json() as TtsAudiobookJob;
+}
+
+export async function getTtsAudiobook(id: string): Promise<TtsAudiobookJob> {
+  return await fetchJson<TtsAudiobookJob>(`/audiobooks/${encodeURIComponent(id)}`, undefined, true);
 }
 
 export async function stopTtsAudiobook(id: string): Promise<TtsAudiobookJob> {
@@ -274,26 +286,29 @@ export async function regenerateTtsAudiobookChunk(id: string, chunk: number): Pr
 }
 
 export async function deleteTtsAudiobook(id: string): Promise<void> {
-  const response = await fetch(ttsUrl(`/audiobooks/${encodeURIComponent(id)}`), { method: "DELETE", cache: "no-store" });
+  const response = await managedServiceFetch("tts", ttsUrl(`/audiobooks/${encodeURIComponent(id)}`), { method: "DELETE" }, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
 }
 
 export async function fetchTtsAudiobookAudio(id: string, chunk?: number): Promise<Response> {
   const path = typeof chunk === "number" ? `/audiobooks/${encodeURIComponent(id)}/chunks/${chunk}/audio` : `/audiobooks/${encodeURIComponent(id)}/audio`;
-  const response = await fetch(ttsUrl(path), { cache: "no-store" });
+  const response = await managedServiceFetch("tts", ttsUrl(path), undefined, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
   return response;
 }
 
 
 export async function createTtsPresentation(formData: FormData): Promise<TtsPresentationJob> {
-  const response = await fetch(ttsUrl("/presentations"), {
+  const response = await managedServiceFetch("tts", ttsUrl("/presentations"), {
     method: "POST",
     body: formData,
-    cache: "no-store",
-  });
+  }, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
   return await response.json() as TtsPresentationJob;
+}
+
+export async function getTtsPresentation(id: string): Promise<TtsPresentationJob> {
+  return await fetchJson<TtsPresentationJob>(`/presentations/${encodeURIComponent(id)}`, undefined, true);
 }
 
 export async function stopTtsPresentation(id: string): Promise<TtsPresentationJob> {
@@ -305,18 +320,18 @@ export async function resumeTtsPresentation(id: string): Promise<TtsPresentation
 }
 
 export async function deleteTtsPresentation(id: string): Promise<void> {
-  const response = await fetch(ttsUrl(`/presentations/${encodeURIComponent(id)}`), { method: "DELETE", cache: "no-store" });
+  const response = await managedServiceFetch("tts", ttsUrl(`/presentations/${encodeURIComponent(id)}`), { method: "DELETE" }, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
 }
 
 export async function fetchTtsPresentationOutput(id: string): Promise<Response> {
-  const response = await fetch(ttsUrl(`/presentations/${encodeURIComponent(id)}/output`), { cache: "no-store" });
+  const response = await managedServiceFetch("tts", ttsUrl(`/presentations/${encodeURIComponent(id)}/output`), undefined, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
   return response;
 }
 
 export async function fetchTtsPresentationSlideAudio(id: string, slide: number): Promise<Response> {
-  const response = await fetch(ttsUrl(`/presentations/${encodeURIComponent(id)}/slides/${slide}/audio`), { cache: "no-store" });
+  const response = await managedServiceFetch("tts", ttsUrl(`/presentations/${encodeURIComponent(id)}/slides/${slide}/audio`), undefined, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
   return response;
 }
@@ -343,27 +358,26 @@ export async function renameTtsModel(id: string, name: string): Promise<TtsModel
 }
 
 export async function deleteTtsVoice(id: string): Promise<void> {
-  const response = await fetch(ttsUrl(`/voices/${encodeURIComponent(id)}`), { method: "DELETE", cache: "no-store" });
+  const response = await managedServiceFetch("tts", ttsUrl(`/voices/${encodeURIComponent(id)}`), { method: "DELETE" }, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
 }
 
 export async function deleteTtsModel(id: string): Promise<void> {
-  const response = await fetch(ttsUrl(`/models/${encodeURIComponent(id)}`), { method: "DELETE", cache: "no-store" });
+  const response = await managedServiceFetch("tts", ttsUrl(`/models/${encodeURIComponent(id)}`), { method: "DELETE" }, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
 }
 
 export async function deleteTtsVoiceJob(id: string): Promise<void> {
-  const response = await fetch(ttsUrl(`/voice-jobs/${encodeURIComponent(id)}`), { method: "DELETE", cache: "no-store" });
+  const response = await managedServiceFetch("tts", ttsUrl(`/voice-jobs/${encodeURIComponent(id)}`), { method: "DELETE" }, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
 }
 
 export async function synthesizeTts(payload: JsonValue): Promise<Response> {
-  const response = await fetch(ttsUrl("/synthesize"), {
+  const response = await managedServiceFetch("tts", ttsUrl("/synthesize"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-    cache: "no-store",
-  });
+  }, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
   return response;
 }
@@ -376,12 +390,12 @@ export async function createTtsSynthesisJob(payload: JsonValue): Promise<TtsSynt
 }
 
 export async function deleteTtsSynthesisJob(id: string): Promise<void> {
-  const response = await fetch(ttsUrl(`/synthesis-jobs/${encodeURIComponent(id)}`), { method: "DELETE", cache: "no-store" });
+  const response = await managedServiceFetch("tts", ttsUrl(`/synthesis-jobs/${encodeURIComponent(id)}`), { method: "DELETE" }, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
 }
 
 export async function fetchTtsSynthesisAudio(id: string): Promise<Response> {
-  const response = await fetch(ttsUrl(`/synthesis-jobs/${encodeURIComponent(id)}/audio`), { cache: "no-store" });
+  const response = await managedServiceFetch("tts", ttsUrl(`/synthesis-jobs/${encodeURIComponent(id)}/audio`), undefined, { wake: true, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
   return response;
 }

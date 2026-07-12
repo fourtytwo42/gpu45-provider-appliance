@@ -6,6 +6,7 @@ const envSchema = z.object({
   GPU45_PROVIDER_URL: z.string().default("http://127.0.0.1:30001"),
   GPU45_BACKEND_URL: z.string().default("http://127.0.0.1:30000"),
   GPU45_TTS_URL: z.string().default("http://127.0.0.1:8000"),
+  GPU45_POCKET_TTS_URL: z.string().default("http://127.0.0.1:8002"),
   GPU45_VIDEO_URL: z.string().default("http://127.0.0.1:8010"),
   GPU45_WHISPER_URL: z.string().default("http://127.0.0.1:8020"),
   GPU45_IMAGE_URL: z.string().default("http://127.0.0.1:8030"),
@@ -44,6 +45,7 @@ export type ApplianceConfig = {
   providerUrl: string;
   backendUrl: string;
   ttsUrl: string;
+  pocketTtsUrl: string;
   videoUrl: string;
   whisperUrl: string;
   imageUrl: string;
@@ -80,6 +82,7 @@ export function getConfig(): ApplianceConfig {
     providerUrl: parsedEnv.GPU45_PROVIDER_URL,
     backendUrl: parsedEnv.GPU45_BACKEND_URL,
     ttsUrl: parsedEnv.GPU45_TTS_URL,
+    pocketTtsUrl: parsedEnv.GPU45_POCKET_TTS_URL,
     videoUrl: parsedEnv.GPU45_VIDEO_URL,
     whisperUrl: parsedEnv.GPU45_WHISPER_URL,
     imageUrl: parsedEnv.GPU45_IMAGE_URL,

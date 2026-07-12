@@ -6,6 +6,8 @@ import { SectionCard } from "./section-card";
 import type { TtsAudiobookJob, TtsModel, TtsPresentationJob, TtsSnapshot, TtsSynthesisJob, TtsVoice, TtsVoiceJob } from "@/lib/tts";
 import { ttsAudiobookAudioUrl, ttsPresentationOutputUrl, ttsPresentationSlideAudioUrl, ttsSampleUrl, ttsSynthesisAudioUrl } from "@/lib/tts";
 import { cn } from "@/lib/cn";
+import type { PocketTtsSnapshot } from "@/lib/pocket-tts";
+import { subscribeApplianceEvent } from "@/lib/appliance-events";
 
 type Status = "idle" | "working" | "error";
 const AUDIOBOOK_CHUNKS_PER_PAGE = 8;
@@ -26,8 +28,10 @@ async function parseJson(response: Response): Promise<Record<string, unknown>> {
 function formatDuration(seconds?: number | null): string {
   if (seconds == null || !Number.isFinite(seconds)) return "unknown";
   const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
   const minutes = Math.floor(total / 60);
   const rest = total % 60;
+  if (hours > 0) return `${hours}h ${Math.floor((total % 3600) / 60)}m`;
   return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`;
 }
 
@@ -40,7 +44,7 @@ function formatTimestamp(value?: string | null): string {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC", timeZoneName: "short" }).format(date);
 }
 
 function progressValue(job: TtsVoiceJob): number {
@@ -65,12 +69,18 @@ function presentationProgressValue(job: TtsPresentationJob): number {
   return Math.max(0, Math.min(100, Number(job.progress_percent ?? 0)));
 }
 
-export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }) {
+export type TtsSection = "speech" | "audiobooks" | "presentations" | "voices" | "training";
+
+export function TtsConsole({ initialSnapshot, section = "speech" }: { initialSnapshot: TtsSnapshot; section?: TtsSection }) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const [activeSynthesisId, setActiveSynthesisId] = useState<string | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState<string | null>(null);
   const [audiobookChunkPages, setAudiobookChunkPages] = useState<Record<string, number>>({});
+  const [audiobookEngine, setAudiobookEngine] = useState<"qwen" | "pocket">("qwen");
+  const [presentationEngine, setPresentationEngine] = useState<"qwen" | "pocket">("qwen");
+  const [pocket, setPocket] = useState<PocketTtsSnapshot>({ healthy: false, serviceUrl: "", device: "cpu", modelLoaded: false, voices: [], jobs: [] });
   const readyModels = useMemo(() => snapshot.models.filter((model) => model.status === "ready"), [snapshot.models]);
   const activeSynthesisJobs = useMemo(() => (
     snapshot.synthesisJobs
@@ -89,13 +99,11 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
       .slice()
       .sort((a, b) => String(b.updated_at ?? b.created_at).localeCompare(String(a.updated_at ?? a.created_at)))
   ), [snapshot.audiobookJobs]);
-  const activeAudiobookJobs = useMemo(() => audiobookJobs.filter((job) => job.status === "queued" || job.status === "running"), [audiobookJobs]);
   const presentationJobs = useMemo(() => (
     snapshot.presentationJobs
       .slice()
       .sort((a, b) => String(b.updated_at ?? b.created_at).localeCompare(String(a.updated_at ?? a.created_at)))
   ), [snapshot.presentationJobs]);
-  const activePresentationJobs = useMemo(() => presentationJobs.filter((job) => job.status === "queued" || job.status === "running"), [presentationJobs]);
 
   const reconcileSynthesisStatus = useCallback((next: TtsSnapshot, id = activeSynthesisId): void => {
     if (!id) return;
@@ -111,12 +119,52 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
     }
   }, [activeSynthesisId]);
 
+  const mergeSnapshotDetails = useCallback((current: TtsSnapshot, next: TtsSnapshot): TtsSnapshot => ({
+    ...next,
+    audiobookJobs: next.audiobookJobs.map((job) => {
+      if (!job.items_truncated) return job;
+      const loaded = current.audiobookJobs.find((item) => item.id === job.id && !item.items_truncated);
+      return loaded ? { ...job, chunks: loaded.chunks, items_truncated: false } : job;
+    }),
+    presentationJobs: next.presentationJobs.map((job) => {
+      if (!job.items_truncated) return job;
+      const loaded = current.presentationJobs.find((item) => item.id === job.id && !item.items_truncated);
+      return loaded ? { ...job, slides: loaded.slides, items_truncated: false } : job;
+    }),
+  }), []);
+
+  const applySnapshot = useCallback((next: TtsSnapshot, activeId = activeSynthesisId): void => {
+    setSnapshot((current) => mergeSnapshotDetails(current, next));
+    reconcileSynthesisStatus(next, activeId);
+  }, [activeSynthesisId, mergeSnapshotDetails, reconcileSynthesisStatus]);
+
   const refresh = useCallback(async (activeId = activeSynthesisId): Promise<void> => {
     const response = await fetch("/api/tts", { cache: "no-store" });
     const next = await response.json() as TtsSnapshot;
-    setSnapshot(next);
-    reconcileSynthesisStatus(next, activeId);
-  }, [activeSynthesisId, reconcileSynthesisStatus]);
+    applySnapshot(next, activeId);
+  }, [activeSynthesisId, applySnapshot]);
+
+  const loadJobDetail = useCallback(async (kind: "audiobook" | "presentation", id: string): Promise<void> => {
+    setLoadingDetail(`${kind}:${id}`);
+    try {
+      const response = await fetch(`/api/tts?kind=${kind}&id=${encodeURIComponent(id)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(await response.text());
+      const detail = await response.json() as TtsAudiobookJob | TtsPresentationJob;
+      setSnapshot((current) => kind === "audiobook"
+        ? { ...current, audiobookJobs: current.audiobookJobs.map((job) => job.id === id ? detail as TtsAudiobookJob : job) }
+        : { ...current, presentationJobs: current.presentationJobs.map((job) => job.id === id ? detail as TtsPresentationJob : job) });
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Could not load job details.");
+    } finally {
+      setLoadingDetail(null);
+    }
+  }, []);
+
+  const refreshPocket = useCallback(async (): Promise<void> => {
+    const response = await fetch("/api/tts/pocket", { cache: "no-store" });
+    setPocket(await response.json() as PocketTtsSnapshot);
+  }, []);
 
   async function run(action: () => Promise<void>, workingMessage: string): Promise<void> {
     setStatus("working");
@@ -132,19 +180,10 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
   }
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
-
-  useEffect(() => {
-    if (activeSynthesisJobs.length === 0 && activeAudiobookJobs.length === 0 && activePresentationJobs.length === 0) return undefined;
-    const timer = window.setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [activeSynthesisJobs.length, activeAudiobookJobs.length, activePresentationJobs.length, refresh]);
+    const tts = subscribeApplianceEvent<TtsSnapshot>("tts", applySnapshot);
+    const pocketTts = subscribeApplianceEvent<PocketTtsSnapshot>("pocket-tts", setPocket);
+    return () => { tts(); pocketTts(); };
+  }, [applySnapshot]);
 
   async function createVoice(formData: FormData): Promise<void> {
     await run(async () => {
@@ -240,6 +279,41 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
     }
   }
 
+  async function synthesizePocket(formData: FormData): Promise<void> {
+    await run(async () => {
+      const response = await fetch("/api/tts/pocket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "createJob", text: formData.get("text"), voiceId: formData.get("voiceId") }),
+      });
+      await parseJson(response);
+      await refreshPocket();
+      setMessage("Pocket TTS synthesis queued on CPU. The GPU and LLM remain available.");
+    }, "Queueing Pocket TTS synthesis.");
+  }
+
+  async function importPocketVoice(formData: FormData): Promise<void> {
+    await run(async () => {
+      const response = await fetch("/api/tts/pocket", { method: "POST", body: formData });
+      await parseJson(response);
+      await refreshPocket();
+      setMessage("Pocket TTS voice clone imported and cached.");
+    }, "Encoding Pocket TTS voice clone.");
+  }
+
+  async function deletePocket(action: "deleteJob" | "deleteVoice", id: string): Promise<void> {
+    await run(async () => {
+      const response = await fetch("/api/tts/pocket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, id }),
+      });
+      await parseJson(response);
+      await refreshPocket();
+      setMessage(action === "deleteJob" ? "Pocket TTS audio deleted." : "Pocket TTS voice deleted.");
+    }, "Deleting Pocket TTS item.");
+  }
+
   async function createAudiobook(formData: FormData): Promise<void> {
     setStatus("working");
     setMessage("Uploading document and queueing audiobook TTS.");
@@ -316,7 +390,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
   }
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(380px,0.85fr)]">
+    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
       <section className="xl:col-span-2">
         <div className="flex flex-wrap items-center justify-between gap-3 border border-white/10 bg-[#07121a] px-4 py-3">
           <div className="flex items-center gap-3">
@@ -324,7 +398,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
               <Mic2 className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-white">Qwen3-TTS Voice Lab</h1>
+              <h1 className="text-lg font-semibold text-white">Audio Studio</h1>
               <p className="text-sm text-slate-400">{snapshot.serviceUrl}</p>
             </div>
           </div>
@@ -346,6 +420,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
         {!snapshot.healthy && snapshot.error ? <div className="mt-3 border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{snapshot.error}</div> : null}
       </section>
 
+      {section === "voices" ? <>
       <SectionCard title="Design Voice" description="Generate a reference voice from a prompt. Train it after you like the sample.">
         <form action={(formData) => void createVoice(formData)} className="grid gap-3">
           <input name="name" className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60" placeholder="voice name" />
@@ -393,6 +468,8 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
         </form>
       </SectionCard>
 
+      </> : null}
+      {section === "speech" ? <>
       <SectionCard title="Synthesize" description="Generate audio with a trained voice model.">
         <form action={(formData) => void synthesize(formData)} className="grid gap-3">
           <select name="modelId" required className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
@@ -497,7 +574,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                         <p className="text-sm text-slate-500">Text was not saved for this older audio file.</p>
                       )}
                     </div>
-                    {job.status === "completed" ? <audio className="mt-3 w-full" controls src={ttsSynthesisAudioUrl(job.id)} /> : null}
+                    {job.status === "completed" ? <audio className="mt-3 w-full" controls preload="none" src={ttsSynthesisAudioUrl(job.id)} /> : null}
                     {job.error ? <p className="mt-2 text-sm text-red-200">{job.error}</p> : null}
                   </div>
                 ))}
@@ -508,13 +585,67 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
       </SectionCard>
 
 
-      <SectionCard title="Document To Audiobook" description="Upload EPUB, PDF, DOCX, TXT, Markdown, or HTML and generate sentence-aware TTS with preview, stop, resume, and stitching.">
+      <SectionCard title="Pocket TTS" description="Fast CPU speech and instant voice cloning while the LLM keeps the GPU.">
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+          <span className={cn("border px-2 py-1", pocket.healthy ? "border-emerald-400/30 text-emerald-200" : "border-red-400/30 text-red-200")}>{pocket.healthy ? "online" : "offline"}</span>
+          <span className="border border-cyan-400/30 px-2 py-1 text-cyan-100">CPU only</span>
+          <span className="text-slate-400">{pocket.modelLoaded ? "model warm" : "cold start on next request"}</span>
+        </div>
+        {pocket.error ? <p className="mb-3 text-sm text-red-200">{pocket.error}</p> : null}
+        <form action={(formData) => void synthesizePocket(formData)} className="grid gap-3">
+          <select name="voiceId" required disabled={!pocket.healthy} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60 disabled:opacity-50">
+            <option value="">Choose Pocket voice</option>
+            {pocket.voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name} - {voice.language}{voice.kind === "clone" ? " (clone)" : ""}</option>)}
+          </select>
+          <textarea name="text" required rows={5} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60" placeholder="Type the text to speak with Pocket TTS." />
+          <button disabled={status === "working" || !pocket.healthy} className="inline-flex items-center justify-center gap-2 border border-emerald-400/40 bg-emerald-400/10 px-4 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-50">
+            <Play className="h-4 w-4" />Generate With Pocket TTS
+          </button>
+        </form>
+        <details className="mt-4 border border-white/10 bg-black/20 p-3">
+          <summary className="cursor-pointer text-sm font-medium text-white">Clone a voice for Pocket TTS</summary>
+          <form action={(formData) => void importPocketVoice(formData)} className="mt-3 grid gap-3">
+            <input name="name" required className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white" placeholder="voice name" />
+            <select name="language" defaultValue="English" className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white">
+              {['English', 'French', 'German', 'Italian', 'Portuguese', 'Spanish'].map((language) => <option key={language} value={language}>{language}</option>)}
+            </select>
+            <input name="file" type="file" required accept="audio/*,video/*" className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-200 file:mr-3 file:border-0 file:bg-cyan-400/10 file:px-3 file:py-1 file:text-cyan-100" />
+            <button disabled={status === "working" || !pocket.healthy} className="inline-flex items-center justify-center gap-2 border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm text-cyan-100 disabled:opacity-50"><Upload className="h-4 w-4" />Import Pocket Voice</button>
+          </form>
+          {pocket.voices.some((voice) => voice.kind === "clone") ? <div className="mt-3 grid gap-2">{pocket.voices.filter((voice) => voice.kind === "clone").map((voice) => <div key={voice.id} className="flex items-center justify-between border border-white/10 px-2 py-2 text-sm"><span>{voice.name} - {voice.language}</span><button type="button" aria-label={`Delete ${voice.name}`} className="text-red-200" onClick={() => void deletePocket("deleteVoice", voice.id)}><Trash2 className="h-4 w-4" /></button></div>)}</div> : null}
+        </details>
+        <div className="mt-4 grid gap-2">
+          <div className="flex items-center justify-between"><h3 className="text-sm font-medium text-white">Pocket audio history</h3><span className="text-xs text-slate-400">{pocket.jobs.length} jobs</span></div>
+          {pocket.jobs.length === 0 ? <div className="border border-white/10 bg-black/20 p-3 text-sm text-slate-400">No Pocket TTS audio yet.</div> : pocket.jobs.map((job) => (
+            <div key={job.id} className={cn("border p-3", job.status === "failed" ? "border-red-400/30 bg-red-500/10" : job.status === "running" || job.status === "queued" ? "border-cyan-400/30 bg-cyan-500/10" : "border-white/10 bg-black/20")}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div><div className="text-sm font-medium text-white">{job.voice_name}</div><div className="text-xs text-slate-400">{job.language} / {job.text_chars} chars / {job.progress_label}</div></div>
+                <div className="flex gap-2">{job.status === "completed" ? <a className="border border-emerald-400/30 px-2 py-1 text-xs text-emerald-100" href={`/api/tts/pocket/audio?id=${encodeURIComponent(job.id)}&download=1`}><Download className="inline h-3.5 w-3.5" /> Download</a> : null}{job.status === "completed" || job.status === "failed" ? <button type="button" aria-label="Delete Pocket TTS job" className="border border-red-400/30 px-2 py-1 text-red-100" onClick={() => void deletePocket("deleteJob", job.id)}><Trash2 className="h-3.5 w-3.5" /></button> : null}</div>
+              </div>
+              {(job.status === "queued" || job.status === "running") ? <div className="mt-3 h-2 border border-white/10 bg-black/30"><div className="h-full bg-cyan-300" style={{ width: `${job.progress_percent}%` }} /></div> : null}
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">{job.text}</p>
+              {job.status === "completed" ? <audio className="mt-3 w-full" controls preload="none" src={`/api/tts/pocket/audio?id=${encodeURIComponent(job.id)}`} /> : null}
+              {job.error ? <p className="mt-2 text-sm text-red-200">{job.error}</p> : null}
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
+      </> : null}
+      {section === "audiobooks" ? (
+      <SectionCard title="Document To Audiobook" description="Use Qwen trained models or Pocket voices with the same sentence-aware chunking, quality checks, preview, stop, resume, and stitching workflow.">
         <form action={(formData) => void createAudiobook(formData)} className="grid gap-3">
           <input type="hidden" name="action" value="createAudiobook" />
           <input name="title" className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60" placeholder="optional audiobook title" />
+          <select name="engine" value={audiobookEngine} onChange={(event) => setAudiobookEngine(event.target.value as "qwen" | "pocket")} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
+            <option value="qwen">Qwen3-TTS - GPU trained voice</option>
+            <option value="pocket">Pocket TTS - CPU voice</option>
+          </select>
           <select name="model_id" required className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
-            <option value="">Choose trained voice model</option>
-            {readyModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+            <option value="">{audiobookEngine === "qwen" ? "Choose trained voice model" : "Choose Pocket voice"}</option>
+            {audiobookEngine === "qwen"
+              ? readyModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)
+              : pocket.voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name} - {voice.language}{voice.kind === "clone" ? " (clone)" : ""}</option>)}
           </select>
           <input
             name="file"
@@ -523,7 +654,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
             accept=".epub,.pdf,.docx,.txt,.md,.html,.htm,application/epub+zip,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
             className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-200 file:mr-3 file:border-0 file:bg-cyan-400/10 file:px-3 file:py-1 file:text-cyan-100"
           />
-          <button disabled={status === "working" || readyModels.length === 0} className="inline-flex items-center justify-center gap-2 border border-emerald-400/40 bg-emerald-400/10 px-4 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-50">
+          <button disabled={status === "working" || (audiobookEngine === "qwen" ? readyModels.length === 0 : !pocket.healthy || pocket.voices.length === 0)} className="inline-flex items-center justify-center gap-2 border border-emerald-400/40 bg-emerald-400/10 px-4 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-50">
             <BookOpen className="h-4 w-4" />
             Create Audiobook
           </button>
@@ -551,6 +682,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                       <span>{job.status}</span>
                       <span>{job.completed_chunks}/{job.total_chunks} chunks</span>
                       <span>{job.model_name ?? job.model_id}</span>
+                      <span>{job.speech_engine === "pocket" ? "Pocket CPU" : "Qwen GPU"}</span>
                       <span>{job.source_filename}</span>
                     </div>
                   </div>
@@ -564,9 +696,20 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                 <div className="mt-3 h-2 border border-white/10 bg-black/30">
                   <div className="h-full bg-emerald-300 transition-all" style={{ width: `${audiobookProgressValue(job)}%` }} />
                 </div>
-                <div className="mt-1 flex justify-between text-xs text-slate-400"><span>{job.progress_label}</span><span>{audiobookProgressValue(job).toFixed(1)}%</span></div>
+                <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400"><span>{job.progress_label}</span><span className="flex items-center gap-3"><span>{audiobookProgressValue(job).toFixed(1)}%</span>{canStop ? <span className="inline-flex items-center gap-1 text-cyan-200"><Clock className="h-3.5 w-3.5" />ETA {formatEta(job.eta_seconds, true)}</span> : null}</span></div>
                 {job.error ? <p className="mt-2 text-sm text-red-200">{job.error}</p> : null}
-                {hasAudio ? <audio className="mt-3 w-full" controls src={ttsAudiobookAudioUrl(job.id, { version: audioVersion })} /> : null}
+                {job.items_truncated ? (
+                  <button
+                    type="button"
+                    disabled={loadingDetail === `audiobook:${job.id}`}
+                    className="mt-3 inline-flex items-center gap-2 border border-cyan-400/30 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-400/10 disabled:opacity-50"
+                    onClick={() => void loadJobDetail("audiobook", job.id)}
+                  >
+                    <BookOpen className="h-3.5 w-3.5" />
+                    {loadingDetail === `audiobook:${job.id}` ? "Loading chunks..." : `Load ${job.total_chunks} chunks`}
+                  </button>
+                ) : null}
+                {hasAudio ? <audio className="mt-3 w-full" controls preload="none" src={ttsAudiobookAudioUrl(job.id, { version: audioVersion })} /> : null}
                 {hasAudio ? (
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border border-white/10 bg-black/20 px-2 py-2 text-xs text-slate-300">
                     <span>
@@ -604,7 +747,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                         {chunk.quality?.ok === false ? <p className="mt-1 text-xs text-amber-200">Flagged: {chunk.quality.reasons?.join(", ")}</p> : null}
                         {chunk.error ? <p className="mt-1 text-xs text-red-200">{chunk.error}</p> : null}
                         {chunk.status === "skipped" ? <p className="mt-2 text-xs text-slate-500">{chunk.skipped_reason ?? "Skipped"}</p> : null}
-                        {hasChunkAudio ? <audio className="mt-2 w-full" controls src={ttsAudiobookAudioUrl(job.id, { chunk: chunk.index, version: `${audioVersion}-${chunk.updated_at ?? ""}` })} /> : null}
+                        {hasChunkAudio ? <audio className="mt-2 w-full" controls preload="none" src={ttsAudiobookAudioUrl(job.id, { chunk: chunk.index, version: `${audioVersion}-${chunk.updated_at ?? ""}` })} /> : null}
                       </div>
                     );
                   })}
@@ -615,13 +758,21 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
         </div>
       </SectionCard>
 
-      <SectionCard title="PowerPoint Narration" description="Upload a PPTX with speaker notes and create a narrated autoplay deck using a trained voice model.">
+      ) : null}
+      {section === "presentations" ? (
+      <SectionCard title="PowerPoint Narration" description="Upload a PPTX with speaker notes and narrate it with either a Qwen trained model or a Pocket voice.">
         <form action={(formData) => void createPresentation(formData)} className="grid gap-3">
           <input type="hidden" name="action" value="createPresentation" />
           <input name="title" className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60" placeholder="optional narrated deck title" />
+          <select name="engine" value={presentationEngine} onChange={(event) => setPresentationEngine(event.target.value as "qwen" | "pocket")} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
+            <option value="qwen">Qwen3-TTS - GPU trained voice</option>
+            <option value="pocket">Pocket TTS - CPU voice</option>
+          </select>
           <select name="model_id" required className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
-            <option value="">Choose trained voice model</option>
-            {readyModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+            <option value="">{presentationEngine === "qwen" ? "Choose trained voice model" : "Choose Pocket voice"}</option>
+            {presentationEngine === "qwen"
+              ? readyModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)
+              : pocket.voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name} - {voice.language}{voice.kind === "clone" ? " (clone)" : ""}</option>)}
           </select>
           <input
             name="file"
@@ -630,7 +781,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
             accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
             className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-200 file:mr-3 file:border-0 file:bg-cyan-400/10 file:px-3 file:py-1 file:text-cyan-100"
           />
-          <button disabled={status === "working" || readyModels.length === 0} className="inline-flex items-center justify-center gap-2 border border-violet-400/40 bg-violet-400/10 px-4 py-2 text-sm font-medium text-violet-100 hover:bg-violet-400/20 disabled:opacity-50">
+          <button disabled={status === "working" || (presentationEngine === "qwen" ? readyModels.length === 0 : !pocket.healthy || pocket.voices.length === 0)} className="inline-flex items-center justify-center gap-2 border border-violet-400/40 bg-violet-400/10 px-4 py-2 text-sm font-medium text-violet-100 hover:bg-violet-400/20 disabled:opacity-50">
             <Upload className="h-4 w-4" />
             Create Narrated PPTX
           </button>
@@ -667,8 +818,19 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                 <div className="mt-3 h-2 border border-white/10 bg-black/30">
                   <div className="h-full bg-violet-300 transition-all" style={{ width: `${presentationProgressValue(job)}%` }} />
                 </div>
-                <div className="mt-1 flex justify-between text-xs text-slate-400"><span>{job.progress_label}</span><span>{presentationProgressValue(job).toFixed(1)}%</span></div>
+                <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400"><span>{job.progress_label}</span><span className="flex items-center gap-3"><span>{presentationProgressValue(job).toFixed(1)}%</span>{canStop ? <span className="inline-flex items-center gap-1 text-violet-200"><Clock className="h-3.5 w-3.5" />ETA {formatEta(job.eta_seconds, true)}</span> : null}</span></div>
                 {job.error ? <p className="mt-2 text-sm text-red-200">{job.error}</p> : null}
+                {job.items_truncated ? (
+                  <button
+                    type="button"
+                    disabled={loadingDetail === `presentation:${job.id}`}
+                    className="mt-3 inline-flex items-center gap-2 border border-violet-400/30 px-3 py-2 text-xs text-violet-100 hover:bg-violet-400/10 disabled:opacity-50"
+                    onClick={() => void loadJobDetail("presentation", job.id)}
+                  >
+                    <Play className="h-3.5 w-3.5" />
+                    {loadingDetail === `presentation:${job.id}` ? "Loading slides..." : `Load ${job.total_slides} slides`}
+                  </button>
+                ) : null}
                 {narratedSlides.length > 0 ? (
                   <div className="mt-3 grid gap-2 md:grid-cols-2">
                     {narratedSlides.map((slide) => (
@@ -678,7 +840,7 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                           <span>{slide.audio_duration_seconds ? `${slide.audio_duration_seconds}s` : slide.status}</span>
                         </div>
                         {slide.quality?.ok === false ? <p className="mt-1 text-xs text-amber-200">Flagged: {slide.quality.reasons?.join(", ")}</p> : null}
-                        <audio className="mt-2 w-full" controls src={ttsPresentationSlideAudioUrl(job.id, slide.index, { version })} />
+                        <audio className="mt-2 w-full" controls preload="none" src={ttsPresentationSlideAudioUrl(job.id, slide.index, { version })} />
                       </div>
                     ))}
                   </div>
@@ -689,7 +851,8 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
         </div>
       </SectionCard>
 
-
+      ) : null}
+      {section === "voices" ? (
       <SectionCard title="Voices" description="Prompt-designed reference voices.">
         <div className="grid gap-3">
           {snapshot.voiceJobs.filter((job) => job.status === "queued" || job.status === "running" || job.status === "failed").slice().reverse().map((job) => (
@@ -740,12 +903,14 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
               {voice.paragraph_text ? (
                 <p className="mt-2 max-h-20 overflow-hidden text-sm text-slate-400">{voice.paragraph_text}</p>
               ) : null}
-              <audio className="mt-3 w-full" controls src={ttsSampleUrl("voices", voice.id)} />
+              <audio className="mt-3 w-full" controls preload="none" src={ttsSampleUrl("voices", voice.id)} />
             </div>
           ))}
         </div>
       </SectionCard>
 
+      ) : null}
+      {section === "training" ? (
       <SectionCard title="Trained Voice Models" description="Consistent cloned voices trained from reference voices.">
         <div className="grid gap-3">
           {snapshot.models.length === 0 ? <p className="text-sm text-slate-400">No trained models yet.</p> : null}
@@ -776,11 +941,12 @@ export function TtsConsole({ initialSnapshot }: { initialSnapshot: TtsSnapshot }
                 </>
               ) : null}
               {model.error ? <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap border border-red-400/20 bg-black/30 p-2 text-xs text-red-200">{model.error}</pre> : null}
-              {model.status === "ready" ? <audio className="mt-3 w-full" controls src={ttsSampleUrl("models", model.id)} /> : null}
+              {model.status === "ready" ? <audio className="mt-3 w-full" controls preload="none" src={ttsSampleUrl("models", model.id)} /> : null}
             </div>
           ))}
         </div>
       </SectionCard>
+      ) : null}
     </div>
   );
 }

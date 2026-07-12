@@ -1,6 +1,6 @@
 (gpu45_console) {
   encode zstd gzip
-  reverse_proxy 127.0.0.1:3010
+  import /etc/caddy/gpu45-upstream.caddy
   header {
     X-Content-Type-Options "nosniff"
     X-Frame-Options "DENY"

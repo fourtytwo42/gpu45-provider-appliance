@@ -27,7 +27,7 @@ python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/python" -m pip install --force-reinstall --index-url https://download.pytorch.org/whl/rocm6.4 torch torchvision torchaudio
 grep -v -i 'flash' "$WAN_ROOT/requirements.txt" >/tmp/wan2-requirements-no-flash.txt
 "$VENV_DIR/bin/python" -m pip install -r /tmp/wan2-requirements-no-flash.txt
-"$VENV_DIR/bin/python" -m pip install decord einops librosa peft fastapi 'uvicorn[standard]' huggingface_hub
+"$VENV_DIR/bin/python" -m pip install decord einops librosa peft fastapi 'uvicorn[standard]' huggingface_hub python-multipart
 
 if [[ ! -d "$FLASH_ATTN_ROOT/.git" ]]; then
   git clone https://github.com/Dao-AILab/flash-attention.git "$FLASH_ATTN_ROOT"

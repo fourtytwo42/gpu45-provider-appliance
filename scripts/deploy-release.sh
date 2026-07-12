@@ -8,16 +8,35 @@ released_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 releases_root="/opt/gpu45/releases"
 release_dir="$releases_root/$short_commit"
 current_link="/opt/gpu45/current"
+slots_root="/opt/gpu45/slots"
+shared_root="/opt/gpu45/shared"
 data_dir="/var/lib/gpu45"
 database_path="$data_dir/appliance.db"
 previous_target=""
+active_port_file="/var/lib/gpu45/active-web-port"
+active_port="3010"
+target_port="3011"
+caddy_upstream="/etc/caddy/gpu45-upstream.caddy"
+dependency_root=""
+tts_database_path="/models/qwen3-tts/api_data/jobs.db"
+
+release_healthy() {
+  local base_url="$1"
+  local host_header="${2:-}"
+  local curl_args=(-fsS --max-time 5)
+  if [[ -n "$host_header" ]]; then
+    curl_args+=(-H "Host: $host_header")
+  fi
+  curl "${curl_args[@]}" "$base_url/api/health/probe" >/dev/null \
+    && curl "${curl_args[@]}" "$base_url/api/version" | grep -q "$commit"
+}
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "deploy-release.sh must run as root" >&2
   exit 1
 fi
 
-mkdir -p "$releases_root" "$data_dir" /etc/gpu45
+mkdir -p "$releases_root" "$slots_root" "$shared_root" "$data_dir" /etc/gpu45 /etc/caddy
 
 if [[ ! -f /etc/gpu45/resource-manager.env ]]; then
   umask 077
@@ -57,6 +76,15 @@ fi
 mkdir -p "$data_dir/migration-backups"
 sqlite3 "$database_path" ".backup '$data_dir/migration-backups/appliance-$short_commit.db'"
 find "$data_dir/migration-backups" -type f -name 'appliance-*.db' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | xargs -r rm -f --
+if [[ -f "$tts_database_path" ]]; then
+  sqlite3 "$tts_database_path" "PRAGMA wal_checkpoint(FULL);"
+  if [[ "$(sqlite3 "$tts_database_path" "PRAGMA integrity_check;")" != "ok" ]]; then
+    echo "TTS database integrity check failed" >&2
+    exit 1
+  fi
+  sqlite3 "$tts_database_path" ".backup '${tts_database_path}.migration-$short_commit.bak'"
+  find "$(dirname "$tts_database_path")" -maxdepth 1 -type f -name 'jobs.db.migration-*.bak' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | xargs -r rm -f --
+fi
 
 if [[ ! -f /etc/gpu45/appliance.env ]]; then
   if [[ -f "$repo_root/.env.local" ]]; then
@@ -73,12 +101,48 @@ sed -i '/^GPU45_RESOURCE_MANAGER_TOKEN=/d' /etc/gpu45/appliance.env
 grep '^GPU45_RESOURCE_MANAGER_TOKEN=' /etc/gpu45/resource-manager.env >> /etc/gpu45/appliance.env
 chmod 600 /etc/gpu45/appliance.env
 
+if [[ -f "$active_port_file" ]]; then
+  active_port="$(cat "$active_port_file")"
+fi
+if [[ "$active_port" == "3011" ]]; then
+  target_port="3010"
+fi
+
+health_json="$(curl -fsS --max-time 10 "http://127.0.0.1:$active_port/api/health/summary" || true)"
+if [[ -n "$health_json" ]]; then
+  active_jobs="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("jobs",{}).get("active",0))' <<<"$health_json")"
+  if (( active_jobs > 0 )); then
+    echo "Refusing deployment while $active_jobs job(s) are active" >&2
+    exit 1
+  fi
+fi
+source /etc/gpu45/resource-manager.env
+resource_json="$(curl -fsS --max-time 5 -H "Authorization: Bearer $GPU45_RESOURCE_MANAGER_TOKEN" http://127.0.0.1:8040/v1/state || true)"
+if [[ -n "$resource_json" ]] && ! python3 -c 'import json,sys; state=json.load(sys.stdin); raise SystemExit(0 if state.get("owner") is None and not state.get("queue") else 1)' <<<"$resource_json"; then
+  echo "Refusing deployment while the GPU resource manager has active or queued work" >&2
+  exit 1
+fi
+
+if [[ -L "$current_link" && "$(readlink -f "$current_link")" == "$release_dir" ]]; then
+  echo "Release $short_commit is already active; refusing to replace its files" >&2
+  exit 1
+fi
+
 rm -rf "$release_dir"
 mkdir -p "$release_dir"
 git -C "$repo_root" archive "$commit" | tar -x -C "$release_dir"
+
+lock_hash="$(sha256sum "$release_dir/package-lock.json" | cut -c1-16)"
+dependency_root="$shared_root/$lock_hash"
+if [[ ! -x "$dependency_root/node_modules/.bin/next" ]]; then
+  mkdir -p "$dependency_root"
+  cp "$release_dir/package.json" "$release_dir/package-lock.json" "$dependency_root/"
+  npm ci --prefix "$dependency_root"
+fi
+ln -s "$dependency_root/node_modules" "$release_dir/node_modules"
 cd "$release_dir"
-npm ci
 DATABASE_URL="file:$database_path" npm run build
+DATABASE_URL="file:$database_path" "$dependency_root/node_modules/.bin/tsx" src/scripts/init-db.ts
 
 if [[ ! -f "$data_dir/.telemetry-retention-v2" ]]; then
   systemctl stop gpu45-provider-appliance-worker.service gpu45-provider-appliance.service || true
@@ -94,38 +158,51 @@ GPU45_RELEASED_AT=$released_at
 EOF
 chmod 644 /etc/gpu45/release.env
 
-install -m 0644 deploy/systemd/gpu45-provider-appliance.service /etc/systemd/system/gpu45-provider-appliance.service
+install -m 0644 deploy/systemd/gpu45-provider-appliance@.service /etc/systemd/system/gpu45-provider-appliance@.service
 install -m 0644 deploy/systemd/gpu45-provider-appliance-worker.service /etc/systemd/system/gpu45-provider-appliance-worker.service
 install -m 0644 deploy/systemd/gpu45-resource-manager.service /etc/systemd/system/gpu45-resource-manager.service
 install -m 0644 deploy/systemd/gpu45-responses-proxy.service /etc/systemd/system/gpu45-responses-proxy.service
 install -m 0644 deploy/systemd/qwen3-tts-api.service /etc/systemd/system/qwen3-tts-api.service
+install -m 0644 deploy/systemd/gpu45-pocket-tts-api.service /etc/systemd/system/gpu45-pocket-tts-api.service
 install -m 0644 deploy/systemd/gpu45-image-api.service /etc/systemd/system/gpu45-image-api.service
 install -m 0644 deploy/systemd/gpu45-whisper-api.service /etc/systemd/system/gpu45-whisper-api.service
 install -m 0644 deploy/systemd/wan2-video-api.service /etc/systemd/system/wan2-video-api.service
+install -m 0644 deploy/systemd/hunyuan-video-comfy.service /etc/systemd/system/hunyuan-video-comfy.service
 install -m 0755 scripts/configure-service-user.sh /usr/local/sbin/gpu45-configure-service-user
 /usr/local/sbin/gpu45-configure-service-user
 install -m 0755 deploy/usr/local/bin/gpu45-responses-proxy /usr/local/bin/gpu45-responses-proxy
 cp -a services/qwen3-tts-api/tts_api/. /opt/qwen3-tts/tts_api/
+mkdir -p /opt/pocket-tts/pocket_tts_api
+cp -a services/pocket-tts-api/pocket_tts_api/. /opt/pocket-tts/pocket_tts_api/
 cp -a services/image-api/image_api/. /opt/gpu45-image-api/image_api/
 cp -a services/whisper-api/whisper_api/. /opt/gpu45-whisper-api/whisper_api/
 cp -a services/wan2-video-api/wan_api/. /opt/wan2.2/wan_api/
-for unit in gpu45-backup.service gpu45-backup.timer gpu45-backup-verify.service gpu45-backup-verify.timer gpu45-restore-drill.service gpu45-restore-drill.timer; do
+install -m 0755 scripts/gpu45-storage-retention.sh /usr/local/sbin/gpu45-storage-retention
+for unit in gpu45-backup.service gpu45-backup.timer gpu45-backup-verify.service gpu45-backup-verify.timer gpu45-restore-drill.service gpu45-restore-drill.timer gpu45-storage-retention.service gpu45-storage-retention.timer; do
   install -m 0644 "deploy/systemd/$unit" "/etc/systemd/system/$unit"
 done
 
 if [[ -L "$current_link" ]]; then
   previous_target="$(readlink -f "$current_link")"
 fi
-ln -sfn "$release_dir" "$current_link"
+ln -sfn "$release_dir" "$slots_root/$target_port"
+
+if [[ ! -f "$caddy_upstream" ]]; then
+  printf 'reverse_proxy 127.0.0.1:%s\n' "$active_port" > "$caddy_upstream"
+fi
+install -m 0644 deploy/caddy/Caddyfile /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile
 systemctl daemon-reload
+systemctl enable gpu45-pocket-tts-api.service
+systemctl restart gpu45-pocket-tts-api.service
 systemctl enable gpu45-resource-manager.service
-systemctl restart gpu45-resource-manager.service
-systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer
-systemctl restart gpu45-responses-proxy.service gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
+systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer gpu45-storage-retention.timer
+systemctl enable "gpu45-provider-appliance@$target_port.service"
+systemctl restart "gpu45-provider-appliance@$target_port.service"
 
 healthy=false
 for _ in $(seq 1 30); do
-  if curl -fsS --max-time 5 http://127.0.0.1:3010/api/health/summary >/dev/null; then
+  if release_healthy "http://127.0.0.1:$target_port"; then
     healthy=true
     break
   fi
@@ -133,17 +210,73 @@ for _ in $(seq 1 30); do
 done
 
 if [[ "$healthy" != "true" ]]; then
-  echo "Release health check failed; rolling back" >&2
-  if [[ -n "$previous_target" && -d "$previous_target" ]]; then
-    ln -sfn "$previous_target" "$current_link"
-    systemctl restart gpu45-responses-proxy.service gpu45-provider-appliance-worker.service gpu45-provider-appliance.service
-  fi
+  echo "Release health check failed before traffic switch" >&2
+  systemctl stop "gpu45-provider-appliance@$target_port.service" || true
   exit 1
 fi
+
+previous_upstream="$(cat "$caddy_upstream")"
+printf 'reverse_proxy 127.0.0.1:%s\n' "$target_port" > "$caddy_upstream.tmp"
+mv "$caddy_upstream.tmp" "$caddy_upstream"
+caddy validate --config /etc/caddy/Caddyfile
+systemctl reload caddy
+
+if ! release_healthy "http://127.0.0.1" "192-168-50-189.nip.io"; then
+  echo "Release failed after traffic switch; restoring previous upstream" >&2
+  printf '%s\n' "$previous_upstream" > "$caddy_upstream"
+  systemctl reload caddy
+  systemctl stop "gpu45-provider-appliance@$target_port.service" || true
+  exit 1
+fi
+
+ln -sfn "$release_dir" "$current_link"
+printf '%s\n' "$target_port" > "$active_port_file"
+chmod 0644 "$active_port_file"
+systemctl restart gpu45-resource-manager.service gpu45-responses-proxy.service gpu45-provider-appliance-worker.service
+systemctl try-restart qwen3-tts-api.service gpu45-image-api.service gpu45-whisper-api.service wan2-video-api.service || true
+
+final_healthy=false
+for _ in $(seq 1 20); do
+  if release_healthy "http://127.0.0.1" "192-168-50-189.nip.io"; then
+    final_healthy=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$final_healthy" != "true" ]]; then
+  echo "Release failed after dependent services restarted" >&2
+  printf '%s\n' "$previous_upstream" > "$caddy_upstream"
+  systemctl reload caddy
+  if [[ -n "$previous_target" && -d "$previous_target" ]]; then
+    ln -sfn "$previous_target" "$current_link"
+  fi
+  printf '%s\n' "$active_port" > "$active_port_file"
+  systemctl restart gpu45-resource-manager.service gpu45-responses-proxy.service gpu45-provider-appliance-worker.service
+  systemctl stop "gpu45-provider-appliance@$target_port.service" || true
+  exit 1
+fi
+
+systemctl stop gpu45-provider-appliance.service || true
+systemctl disable gpu45-provider-appliance.service || true
+systemctl reset-failed gpu45-provider-appliance.service || true
+if [[ "$active_port" != "$target_port" ]]; then
+  systemctl stop "gpu45-provider-appliance@$active_port.service" || true
+  systemctl disable "gpu45-provider-appliance@$active_port.service" || true
+fi
+systemctl disable llama-openai.service || true
+systemctl stop llama-openai.service || true
+systemctl disable qwen3-tts-api.service gpu45-image-api.service gpu45-whisper-api.service wan2-video-api.service || true
 
 mapfile -t old_releases < <(find "$releases_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2-)
 for old_release in "${old_releases[@]:-}"; do
   [[ -n "$old_release" ]] && rm -rf -- "$old_release"
+done
+
+for dependency_dir in "$shared_root"/*; do
+  [[ -d "$dependency_dir" ]] || continue
+  if ! find "$releases_root" -maxdepth 2 -type l -name node_modules -lname "$dependency_dir/node_modules" | grep -q .; then
+    rm -rf -- "$dependency_dir"
+  fi
 done
 
 echo "Deployed GPU45 release $short_commit at $released_at"

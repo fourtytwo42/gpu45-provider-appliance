@@ -12,6 +12,7 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadF
 from fastapi.responses import FileResponse
 from faster_whisper import WhisperModel
 from pydantic import BaseModel
+from gpu45_resource import acquire_lease
 from .job_store import JobStore
 
 MODEL_NAMES = ["tiny", "base", "small", "medium", "large-v3", "turbo"]
@@ -21,6 +22,7 @@ TRANSCRIPT_DIR = DATA_DIR / "transcripts"
 JOBS_PATH = DATA_DIR / "jobs.json"
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+GPU_ENABLED = DEVICE.lower() != "cpu"
 
 _jobs_lock = Lock()
 _model_lock = Lock()
@@ -142,8 +144,12 @@ def write_markdown(job: dict, segments, info) -> Path:
 
 def run_transcription(job_id: str, input_path: str) -> None:
     started = time.time()
+    lease = None
     try:
-        job = update_job(job_id, status="running", started_at=now_iso(), progress_percent=1.0, progress_label="Loading model", eta_seconds=None)
+        job = update_job(job_id, status="running", started_at=now_iso(), progress_percent=1.0, progress_label="Waiting for compute", eta_seconds=None)
+        if GPU_ENABLED:
+            lease = acquire_lease(job_id, "whisper", 70, False, "atomic", timeout=1800)
+        update_job(job_id, progress_label="Loading model")
         model = get_model(job["model"])
         segments_iter, info = model.transcribe(
             input_path,
@@ -199,6 +205,9 @@ def run_transcription(job_id: str, input_path: str) -> None:
         )
     except Exception as exc:
         update_job(job_id, status="failed", completed_at=now_iso(), duration_seconds=round(time.time() - started, 2), progress_percent=100.0, progress_label="Failed", eta_seconds=0.0, error=str(exc))
+    finally:
+        if lease is not None:
+            lease.release()
 
 
 @app.get("/")

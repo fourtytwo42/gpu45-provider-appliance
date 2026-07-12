@@ -8,8 +8,10 @@ import { demoSnapshot } from "./demo-data";
 import { listModelFiles, readContainerText, readHostText, runHostCommand } from "./proxmox";
 import {
   parseCurvePoints,
-  parsePrometheusSample,
 } from "./parsers";
+import { collectProviderRuntimeSnapshot } from "./provider-state";
+import { getPersistedOperationalTelemetry } from "./operational-state";
+import { getResourceState } from "./resource-manager";
 import type {
   AuditEvent,
   BenchmarkRun,
@@ -116,63 +118,7 @@ type FanStateSnapshot = {
 };
 
 export async function collectProviderSnapshot(): Promise<ProviderSnapshot> {
-  const cfg = getConfig();
-  const [backendModelsResponse, proxyModelsResponse, metricsText] = await Promise.all([
-    fetch(`${cfg.backendUrl}/v1/models`, { cache: "no-store" }).then(async (response) => {
-      if (!response.ok) throw new Error(`backend model probe failed: ${response.status}`);
-      return response.json();
-    }).catch(() => null),
-    fetch(`${cfg.providerUrl}/v1/models`, { cache: "no-store" }).then(async (response) => {
-      if (!response.ok) throw new Error(`model probe failed: ${response.status}`);
-      return response.json();
-    }).catch(() => null),
-    fetch(`${cfg.providerUrl}/metrics`, { cache: "no-store" }).then(async (response) => {
-      if (!response.ok) return "";
-      return response.text();
-    }),
-  ]);
-
-  const model = extractModelId(backendModelsResponse) ?? extractModelId(proxyModelsResponse) ?? "unknown";
-  const metrics = parsePrometheusSample(metricsText, [
-    "llamacpp:requests_processing",
-    "llamacpp:prompt_tokens_total",
-    "llamacpp:tokens_predicted_total",
-    "llamacpp:prompt_tokens_seconds",
-    "llamacpp:predicted_tokens_seconds",
-  ]);
-
-  const requestsProcessing = metrics["llamacpp:requests_processing"] ?? 0;
-  const promptTokens = metrics["llamacpp:prompt_tokens_total"] ?? 0;
-  const completionTokens = metrics["llamacpp:tokens_predicted_total"] ?? 0;
-  const tokensPerSecond = metrics["llamacpp:predicted_tokens_seconds"] ?? 0;
-
-  let status: ProviderSnapshot["status"] = "idle";
-  if (requestsProcessing > 0) status = "generating";
-  if (metricsText.length === 0) status = "loading";
-
-  return {
-    status,
-    model,
-    providerUrl: cfg.providerUrl,
-    activeRequests: requestsProcessing,
-    promptTokens: Math.round(promptTokens),
-    completionTokens: Math.round(completionTokens),
-    tokensPerSecond,
-    metrics,
-    lastError: null,
-  };
-}
-
-function extractModelId(response: unknown): string | null {
-  const dataModel = (response as { data?: Array<{ id?: string; model?: string; name?: string }> } | null)?.data?.[0];
-  if (dataModel?.id) return dataModel.id;
-  if (dataModel?.model) return dataModel.model;
-  if (dataModel?.name) return dataModel.name;
-  const modelsModel = (response as { models?: Array<{ id?: string; model?: string; name?: string }> } | null)?.models?.[0];
-  if (modelsModel?.id) return modelsModel.id;
-  if (modelsModel?.model) return modelsModel.model;
-  if (modelsModel?.name) return modelsModel.name;
-  return null;
+  return collectProviderRuntimeSnapshot();
 }
 
 export async function collectSystemSnapshot(): Promise<SystemSnapshot> {
@@ -507,11 +453,17 @@ async function collectCharts(): Promise<DashboardSnapshot["charts"]> {
     orderBy: { capturedAt: "desc" },
     take: 65000,
   });
-  const values = (kind: string) =>
-    samples.filter((sample) => sample.kind === kind).reverse().map((sample) => ({
+  const values = (kind: string) => {
+    const points = samples.filter((sample) => sample.kind === kind).reverse().map((sample) => ({
       timestamp: sample.capturedAt.toISOString(),
       value: sample.value,
     }));
+    if (points.length <= 180) return points;
+    const stride = Math.ceil(points.length / 180);
+    const reduced = points.filter((_, index) => index % stride === 0);
+    if (reduced.at(-1)?.timestamp !== points.at(-1)?.timestamp) reduced.push(points.at(-1)!);
+    return reduced.slice(-180);
+  };
   const gpuTempEdgeValues = values("gpu_temp_edge");
   const gpuTempJunctionValues = values("gpu_temp_junction");
   const gpuTempMemoryValues = values("gpu_temp_memory");
@@ -562,7 +514,7 @@ export async function collectLiveTelemetry(): Promise<LiveTelemetry> {
   const [provider, system] = await Promise.all([
     collectProviderSnapshot().catch((error) => ({
       ...demoSnapshot.provider,
-      status: "offline" as const,
+      status: "failed" as const,
       lastError: error instanceof Error ? error.message : "Provider probe failed",
     })),
     collectSystemSnapshot().catch(() => demoSnapshot.system),
@@ -701,8 +653,10 @@ export async function persistSnapshot(snapshot: DashboardSnapshot): Promise<void
     ],
     ["cpu_usage", "cpu", snapshot.system.cpuUsage],
     ["ram_used", "ram", snapshot.system.ramUsedBytes / 1024 / 1024 / 1024],
+    ["ram_total", "ram", snapshot.system.ramTotalBytes / 1024 / 1024 / 1024],
     ["disk_used", "disk", snapshot.system.diskUsedBytes / 1024 / 1024 / 1024],
     ["disk_free", "disk", snapshot.system.diskFreeBytes / 1024 / 1024 / 1024],
+    ["disk_total", "disk", snapshot.system.diskTotalBytes / 1024 / 1024 / 1024],
     ["fan_pwm", "pwm", snapshot.system.fanPwm],
     ["fan_rpm", "rpm", snapshot.system.fanRpm],
     ["tokens_per_second", "tokens", snapshot.provider.tokensPerSecond],
@@ -773,6 +727,16 @@ export async function pruneTelemetry(): Promise<void> {
   await prisma.$executeRawUnsafe("PRAGMA wal_checkpoint(PASSIVE)");
   await prisma.$executeRawUnsafe("PRAGMA optimize");
   await prisma.$executeRawUnsafe("PRAGMA incremental_vacuum(2000)");
+}
+
+export async function collectOverviewSnapshot(): Promise<DashboardSnapshot> {
+  if (!isLiveRuntime()) return demoSnapshot;
+  const resources = await getResourceState();
+  const [telemetry, charts] = await Promise.all([
+    getPersistedOperationalTelemetry(resources),
+    collectCharts().catch(() => demoSnapshot.charts),
+  ]);
+  return { ...demoSnapshot, collectedAt: telemetry.collectedAt, provider: telemetry.provider, system: telemetry.system, charts };
 }
 
 export async function aggregateTelemetry(): Promise<void> {

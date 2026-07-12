@@ -10,6 +10,8 @@ import {
   deleteTtsVoice,
   deleteTtsVoiceJob,
   getTtsSnapshot,
+  getTtsAudiobook,
+  getTtsPresentation,
   importTtsVoice,
   renameTtsModel,
   renameTtsVoice,
@@ -24,7 +26,12 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const kind = url.searchParams.get("kind");
+  const id = url.searchParams.get("id");
+  if (kind === "audiobook" && id) return Response.json(await getTtsAudiobook(id));
+  if (kind === "presentation" && id) return Response.json(await getTtsPresentation(id));
   return Response.json(await getTtsSnapshot());
 }
 

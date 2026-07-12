@@ -17,6 +17,7 @@ export type OutputRecord = {
 
 function outputKind(kind: UnifiedJobKind): OutputKind | null {
   if (kind === "tts") return "audio";
+  if (kind === "pocket-tts") return "audio";
   if (kind === "audiobook") return "audiobook";
   if (kind === "presentation") return "presentation";
   if (kind === "whisper") return "transcript";

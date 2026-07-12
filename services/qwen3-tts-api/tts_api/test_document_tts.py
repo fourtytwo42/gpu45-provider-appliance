@@ -165,6 +165,14 @@ class DocumentTtsTests(unittest.TestCase):
         self.assertGreaterEqual(maximum, 100)
         self.assertLessEqual(maximum, 120)
 
+    def test_eta_uses_recent_median_chunk_time(self):
+        job = {"chunks": [
+            {"status": "completed", "started_at": "2026-07-11T10:00:00Z", "finished_at": "2026-07-11T10:00:20Z"},
+            {"status": "completed", "started_at": "2026-07-11T10:01:00Z", "finished_at": "2026-07-11T10:01:30Z"},
+            {"status": "pending"}, {"status": "pending"},
+        ]}
+        self.assertEqual(document_tts.estimate_audiobook_eta(job), 50.0)
+
 
 if __name__ == "__main__":
     unittest.main()

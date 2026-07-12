@@ -33,6 +33,52 @@ class SqliteStoreTests(unittest.TestCase):
         with store._connect_store() as db:
             self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
 
+    def test_audiobook_items_are_normalized_and_summary_is_compact(self):
+        store.save_audiobook_jobs([{
+            "id": "book-1",
+            "status": "completed",
+            "total_chunks": 2,
+            "completed_chunks": 2,
+            "failed_chunks": 0,
+            "chunks": [
+                {"index": 0, "status": "completed", "text": "One."},
+                {"index": 1, "status": "flagged", "text": "Two."},
+            ],
+        }])
+        with store._connect_store() as db:
+            parent = json.loads(db.execute(
+                "SELECT payload_json FROM records WHERE store_name='audiobook_jobs' AND record_id='book-1'"
+            ).fetchone()[0])
+            self.assertNotIn("chunks", parent)
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM audiobook_chunks WHERE job_id='book-1'"
+            ).fetchone()[0], 2)
+
+        summary = store.load_snapshot(include_items=False)["audiobookJobs"][0]
+        self.assertTrue(summary["items_truncated"])
+        self.assertEqual(summary["chunks"], [])
+        full = store.get_audiobook_job_by_id("book-1")
+        self.assertFalse(full["items_truncated"])
+        self.assertEqual([item["text"] for item in full["chunks"]], ["One.", "Two."])
+
+        store.update_audiobook_chunk("book-1", 1, status="completed", text="Two fixed.")
+        updated = store.get_audiobook_job_by_id("book-1")
+        self.assertEqual(updated["completed_chunks"], 2)
+        self.assertEqual(updated["chunks"][1]["text"], "Two fixed.")
+
+    def test_active_presentation_keeps_slides_in_summary(self):
+        store.save_presentation_jobs([{
+            "id": "deck-1",
+            "status": "running",
+            "total_slides": 1,
+            "completed_slides": 0,
+            "failed_slides": 0,
+            "slides": [{"index": 0, "status": "running", "text": "Welcome."}],
+        }])
+        summary = store.load_snapshot(include_items=False)["presentationJobs"][0]
+        self.assertFalse(summary["items_truncated"])
+        self.assertEqual(summary["slides"][0]["text"], "Welcome.")
+
 
 if __name__ == "__main__":
     unittest.main()

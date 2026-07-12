@@ -16,6 +16,10 @@ Environment=WHISPER_COMPUTE_TYPE=int8
 ExecStart=/opt/gpu45-whisper-venv/bin/python -m whisper_api
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=45
+KillMode=control-group
+MemoryHigh=20G
+MemoryMax=28G
 
 [Install]
 WantedBy=multi-user.target

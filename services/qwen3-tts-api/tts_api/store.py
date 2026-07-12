@@ -31,7 +31,7 @@ CHECKPOINT_DIR = "checkpoint"
 TRAIN_RAW_JSONL = "train_raw.jsonl"
 TRAIN_WITH_CODES_JSONL = "train_with_codes.jsonl"
 STORE_DB = "jobs.db"
-STORE_SCHEMA_VERSION = "1"
+STORE_SCHEMA_VERSION = "2"
 _STORE_LOCK = threading.RLock()
 
 
@@ -183,6 +183,22 @@ def _connect_store() -> sqlite3.Connection:
         );
         CREATE INDEX IF NOT EXISTS records_store_position_idx
           ON records(store_name, position);
+        CREATE TABLE IF NOT EXISTS audiobook_chunks (
+          job_id TEXT NOT NULL,
+          item_index INTEGER NOT NULL,
+          payload_json TEXT NOT NULL,
+          updated_at REAL NOT NULL,
+          PRIMARY KEY (job_id, item_index)
+        );
+        CREATE TABLE IF NOT EXISTS presentation_slides (
+          job_id TEXT NOT NULL,
+          item_index INTEGER NOT NULL,
+          payload_json TEXT NOT NULL,
+          updated_at REAL NOT NULL,
+          PRIMARY KEY (job_id, item_index)
+        );
+        CREATE INDEX IF NOT EXISTS audiobook_chunks_job_idx ON audiobook_chunks(job_id, item_index);
+        CREATE INDEX IF NOT EXISTS presentation_slides_job_idx ON presentation_slides(job_id, item_index);
         """
     )
     db.execute(
@@ -206,6 +222,7 @@ def _backup_migrated_json(path: str) -> str:
 def _ensure_imported(db: sqlite3.Connection, store_name: str, json_path: str) -> None:
     key = _migration_key(store_name)
     if db.execute("SELECT 1 FROM metadata WHERE key=?", (key,)).fetchone():
+        _ensure_normalized_items(db, store_name)
         return
     records = _load_json_list(json_path)
     if os.path.exists(json_path):
@@ -219,16 +236,189 @@ def _ensure_imported(db: sqlite3.Connection, store_name: str, json_path: str) ->
             (store_name, record_id, position, json.dumps(record, ensure_ascii=False), stamp),
         )
     db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (key, str(int(stamp))))
+    _ensure_normalized_items(db, store_name)
+
+
+def _child_spec(store_name: str) -> tuple[str, str] | None:
+    if store_name == "audiobook_jobs":
+        return "audiobook_chunks", "chunks"
+    if store_name == "presentation_jobs":
+        return "presentation_slides", "slides"
+    return None
+
+
+def _ensure_normalized_items(db: sqlite3.Connection, store_name: str) -> None:
+    spec = _child_spec(store_name)
+    if not spec:
+        return
+    table, field = spec
+    key = f"normalized_items:v2:{store_name}"
+    if db.execute("SELECT 1 FROM metadata WHERE key=?", (key,)).fetchone():
+        return
+    stamp = time.time()
+    rows = db.execute(
+        "SELECT record_id,payload_json FROM records WHERE store_name=?",
+        (store_name,),
+    ).fetchall()
+    for row in rows:
+        payload = json.loads(row["payload_json"])
+        items = payload.pop(field, [])
+        db.execute(
+            "UPDATE records SET payload_json=?,updated_at=? WHERE store_name=? AND record_id=?",
+            (json.dumps(payload, ensure_ascii=False), stamp, store_name, row["record_id"]),
+        )
+        for position, item in enumerate(items):
+            item_index = int(item.get("index", position))
+            db.execute(
+                f"INSERT OR REPLACE INTO {table}(job_id,item_index,payload_json,updated_at) VALUES(?,?,?,?)",
+                (row["record_id"], item_index, json.dumps(item, ensure_ascii=False), stamp),
+            )
+    db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (key, str(int(stamp))))
+
+
+def _load_records(db: sqlite3.Connection, store_name: str, *, include_items: bool = True) -> List[Dict[str, Any]]:
+    rows = db.execute(
+        "SELECT record_id,payload_json FROM records WHERE store_name=? ORDER BY position",
+        (store_name,),
+    ).fetchall()
+    records = [json.loads(row["payload_json"]) for row in rows]
+    spec = _child_spec(store_name)
+    if not spec:
+        return records
+    table, field = spec
+    for record in records:
+        active = record.get("status") in ("queued", "running", "pausing", "paused")
+        if include_items or active:
+            item_rows = db.execute(
+                f"SELECT payload_json FROM {table} WHERE job_id=? ORDER BY item_index",
+                (str(record.get("id")),),
+            ).fetchall()
+            record[field] = [json.loads(item["payload_json"]) for item in item_rows]
+            record["items_truncated"] = False
+        else:
+            record[field] = []
+            record["items_truncated"] = True
+    return records
+
+
+def _load_record(db: sqlite3.Connection, store_name: str, record_id: str, *, include_items: bool = True) -> Optional[Dict[str, Any]]:
+    row = db.execute(
+        "SELECT payload_json FROM records WHERE store_name=? AND record_id=?",
+        (store_name, record_id),
+    ).fetchone()
+    if not row:
+        return None
+    record = json.loads(row["payload_json"])
+    spec = _child_spec(store_name)
+    if spec:
+        table, field = spec
+        if include_items:
+            item_rows = db.execute(
+                f"SELECT payload_json FROM {table} WHERE job_id=? ORDER BY item_index",
+                (record_id,),
+            ).fetchall()
+            record[field] = [json.loads(item["payload_json"]) for item in item_rows]
+            record["items_truncated"] = False
+        else:
+            record[field] = []
+            record["items_truncated"] = True
+    return record
+
+
+def _update_parent_record(store_name: str, json_path: str, record_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    with _STORE_LOCK, _connect_store() as db:
+        _ensure_imported(db, store_name, json_path)
+        row = db.execute(
+            "SELECT payload_json FROM records WHERE store_name=? AND record_id=?",
+            (store_name, record_id),
+        ).fetchone()
+        if not row:
+            return None
+        payload = json.loads(row["payload_json"])
+        payload.update(updates)
+        db.execute(
+            "UPDATE records SET payload_json=?,updated_at=? WHERE store_name=? AND record_id=?",
+            (json.dumps(payload, ensure_ascii=False), time.time(), store_name, record_id),
+        )
+        return _load_record(db, store_name, record_id)
+
+
+def _update_child_item(
+    store_name: str,
+    json_path: str,
+    record_id: str,
+    item_index: int,
+    updates: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    spec = _child_spec(store_name)
+    if not spec:
+        return None
+    table, _ = spec
+    with _STORE_LOCK, _connect_store() as db:
+        _ensure_imported(db, store_name, json_path)
+        row = db.execute(
+            f"SELECT payload_json FROM {table} WHERE job_id=? AND item_index=?",
+            (record_id, int(item_index)),
+        ).fetchone()
+        if not row:
+            return None
+        payload = json.loads(row["payload_json"])
+        payload.update(updates)
+        stamp = time.time()
+        db.execute(
+            f"UPDATE {table} SET payload_json=?,updated_at=? WHERE job_id=? AND item_index=?",
+            (json.dumps(payload, ensure_ascii=False), stamp, record_id, int(item_index)),
+        )
+        item_rows = db.execute(f"SELECT payload_json FROM {table} WHERE job_id=?", (record_id,)).fetchall()
+        items = [json.loads(item["payload_json"]) for item in item_rows]
+        parent_row = db.execute(
+            "SELECT payload_json FROM records WHERE store_name=? AND record_id=?",
+            (store_name, record_id),
+        ).fetchone()
+        if parent_row:
+            parent = json.loads(parent_row["payload_json"])
+            completed_states = {"completed", "flagged"} if store_name == "audiobook_jobs" else {"completed", "empty", "flagged"}
+            completed = sum(1 for item in items if item.get("status") in completed_states)
+            failed = sum(1 for item in items if item.get("status") == "failed")
+            total_key = "total_chunks" if store_name == "audiobook_jobs" else "total_slides"
+            completed_key = "completed_chunks" if store_name == "audiobook_jobs" else "completed_slides"
+            failed_key = "failed_chunks" if store_name == "audiobook_jobs" else "failed_slides"
+            total = max(1, int(parent.get(total_key) or len(items) or 1))
+            parent.update({
+                completed_key: completed,
+                failed_key: failed,
+                "progress_percent": round((completed / total) * 100, 1),
+                "updated_at": updates.get("updated_at", parent.get("updated_at")),
+            })
+            db.execute(
+                "UPDATE records SET payload_json=?,updated_at=? WHERE store_name=? AND record_id=?",
+                (json.dumps(parent, ensure_ascii=False), stamp, store_name, record_id),
+            )
+        return payload
 
 
 def _load_store(store_name: str, json_path: str) -> List[Dict[str, Any]]:
     with _STORE_LOCK, _connect_store() as db:
         _ensure_imported(db, store_name, json_path)
-        rows = db.execute(
-            "SELECT payload_json FROM records WHERE store_name=? ORDER BY position",
-            (store_name,),
-        ).fetchall()
-        return [json.loads(row["payload_json"]) for row in rows]
+        return _load_records(db, store_name)
+
+
+def load_snapshot(*, include_items: bool = True) -> Dict[str, List[Dict[str, Any]]]:
+    """Read every UI-facing store while holding the lock only once."""
+    stores = {
+        "voices": ("voices", voices_json_path()),
+        "voiceJobs": ("voice_jobs", voice_jobs_json_path()),
+        "models": ("models", models_json_path()),
+        "synthesisJobs": ("synthesis_jobs", synthesis_jobs_json_path()),
+        "audiobookJobs": ("audiobook_jobs", audiobook_jobs_json_path()),
+        "presentationJobs": ("presentation_jobs", presentation_jobs_json_path()),
+    }
+    result: Dict[str, List[Dict[str, Any]]] = {}
+    with _STORE_LOCK, _connect_store() as db:
+        for output_name, (store_name, json_path) in stores.items():
+            _ensure_imported(db, store_name, json_path)
+            result[output_name] = _load_records(db, store_name, include_items=include_items)
+    return result
 
 
 def _save_store(store_name: str, json_path: str, records: List[Dict[str, Any]]) -> None:
@@ -237,13 +427,28 @@ def _save_store(store_name: str, json_path: str, records: List[Dict[str, Any]]) 
         db.commit()
         db.execute("BEGIN IMMEDIATE")
         db.execute("DELETE FROM records WHERE store_name=?", (store_name,))
+        spec = _child_spec(store_name)
+        if spec:
+            db.execute(f"DELETE FROM {spec[0]}")
         stamp = time.time()
         for position, record in enumerate(records):
             record_id = str(record.get("id") or f"legacy-{position}")
+            stored_record = dict(record)
+            items = []
+            if spec:
+                items = stored_record.pop(spec[1], [])
+                stored_record.pop("items_truncated", None)
             db.execute(
                 "INSERT INTO records(store_name,record_id,position,payload_json,updated_at) VALUES(?,?,?,?,?)",
-                (store_name, record_id, position, json.dumps(record, ensure_ascii=False), stamp),
+                (store_name, record_id, position, json.dumps(stored_record, ensure_ascii=False), stamp),
             )
+            if spec:
+                for item_position, item in enumerate(items):
+                    item_index = int(item.get("index", item_position))
+                    db.execute(
+                        f"INSERT INTO {spec[0]}(job_id,item_index,payload_json,updated_at) VALUES(?,?,?,?)",
+                        (record_id, item_index, json.dumps(item, ensure_ascii=False), stamp),
+                    )
         db.commit()
 
 
@@ -405,40 +610,17 @@ def save_audiobook_jobs(jobs: List[Dict[str, Any]]) -> None:
 
 
 def get_audiobook_job_by_id(job_id: str) -> Optional[Dict[str, Any]]:
-    for job in load_audiobook_jobs():
-        if job.get("id") == job_id:
-            return job
-    return None
+    with _STORE_LOCK, _connect_store() as db:
+        _ensure_imported(db, "audiobook_jobs", audiobook_jobs_json_path())
+        return _load_record(db, "audiobook_jobs", job_id)
 
 
 def update_audiobook_job(job_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
-    jobs = load_audiobook_jobs()
-    for job in jobs:
-        if job.get("id") == job_id:
-            job.update(kwargs)
-            save_audiobook_jobs(jobs)
-            return job
-    return None
+    return _update_parent_record("audiobook_jobs", audiobook_jobs_json_path(), job_id, kwargs)
 
 
 def update_audiobook_chunk(job_id: str, index: int, **kwargs: Any) -> Optional[Dict[str, Any]]:
-    jobs = load_audiobook_jobs()
-    for job in jobs:
-        if job.get("id") != job_id:
-            continue
-        for chunk in job.get("chunks", []):
-            if int(chunk.get("index", -1)) == int(index):
-                chunk.update(kwargs)
-                completed = sum(1 for c in job.get("chunks", []) if c.get("status") == "completed")
-                failed = sum(1 for c in job.get("chunks", []) if c.get("status") == "failed")
-                total = max(1, int(job.get("total_chunks") or len(job.get("chunks", [])) or 1))
-                job["completed_chunks"] = completed
-                job["failed_chunks"] = failed
-                job["progress_percent"] = round((completed / total) * 100, 1)
-                job["updated_at"] = kwargs.get("updated_at", job.get("updated_at"))
-                save_audiobook_jobs(jobs)
-                return chunk
-    return None
+    return _update_child_item("audiobook_jobs", audiobook_jobs_json_path(), job_id, index, kwargs)
 
 
 def delete_audiobook_job(job_id: str) -> Optional[Dict[str, Any]]:
@@ -468,40 +650,17 @@ def save_presentation_jobs(jobs: List[Dict[str, Any]]) -> None:
 
 
 def get_presentation_job_by_id(job_id: str) -> Optional[Dict[str, Any]]:
-    for job in load_presentation_jobs():
-        if job.get("id") == job_id:
-            return job
-    return None
+    with _STORE_LOCK, _connect_store() as db:
+        _ensure_imported(db, "presentation_jobs", presentation_jobs_json_path())
+        return _load_record(db, "presentation_jobs", job_id)
 
 
 def update_presentation_job(job_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
-    jobs = load_presentation_jobs()
-    for job in jobs:
-        if job.get("id") == job_id:
-            job.update(kwargs)
-            save_presentation_jobs(jobs)
-            return job
-    return None
+    return _update_parent_record("presentation_jobs", presentation_jobs_json_path(), job_id, kwargs)
 
 
 def update_presentation_slide(job_id: str, index: int, **kwargs: Any) -> Optional[Dict[str, Any]]:
-    jobs = load_presentation_jobs()
-    for job in jobs:
-        if job.get("id") != job_id:
-            continue
-        for slide in job.get("slides", []):
-            if int(slide.get("index", -1)) == int(index):
-                slide.update(kwargs)
-                processed = sum(1 for s in job.get("slides", []) if s.get("status") in ("completed", "empty", "flagged"))
-                failed = sum(1 for s in job.get("slides", []) if s.get("status") == "failed")
-                total = max(1, int(job.get("total_slides") or len(job.get("slides", [])) or 1))
-                job["completed_slides"] = processed
-                job["failed_slides"] = failed
-                job["progress_percent"] = round((processed / total) * 100, 1)
-                job["updated_at"] = kwargs.get("updated_at", job.get("updated_at"))
-                save_presentation_jobs(jobs)
-                return slide
-    return None
+    return _update_child_item("presentation_jobs", presentation_jobs_json_path(), job_id, index, kwargs)
 
 
 def delete_presentation_job(job_id: str) -> Optional[Dict[str, Any]]:

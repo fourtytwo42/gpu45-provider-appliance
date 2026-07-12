@@ -1,0 +1,28 @@
+[Unit]
+Description=GPU45 Pocket TTS CPU API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hendo420
+Group=hendo420
+WorkingDirectory=/opt/pocket-tts
+Environment=POCKET_TTS_HOST=127.0.0.1
+Environment=POCKET_TTS_PORT=8002
+Environment=POCKET_TTS_DATA=/models/pocket-tts/data
+Environment=HF_HOME=/models/pocket-tts/cache
+Environment=OMP_NUM_THREADS=2
+Environment=MKL_NUM_THREADS=2
+ExecStart=/opt/pocket-tts-venv/bin/python -m pocket_tts_api
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/models/pocket-tts
+
+[Install]
+WantedBy=multi-user.target

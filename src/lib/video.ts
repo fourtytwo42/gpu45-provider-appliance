@@ -1,4 +1,5 @@
 import { getConfig } from "./config";
+import { managedServiceFetch } from "./managed-service";
 
 export type VideoJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
@@ -6,6 +7,7 @@ export type VideoJob = {
   id: string;
   profile?: string;
   profile_name?: string;
+  mode?: "t2v" | "i2v";
   prompt: string;
   negative_prompt?: string;
   size: string;
@@ -31,6 +33,17 @@ export type VideoProfile = {
   repo: string;
   model_dir: string;
   ready: boolean;
+  assets_ready?: boolean;
+  availability_reason?: string | null;
+  backend?: string;
+  modes?: Array<"t2v" | "i2v">;
+  sizes?: string[];
+  durations?: number[];
+  step_counts?: number[];
+  default_steps?: number;
+  default_fps?: number;
+  expected_vram_gb?: number | null;
+  known_limitations?: string[];
 };
 
 export type VideoSnapshot = {
@@ -39,22 +52,24 @@ export type VideoSnapshot = {
   modelReady: boolean;
   profiles: VideoProfile[];
   jobs: VideoJob[];
+  sleeping?: boolean;
   error?: string;
 };
+
+let lastSnapshot: VideoSnapshot | null = null;
 
 function videoUrl(path: string): string {
   return `${getConfig().videoUrl.replace(/\/$/, "")}${path}`;
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(videoUrl(path), {
+async function fetchJson<T>(path: string, init?: RequestInit, wake = true): Promise<T> {
+  const response = await managedServiceFetch("video", videoUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
-    cache: "no-store",
-  });
+  }, { wake, startupTimeoutMs: 120_000 });
   if (!response.ok) throw new Error(await response.text());
   return await response.json() as T;
 }
@@ -63,11 +78,23 @@ export async function getVideoSnapshot(): Promise<VideoSnapshot> {
   const serviceUrl = getConfig().videoUrl;
   try {
     const [health, jobs] = await Promise.all([
-      fetchJson<{ status: string; model_ready: boolean; profiles?: VideoProfile[] }>("/health"),
-      fetchJson<VideoJob[]>("/jobs"),
+      fetchJson<{ status: string; model_ready: boolean; profiles?: VideoProfile[] }>("/health", undefined, false),
+      fetchJson<VideoJob[]>("/jobs", undefined, false),
     ]);
-    return { healthy: health.status === "ok", serviceUrl, modelReady: health.model_ready, profiles: health.profiles ?? [], jobs };
+    const snapshot = { healthy: health.status === "ok", serviceUrl, modelReady: health.model_ready, profiles: health.profiles ?? [], jobs };
+    lastSnapshot = snapshot;
+    return snapshot;
   } catch (error) {
+    if (lastSnapshot) return { ...lastSnapshot, sleeping: true };
+    try {
+      const health = await fetchJson<{ status: string; model_ready: boolean; profiles?: VideoProfile[] }>("/health", undefined, true);
+      const jobs = await fetchJson<VideoJob[]>("/jobs", undefined, false);
+      const snapshot = { healthy: health.status === "ok", sleeping: false, serviceUrl, modelReady: health.model_ready, profiles: health.profiles ?? [], jobs };
+      lastSnapshot = snapshot;
+      return snapshot;
+    } catch {
+      // Return the original connection failure below.
+    }
     return {
       healthy: false,
       serviceUrl,
@@ -96,6 +123,12 @@ export async function cancelVideoJob(id: string): Promise<Record<string, unknown
 
 export async function deleteVideoJob(id: string): Promise<Record<string, unknown>> {
   return await fetchJson<Record<string, unknown>>(`/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function fetchVideoOutput(id: string): Promise<Response> {
+  const response = await managedServiceFetch("video", videoUrl(`/jobs/${encodeURIComponent(id)}/video`), undefined, { wake: true, startupTimeoutMs: 120_000 });
+  if (!response.ok) throw new Error(await response.text());
+  return response;
 }
 
 export function videoOutputUrl(id: string): string {

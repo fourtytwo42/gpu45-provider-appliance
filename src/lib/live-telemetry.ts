@@ -2,7 +2,7 @@ import os from "node:os";
 import { getConfig, isLiveRuntime } from "./config";
 import { runBash, shQuote } from "./command";
 import { demoSnapshot } from "./demo-data";
-import { parsePrometheusSample } from "./parsers";
+import { collectProviderRuntimeSnapshot } from "./provider-state";
 import type { LiveTelemetry, ProviderSnapshot, SystemSnapshot } from "./types";
 
 function clamp(v: number, min: number, max: number): number {
@@ -71,67 +71,7 @@ type FanStateSnapshot = {
 };
 
 export async function collectLiveProviderSnapshot(): Promise<ProviderSnapshot> {
-  const cfg = getConfig();
-  const [backendModelsResponse, proxyModelsResponse, metricsText] = await Promise.all([
-    fetch(`${cfg.backendUrl}/v1/models`, { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`backend model probe failed: ${response.status}`);
-        return response.json();
-      })
-      .catch(() => null),
-    fetch(`${cfg.providerUrl}/v1/models`, { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`model probe failed: ${response.status}`);
-        return response.json();
-      })
-      .catch(() => null),
-    fetch(`${cfg.providerUrl}/metrics`, { cache: "no-store" }).then(async (response) => {
-      if (!response.ok) return "";
-      return response.text();
-    }),
-  ]);
-
-  const model = extractModelId(backendModelsResponse) ?? extractModelId(proxyModelsResponse) ?? "unknown";
-  const metrics = parsePrometheusSample(metricsText, [
-    "llamacpp:requests_processing",
-    "llamacpp:prompt_tokens_total",
-    "llamacpp:tokens_predicted_total",
-    "llamacpp:prompt_tokens_seconds",
-    "llamacpp:predicted_tokens_seconds",
-  ]);
-
-  const requestsProcessing = metrics["llamacpp:requests_processing"] ?? 0;
-  const promptTokens = metrics["llamacpp:prompt_tokens_total"] ?? 0;
-  const completionTokens = metrics["llamacpp:tokens_predicted_total"] ?? 0;
-  const tokensPerSecond = metrics["llamacpp:predicted_tokens_seconds"] ?? 0;
-
-  let status: ProviderSnapshot["status"] = "idle";
-  if (requestsProcessing > 0) status = "generating";
-  if (metricsText.length === 0) status = "loading";
-
-  return {
-    status,
-    model,
-    providerUrl: cfg.providerUrl,
-    activeRequests: requestsProcessing,
-    promptTokens: Math.round(promptTokens),
-    completionTokens: Math.round(completionTokens),
-    tokensPerSecond,
-    metrics,
-    lastError: null,
-  };
-}
-
-function extractModelId(response: unknown): string | null {
-  const dataModel = (response as { data?: Array<{ id?: string; model?: string; name?: string }> } | null)?.data?.[0];
-  if (dataModel?.id) return dataModel.id;
-  if (dataModel?.model) return dataModel.model;
-  if (dataModel?.name) return dataModel.name;
-  const modelsModel = (response as { models?: Array<{ id?: string; model?: string; name?: string }> } | null)?.models?.[0];
-  if (modelsModel?.id) return modelsModel.id;
-  if (modelsModel?.model) return modelsModel.model;
-  if (modelsModel?.name) return modelsModel.name;
-  return null;
+  return collectProviderRuntimeSnapshot();
 }
 
 export async function collectLiveSystemSnapshot(): Promise<SystemSnapshot> {
@@ -359,7 +299,7 @@ export async function collectLiveTelemetry(): Promise<LiveTelemetry> {
   const [provider, system] = await Promise.all([
     collectLiveProviderSnapshot().catch((error) => ({
       ...demoSnapshot.provider,
-      status: "offline" as const,
+      status: "failed" as const,
       lastError: error instanceof Error ? error.message : "Provider probe failed",
     })),
     collectLiveSystemSnapshot().catch(() => demoSnapshot.system),

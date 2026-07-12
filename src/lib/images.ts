@@ -1,4 +1,5 @@
 import { getConfig } from "./config";
+import { managedServiceFetch } from "./managed-service";
 
 export type ImageJobStatus = "queued" | "running" | "completed" | "failed";
 
@@ -59,22 +60,24 @@ export type ImageSnapshot = {
   serviceUrl: string;
   profiles: ImageProfile[];
   jobs: ImageJob[];
+  sleeping?: boolean;
   error?: string;
 };
+
+let lastSnapshot: ImageSnapshot | null = null;
 
 function imageUrl(path: string): string {
   return `${getConfig().imageUrl.replace(/\/$/, "")}${path}`;
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(imageUrl(path), {
+async function fetchJson<T>(path: string, init?: RequestInit, wake = true): Promise<T> {
+  const response = await managedServiceFetch("image", imageUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
-    cache: "no-store",
-  });
+  }, { wake });
   if (!response.ok) throw new Error(await response.text());
   return await response.json() as T;
 }
@@ -83,16 +86,30 @@ export async function getImageSnapshot(): Promise<ImageSnapshot> {
   const serviceUrl = getConfig().imageUrl;
   try {
     const [health, jobs] = await Promise.all([
-      fetchJson<{ status: string; profiles?: ImageProfile[] }>("/health"),
-      fetchJson<ImageJob[]>("/jobs"),
+      fetchJson<{ status: string; profiles?: ImageProfile[] }>("/health", undefined, false),
+      fetchJson<ImageJob[]>("/jobs", undefined, false),
     ]);
-    return {
+    const snapshot = {
       healthy: health.status === "ok",
       serviceUrl,
       profiles: health.profiles ?? [],
       jobs,
     };
+    lastSnapshot = snapshot;
+    return snapshot;
   } catch (error) {
+    if (lastSnapshot) return { ...lastSnapshot, sleeping: true };
+    try {
+      const [health, jobs] = await Promise.all([
+        fetchJson<{ status: string; profiles?: ImageProfile[] }>("/health", undefined, true),
+        fetchJson<ImageJob[]>("/jobs", undefined, false),
+      ]);
+      const snapshot = { healthy: health.status === "ok", sleeping: false, serviceUrl, profiles: health.profiles ?? [], jobs };
+      lastSnapshot = snapshot;
+      return snapshot;
+    } catch {
+      // Return the original connection failure below.
+    }
     return {
       healthy: false,
       serviceUrl,
@@ -119,7 +136,7 @@ export async function downloadImageModel(profile: string): Promise<Record<string
 }
 
 export async function fetchImageOutput(id: string): Promise<Response> {
-  const response = await fetch(imageUrl(`/jobs/${encodeURIComponent(id)}/image`), { cache: "no-store" });
+  const response = await managedServiceFetch("image", imageUrl(`/jobs/${encodeURIComponent(id)}/image`), undefined, { wake: true });
   if (!response.ok) throw new Error(await response.text());
   return response;
 }

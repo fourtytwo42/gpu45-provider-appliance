@@ -1,5 +1,5 @@
 import { LiveOverview } from "@/components/live-overview";
-import { collectDashboardSnapshot } from "@/lib/collectors";
+import { collectOverviewSnapshot } from "@/lib/collectors";
 import { getEndpointSettings } from "@/lib/api-keys";
 import { prisma } from "@/lib/db";
 import { headers } from "next/headers";
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function OverviewPage() {
   const [initial, settings, visibleModels, requestHeaders] = await Promise.all([
-    collectDashboardSnapshot(),
+    collectOverviewSnapshot(),
     getEndpointSettings(),
     prisma.modelAsset.count({ where: { served: true } }),
     headers(),

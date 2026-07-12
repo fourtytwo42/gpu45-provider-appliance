@@ -54,6 +54,67 @@ class ResourceManagerTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT status FROM leases WHERE lease_id='tts'").fetchone()[0], "interrupted")
             self.assertEqual(db.execute("SELECT value FROM state WHERE key='resume_tts'").fetchone()[0], "1")
 
+    def test_llm_grant_records_starting_transition(self):
+        with rm.connect() as db:
+            db.execute(
+                "INSERT INTO leases VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("llm", "codex", "llm", 100, 0, "keep-loaded", "queued", rm.now(), None, None, None, "{}"),
+            )
+            rm.grant_next(db)
+            self.assertEqual(db.execute("SELECT value FROM state WHERE key='transition'").fetchone()[0], "starting")
+
+    def test_restoring_stopped_llm_records_transition(self):
+        with rm.connect() as db:
+            db.execute(
+                "INSERT INTO leases VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("image", "image", "image", 70, 0, "restart", "active", rm.now(), rm.now(), rm.now(), None,
+                 '{"stoppedServices":["llama-openai.service"]}'),
+            )
+            lease = db.execute("SELECT * FROM leases WHERE lease_id='image'").fetchone()
+            original_action = rm.service_action
+            rm.service_action = lambda _action, _service: None
+            try:
+                rm.restore_after_release(db, lease)
+            finally:
+                rm.service_action = original_action
+            self.assertEqual(db.execute("SELECT value FROM state WHERE key='transition'").fetchone()[0], "restoring")
+
+    def test_idle_worker_stops_without_active_lease(self):
+        with rm.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO state(key,value) VALUES(?,?)",
+                ("worker:image:last_activity", "2000-01-01T00:00:00+00:00"),
+            )
+        stopped = []
+        original_active, original_action = rm.service_active, rm.service_action
+        rm.service_active = lambda service: service == rm.WORKER_SERVICES["image"]
+        rm.service_action = lambda action, service: stopped.append((action, service))
+        try:
+            rm.reap_idle_workers_once(now_epoch=rm.datetime(2026, 1, 1, tzinfo=rm.timezone.utc).timestamp())
+        finally:
+            rm.service_active, rm.service_action = original_active, original_action
+        self.assertEqual(stopped, [("stop", rm.WORKER_SERVICES["image"])])
+
+    def test_active_lease_protects_idle_worker(self):
+        with rm.connect() as db:
+            db.execute(
+                "INSERT INTO leases VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("image", "image", "image", 70, 0, "atomic", "active", rm.now(), rm.now(), rm.now(), None, "{}"),
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO state(key,value) VALUES(?,?)",
+                ("worker:image:last_activity", "2000-01-01T00:00:00+00:00"),
+            )
+        stopped = []
+        original_active, original_action = rm.service_active, rm.service_action
+        rm.service_active = lambda service: service == rm.WORKER_SERVICES["image"]
+        rm.service_action = lambda action, service: stopped.append((action, service))
+        try:
+            rm.reap_idle_workers_once(now_epoch=rm.datetime(2026, 1, 1, tzinfo=rm.timezone.utc).timestamp())
+        finally:
+            rm.service_active, rm.service_action = original_active, original_action
+        self.assertEqual(stopped, [])
+
 
 if __name__ == "__main__":
     unittest.main()

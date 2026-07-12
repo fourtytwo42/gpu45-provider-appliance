@@ -3,6 +3,7 @@ import pathlib
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from contextlib import closing
 
 
@@ -13,6 +14,27 @@ SPEC.loader.exec_module(PROXY)
 
 
 class NamespaceToolTranslationTests(unittest.TestCase):
+    def tearDown(self):
+        PROXY.cancel_llm_idle_unload()
+
+    @mock.patch.object(PROXY.subprocess, "run")
+    def test_idle_unload_stops_provider_for_current_generation(self, run):
+        PROXY.cancel_llm_idle_unload()
+        generation = PROXY.LLM_IDLE_GENERATION
+
+        PROXY.unload_llm_after_idle(generation)
+
+        run.assert_called_once_with(["systemctl", "stop", PROXY.PROVIDER_SERVICE], check=False, timeout=30)
+
+    @mock.patch.object(PROXY.subprocess, "run")
+    def test_stale_idle_unload_does_not_stop_provider(self, run):
+        stale_generation = PROXY.LLM_IDLE_GENERATION
+        PROXY.cancel_llm_idle_unload()
+
+        PROXY.unload_llm_after_idle(stale_generation)
+
+        run.assert_not_called()
+
     def test_flattens_namespace_tools_and_preserves_regular_tools(self):
         body = {
             "tools": [

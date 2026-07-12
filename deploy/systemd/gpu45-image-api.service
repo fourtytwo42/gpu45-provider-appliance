@@ -24,6 +24,10 @@ Environment=PYTHONPATH=/opt/gpu45/current/services/common
 ExecStart=/opt/gpu45-image-venv/bin/python -m image_api
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=45
+KillMode=control-group
+MemoryHigh=24G
+MemoryMax=29G
 
 [Install]
 WantedBy=multi-user.target

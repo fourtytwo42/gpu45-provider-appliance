@@ -1,7 +1,7 @@
 [Unit]
 Description=GPU45 Responses API compatibility proxy
-After=network-online.target gpu45-host-tune.service llama-openai.service
-Wants=network-online.target llama-openai.service
+After=network-online.target gpu45-host-tune.service
+Wants=network-online.target
 
 [Service]
 EnvironmentFile=/etc/gpu45/resource-manager.env

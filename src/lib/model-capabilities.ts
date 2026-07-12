@@ -16,6 +16,10 @@ export type ModelCapability = {
   bestPromptTps?: number | null;
   bestDecodeTps?: number | null;
   knownIssue?: string | null;
+  configured: boolean;
+  detected: boolean;
+  verified: boolean;
+  lastVerifiedAt?: string | null;
 };
 
 function modelKey(value: string): string {
@@ -42,6 +46,7 @@ export function deriveModelCapabilities(models: ModelAsset[], benchmarks: Benchm
     const benchMatches = benchmarks.filter((run) => modelKey(run.modelName).includes(modelKey(name).slice(0, 24)) || modelKey(name).includes(modelKey(run.modelName).slice(0, 24)));
     const bestPromptTps = benchMatches.length ? Math.max(...benchMatches.map((run) => run.promptTokensPerSecond)) : null;
     const bestDecodeTps = benchMatches.length ? Math.max(...benchMatches.map((run) => run.generationTokensPerSecond)) : null;
+    const latestBenchmark = benchMatches.map((run) => run.createdAt).sort((a, b) => b.localeCompare(a))[0];
     const mtp = Boolean(model.draftPath || /mtp/.test(lower));
     const maxContext = model.launchProfile?.ctxSize ?? 262144;
     const issue = knownIssue(model);
@@ -63,6 +68,10 @@ export function deriveModelCapabilities(models: ModelAsset[], benchmarks: Benchm
       bestPromptTps,
       bestDecodeTps,
       knownIssue: issue,
+      configured: Boolean(model.launchProfile),
+      detected: Boolean(model.served || model.active),
+      verified: benchMatches.length > 0,
+      lastVerifiedAt: latestBenchmark ?? null,
     };
   }).sort((a, b) => Number(b.active) - Number(a.active) || Number(b.served) - Number(a.served) || a.name.localeCompare(b.name));
 }

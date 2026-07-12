@@ -25,9 +25,9 @@ export function OperationalChart({ title, subtitle, series }: { title: string; s
         <ResponsiveContainer width="100%" height={230}>
           <LineChart data={data} margin={{ left: -12, right: 8, top: 8, bottom: 0 }}>
             <CartesianGrid stroke="rgba(148,163,184,.12)" vertical={false} />
-            <XAxis dataKey="timestamp" tickFormatter={(value) => new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} stroke="#526173" tick={{ fontSize: 10 }} minTickGap={36} />
+            <XAxis dataKey="timestamp" tickFormatter={(value) => new Date(value).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "America/Chicago" })} stroke="#526173" tick={{ fontSize: 10 }} minTickGap={36} />
             <YAxis stroke="#526173" tick={{ fontSize: 10 }} width={48} />
-            <Tooltip contentStyle={{ background: "#070b10", border: "1px solid #263241", borderRadius: 4 }} labelFormatter={(value) => new Date(String(value)).toLocaleString()} />
+            <Tooltip contentStyle={{ background: "#070b10", border: "1px solid #263241", borderRadius: 4 }} labelFormatter={(value) => new Date(String(value)).toLocaleString("en-US", { timeZone: "America/Chicago" })} />
             {series.map((item) => <Line key={item.kind} type="monotone" dataKey={item.kind} name={`${item.label} (${item.unit})`} stroke={item.color} strokeWidth={2} dot={false} connectNulls />)}
           </LineChart>
         </ResponsiveContainer>
