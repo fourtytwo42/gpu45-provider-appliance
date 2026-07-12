@@ -159,7 +159,6 @@ systemctl daemon-reload
 systemctl enable gpu45-pocket-tts-api.service
 systemctl restart gpu45-pocket-tts-api.service
 systemctl enable gpu45-resource-manager.service
-systemctl restart gpu45-resource-manager.service
 systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer
 systemctl restart "gpu45-provider-appliance@$target_port.service"
 
@@ -195,7 +194,29 @@ fi
 ln -sfn "$release_dir" "$current_link"
 printf '%s\n' "$target_port" > "$active_port_file"
 chmod 0644 "$active_port_file"
-systemctl restart gpu45-responses-proxy.service gpu45-provider-appliance-worker.service
+systemctl restart gpu45-resource-manager.service gpu45-responses-proxy.service gpu45-provider-appliance-worker.service
+
+final_healthy=false
+for _ in $(seq 1 20); do
+  if curl -fsS --max-time 5 http://127.0.0.1/api/health/summary -H 'Host: 192-168-50-189.nip.io' | grep -q "$commit"; then
+    final_healthy=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$final_healthy" != "true" ]]; then
+  echo "Release failed after dependent services restarted" >&2
+  printf '%s\n' "$previous_upstream" > "$caddy_upstream"
+  systemctl reload caddy
+  if [[ -n "$previous_target" && -d "$previous_target" ]]; then
+    ln -sfn "$previous_target" "$current_link"
+  fi
+  printf '%s\n' "$active_port" > "$active_port_file"
+  systemctl restart gpu45-resource-manager.service gpu45-responses-proxy.service gpu45-provider-appliance-worker.service
+  systemctl stop "gpu45-provider-appliance@$target_port.service" || true
+  exit 1
+fi
+
 systemctl stop gpu45-provider-appliance.service || true
 systemctl disable gpu45-provider-appliance.service || true
 systemctl reset-failed gpu45-provider-appliance.service || true
