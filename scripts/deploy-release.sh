@@ -177,6 +177,13 @@ cp -a services/pocket-tts-api/pocket_tts_api/. /opt/pocket-tts/pocket_tts_api/
 cp -a services/image-api/image_api/. /opt/gpu45-image-api/image_api/
 cp -a services/whisper-api/whisper_api/. /opt/gpu45-whisper-api/whisper_api/
 cp -a services/wan2-video-api/wan_api/. /opt/wan2.2/wan_api/
+for service_db in \
+  /models/qwen3-tts/api_data/jobs.db* \
+  /models/image-gen/jobs.db* \
+  /models/whisper/jobs.db* \
+  /models/wan2-video/jobs.db*; do
+  [[ -e "$service_db" ]] && chown hendo420:hendo420 "$service_db"
+done
 install -m 0755 scripts/gpu45-storage-retention.sh /usr/local/sbin/gpu45-storage-retention
 for unit in gpu45-backup.service gpu45-backup.timer gpu45-backup-verify.service gpu45-backup-verify.timer gpu45-restore-drill.service gpu45-restore-drill.timer gpu45-storage-retention.service gpu45-storage-retention.timer; do
   install -m 0644 "deploy/systemd/$unit" "/etc/systemd/system/$unit"

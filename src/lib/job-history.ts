@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import Database from "better-sqlite3";
 import { getConfig } from "./config";
 import type { ImageJob } from "./images";
@@ -24,6 +25,30 @@ type StoredJobHistory = {
 
 export function readPayloadRows<T>(dbPath: string, sql: string, params: unknown[] = []): T[] {
   if (!fs.existsSync(dbPath)) return [];
+  if (process.platform !== "win32") {
+    let parameterIndex = 0;
+    const boundSql = sql.replaceAll("?", () => {
+      const value = params[parameterIndex++];
+      if (typeof value === "number") return String(value);
+      return `'${String(value ?? "").replaceAll("'", "''")}'`;
+    });
+    try {
+      const output = execFileSync("sqlite3", ["-json", `file:${dbPath}?immutable=1`, boundSql], {
+        encoding: "utf8",
+        timeout: 2_000,
+      });
+      const rows = JSON.parse(output || "[]") as Array<{ payload_json: string }>;
+      return rows.flatMap((row) => {
+        try {
+          return [JSON.parse(row.payload_json) as T];
+        } catch {
+          return [];
+        }
+      });
+    } catch {
+      return [];
+    }
+  }
   const database = new Database(dbPath, { readonly: true, fileMustExist: true, timeout: 1_000 });
   try {
     database.pragma("busy_timeout = 1000");
