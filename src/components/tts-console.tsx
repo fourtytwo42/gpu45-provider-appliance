@@ -43,7 +43,7 @@ function formatTimestamp(value?: string | null): string {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC", timeZoneName: "short" }).format(date);
 }
 
 function progressValue(job: TtsVoiceJob): number {
