@@ -13,6 +13,7 @@ Environment=WHISPER_API_PORT=8020
 Environment=WHISPER_API_DATA=/models/whisper
 Environment=WHISPER_DEVICE=cpu
 Environment=WHISPER_COMPUTE_TYPE=int8
+Environment=PYTHONPATH=/opt/gpu45/current/services/common
 ExecStart=/opt/gpu45-whisper-venv/bin/python -m whisper_api
 Restart=on-failure
 RestartSec=5
