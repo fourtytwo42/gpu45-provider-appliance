@@ -18,6 +18,18 @@ active_port="3010"
 target_port="3011"
 caddy_upstream="/etc/caddy/gpu45-upstream.caddy"
 dependency_root=""
+tts_database_path="/models/qwen3-tts/api_data/jobs.db"
+
+release_healthy() {
+  local base_url="$1"
+  local host_header="${2:-}"
+  local curl_args=(-fsS --max-time 5)
+  if [[ -n "$host_header" ]]; then
+    curl_args+=(-H "Host: $host_header")
+  fi
+  curl "${curl_args[@]}" "$base_url/api/health/probe" >/dev/null \
+    && curl "${curl_args[@]}" "$base_url/api/version" | grep -q "$commit"
+}
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "deploy-release.sh must run as root" >&2
@@ -64,6 +76,15 @@ fi
 mkdir -p "$data_dir/migration-backups"
 sqlite3 "$database_path" ".backup '$data_dir/migration-backups/appliance-$short_commit.db'"
 find "$data_dir/migration-backups" -type f -name 'appliance-*.db' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | xargs -r rm -f --
+if [[ -f "$tts_database_path" ]]; then
+  sqlite3 "$tts_database_path" "PRAGMA wal_checkpoint(FULL);"
+  if [[ "$(sqlite3 "$tts_database_path" "PRAGMA integrity_check;")" != "ok" ]]; then
+    echo "TTS database integrity check failed" >&2
+    exit 1
+  fi
+  sqlite3 "$tts_database_path" ".backup '${tts_database_path}.migration-$short_commit.bak'"
+  find "$(dirname "$tts_database_path")" -maxdepth 1 -type f -name 'jobs.db.migration-*.bak' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | xargs -r rm -f --
+fi
 
 if [[ ! -f /etc/gpu45/appliance.env ]]; then
   if [[ -f "$repo_root/.env.local" ]]; then
@@ -179,7 +200,7 @@ systemctl restart "gpu45-provider-appliance@$target_port.service"
 
 healthy=false
 for _ in $(seq 1 30); do
-  if curl -fsS --max-time 5 "http://127.0.0.1:$target_port/api/health/summary" | grep -q "$commit"; then
+  if release_healthy "http://127.0.0.1:$target_port"; then
     healthy=true
     break
   fi
@@ -198,7 +219,7 @@ mv "$caddy_upstream.tmp" "$caddy_upstream"
 caddy validate --config /etc/caddy/Caddyfile
 systemctl reload caddy
 
-if ! curl -fsS --max-time 10 http://127.0.0.1/api/health/summary -H 'Host: 192-168-50-189.nip.io' | grep -q "$commit"; then
+if ! release_healthy "http://127.0.0.1" "192-168-50-189.nip.io"; then
   echo "Release failed after traffic switch; restoring previous upstream" >&2
   printf '%s\n' "$previous_upstream" > "$caddy_upstream"
   systemctl reload caddy
@@ -214,7 +235,7 @@ systemctl try-restart qwen3-tts-api.service gpu45-image-api.service gpu45-whispe
 
 final_healthy=false
 for _ in $(seq 1 20); do
-  if curl -fsS --max-time 5 http://127.0.0.1/api/health/summary -H 'Host: 192-168-50-189.nip.io' | grep -q "$commit"; then
+  if release_healthy "http://127.0.0.1" "192-168-50-189.nip.io"; then
     final_healthy=true
     break
   fi
