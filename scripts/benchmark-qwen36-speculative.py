@@ -10,6 +10,33 @@ import urllib.error
 import urllib.request
 
 
+def build_rewrite_prompt() -> str:
+    source = "\n\n".join(
+        f"def transform_{index}(value: int) -> int:\n"
+        f"    \"\"\"Transform value for pipeline stage {index}.\"\"\"\n"
+        f"    adjusted = value + {index}\n"
+        f"    return adjusted * {index + 1}"
+        for index in range(80)
+    )
+    return (
+        "Return the complete module below with every function preserved. Add `category: str = \"gpu\"` "
+        "as a keyword-only argument to every function and mention category in each docstring. "
+        "Do not omit unchanged functions. Return code only.\n\n" + source
+    )
+
+
+def build_long_context_prompt() -> str:
+    records = "\n".join(
+        f"record_{index:04d} = id:{index:04d}; value:{(index * 7919) % 100000:05d}; "
+        f"group:{index % 37:02d}; marker:M{(index * 104729) % 1000000:06d}"
+        for index in range(1400)
+    )
+    return (
+        "Read every record. Reply with only the complete line for record_1399.\n\n"
+        + records
+    )
+
+
 PROMPTS = {
     "coding": (
         "Write a complete Python 3 module implementing a thread-safe, persistent LRU cache. "
@@ -24,6 +51,8 @@ PROMPTS = {
         "Design a reliable job scheduler for one GPU shared by an LLM, TTS, image, and video workers. "
         "Analyze priorities, leases, cancellation, crash recovery, starvation, persistence, and testing in detail."
     ),
+    "rewrite": build_rewrite_prompt(),
+    "long-context": build_long_context_prompt(),
 }
 
 
