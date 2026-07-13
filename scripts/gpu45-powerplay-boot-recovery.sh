@@ -35,5 +35,7 @@ fi
 
 mkdir -p "$STATE_DIR"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$STATE_DIR/last-stock-recovery-at"
+systemctl stop gpu45-powerplay-failsafe.timer gpu45-powerplay-failsafe.service 2>/dev/null || true
+systemctl reset-failed gpu45-powerplay-failsafe.timer gpu45-powerplay-failsafe.service 2>/dev/null || true
 rm -f "$MARKER"
 echo "gpu45 powerplay recovery: stock table restored and verified" >&2
