@@ -50,6 +50,39 @@ def marker_payload(clock_mhz: int, stage: str, driver: str, kernel: str | None =
     }
 
 
+def kernel_marker_payload(target_kernel: str, fallback_kernel: str, stage: str) -> dict[str, object]:
+    if not target_kernel.strip() or not fallback_kernel.strip() or target_kernel == fallback_kernel:
+        raise ValueError("target and fallback kernels must be distinct non-empty values")
+    if not stage.strip():
+        raise ValueError("stage is required")
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "state": "scheduled",
+        "stage": stage,
+        "targetKernel": target_kernel,
+        "fallbackKernel": fallback_kernel,
+        "scheduledAtEpoch": int(time.time()),
+        "retryAllowed": False,
+    }
+
+
+def observe_kernel_marker(payload: dict[str, object], observed_kernel: str) -> dict[str, object]:
+    target = payload.get("targetKernel")
+    fallback = payload.get("fallbackKernel")
+    if observed_kernel == target:
+        state = "booted-target"
+    elif observed_kernel == fallback:
+        state = "returned-to-fallback"
+    else:
+        state = "booted-unexpected-kernel"
+    return {
+        **payload,
+        "state": state,
+        "observedKernel": observed_kernel,
+        "observedAtEpoch": int(time.time()),
+    }
+
+
 def atomic_write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -89,6 +122,17 @@ def main() -> None:
     marker.add_argument("--driver", required=True)
     marker.add_argument("--kernel")
 
+    kernel_marker = subparsers.add_parser("kernel-marker")
+    kernel_marker.add_argument("--output", type=Path, required=True)
+    kernel_marker.add_argument("--target", required=True)
+    kernel_marker.add_argument("--fallback", required=True)
+    kernel_marker.add_argument("--stage", required=True)
+
+    kernel_observe = subparsers.add_parser("kernel-observe")
+    kernel_observe.add_argument("--marker", type=Path, required=True)
+    kernel_observe.add_argument("--output", type=Path, required=True)
+    kernel_observe.add_argument("--kernel", required=True)
+
     manifest = subparsers.add_parser("validate-manifest")
     manifest.add_argument("path", type=Path)
 
@@ -100,6 +144,14 @@ def main() -> None:
         payload = marker_payload(args.clock, args.stage, args.driver, args.kernel)
         atomic_write_json(args.output, payload)
         result: object = payload
+    elif args.command == "kernel-marker":
+        payload = kernel_marker_payload(args.target, args.fallback, args.stage)
+        atomic_write_json(args.output, payload)
+        result = payload
+    elif args.command == "kernel-observe":
+        payload = json.loads(args.marker.read_text(encoding="utf-8"))
+        result = observe_kernel_marker(payload, args.kernel)
+        atomic_write_json(args.output, result)
     elif args.command == "validate-manifest":
         result = validate_manifest(json.loads(args.path.read_text(encoding="utf-8")))
     else:

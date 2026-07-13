@@ -17,7 +17,11 @@ EOF
 chmod 0755 /usr/local/sbin/gpu45-amd-smi-direct
 install -m 0755 "$SOURCE_DIR/gpu45-soft-uclk-inventory.sh" /usr/local/sbin/gpu45-soft-uclk-inventory
 install -m 0755 "$SOURCE_DIR/gpu45-soft-uclk-apply.sh" /usr/local/sbin/gpu45-soft-uclk-apply
+install -m 0755 "$SOURCE_DIR/gpu45-kernel-attempt.sh" /usr/local/sbin/gpu45-kernel-attempt
+install -m 0755 "$SOURCE_DIR/gpu45-kernel-attempt-boot.sh" /usr/local/sbin/gpu45-kernel-attempt-boot.sh
 install -m 0755 "$SOURCE_DIR/gpu45-soft-uclk-boot-recovery.sh" /usr/local/sbin/gpu45-soft-uclk-boot-recovery.sh
 install -m 0644 "$SOURCE_DIR/gpu45-soft-uclk-boot-recovery.service" /etc/systemd/system/gpu45-soft-uclk-boot-recovery.service
+install -m 0644 "$SOURCE_DIR/gpu45-kernel-attempt-boot.service" /etc/systemd/system/gpu45-kernel-attempt-boot.service
 systemctl daemon-reload
 systemctl enable gpu45-soft-uclk-boot-recovery.service
+systemctl enable gpu45-kernel-attempt-boot.service

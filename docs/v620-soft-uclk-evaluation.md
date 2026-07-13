@@ -27,3 +27,11 @@ The appliance uses versioned ROCm packages such as `rocm-core7.0.0`. The unversi
 `gpu45-soft-uclk-apply.sh` refuses to run with an active or queued GPU lease. It records active services, stops GPU workers, waits for VRAM to fall below 2 GB, creates an atomic experiment marker, and arms the SysRq failsafe before invoking AMD SMI. A rejected request restores automatic performance mode and the prior service state without writing `pp_table`.
 
 AMD SMI 26.0 has a CLI validation bug that compares the integer limit against string bounds. `gpu45-amd-smi-direct.py` bypasses only that parser and invokes the package's typed `amdsmi_set_gpu_clk_limit` API directly.
+
+### Kernel 5.15 Result
+
+The typed AMD SMI request entered manual performance mode successfully, but `amdsmi_set_gpu_clk_limit(..., "mclk", "max", 1025)` returned `AMDSMI_STATUS_NOT_SUPPORTED`. The guard restored automatic mode, the 1000 MHz VBIOS table, the prior services, and a disarmed recovery timer. The 1050 MHz candidate was not attempted because the 1025 MHz gate failed.
+
+## One-Time Kernel Tests
+
+`gpu45-kernel-attempt` schedules kernel 6.8 through `grub-reboot` while preserving kernel 5.15 as `GRUB_DEFAULT`. Its boot observer records the actual kernel. Returning to 5.15 with a pending marker is treated as a failed attempt and disables automatic retry.

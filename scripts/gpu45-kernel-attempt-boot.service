@@ -1,0 +1,11 @@
+[Unit]
+Description=Observe GPU45 one-time experimental kernel boot
+After=local-fs.target gpu45-host-tune.service
+Before=gpu45-resource-manager.service llama-openai.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gpu45-kernel-attempt-boot.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -43,3 +43,22 @@ def test_manifest_accepts_stock_and_approved_profile() -> None:
         ]
     }
     assert soft_uclk.validate_manifest(manifest) == manifest
+
+
+def test_kernel_marker_disables_automatic_retry() -> None:
+    result = soft_uclk.kernel_marker_payload("6.8-test", "5.15-test", "kernel-test")
+    assert result["retryAllowed"] is False
+    assert result["state"] == "scheduled"
+
+
+@pytest.mark.parametrize(
+    ("observed", "state"),
+    [
+        ("6.8-test", "booted-target"),
+        ("5.15-test", "returned-to-fallback"),
+        ("other", "booted-unexpected-kernel"),
+    ],
+)
+def test_kernel_observation_states(observed: str, state: str) -> None:
+    marker = soft_uclk.kernel_marker_payload("6.8-test", "5.15-test", "kernel-test")
+    assert soft_uclk.observe_kernel_marker(marker, observed)["state"] == state
