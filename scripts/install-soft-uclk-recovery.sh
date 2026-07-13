@@ -5,7 +5,16 @@ set -eu
 SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 install -m 0755 "$SOURCE_DIR/gpu45-soft-uclk.py" /usr/local/sbin/gpu45-soft-uclk
-install -m 0755 "$SOURCE_DIR/gpu45-amd-smi-direct.py" /usr/local/sbin/gpu45-amd-smi-direct
+install -d -m 0755 /usr/local/libexec
+install -m 0755 "$SOURCE_DIR/gpu45-amd-smi-direct.py" /usr/local/libexec/gpu45-amd-smi-direct.py
+cat > /usr/local/sbin/gpu45-amd-smi-direct <<'EOF'
+#!/bin/sh
+PREFIX=/opt/amd-smi-gpu45-7.0.0
+export LD_LIBRARY_PATH="$PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PYTHONPATH="$PREFIX/share/amd_smi${PYTHONPATH:+:$PYTHONPATH}"
+exec /usr/bin/python3 /usr/local/libexec/gpu45-amd-smi-direct.py "$@"
+EOF
+chmod 0755 /usr/local/sbin/gpu45-amd-smi-direct
 install -m 0755 "$SOURCE_DIR/gpu45-soft-uclk-inventory.sh" /usr/local/sbin/gpu45-soft-uclk-inventory
 install -m 0755 "$SOURCE_DIR/gpu45-soft-uclk-apply.sh" /usr/local/sbin/gpu45-soft-uclk-apply
 install -m 0755 "$SOURCE_DIR/gpu45-soft-uclk-boot-recovery.sh" /usr/local/sbin/gpu45-soft-uclk-boot-recovery.sh

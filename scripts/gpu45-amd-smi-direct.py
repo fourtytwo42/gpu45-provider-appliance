@@ -4,17 +4,13 @@
 from __future__ import annotations
 
 import argparse
-import ctypes
 import json
-import os
 import sys
 from pathlib import Path
 
 
-PREFIX = Path(os.environ.get("GPU45_AMD_SMI_PREFIX", "/opt/amd-smi-gpu45-7.0.0"))
+PREFIX = Path("/opt/amd-smi-gpu45-7.0.0")
 sys.path.insert(0, str(PREFIX / "share" / "amd_smi"))
-os.environ["LD_LIBRARY_PATH"] = str(PREFIX / "lib") + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
-ctypes.CDLL(str(PREFIX / "lib" / "libamd_smi.so"), mode=ctypes.RTLD_GLOBAL)
 
 from amdsmi import (  # noqa: E402
     AmdSmiDevPerfLevel,
