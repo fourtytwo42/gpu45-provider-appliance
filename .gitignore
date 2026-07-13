@@ -36,6 +36,8 @@ media/
 audio/
 video/
 videos/
+!/src/app/api/tts/audio/
+!/src/app/api/tts/audio/**
 !/src/app/api/video/
 !/src/app/api/video/**
 images/

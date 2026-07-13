@@ -180,10 +180,11 @@ export function TtsConsole({ initialSnapshot, section = "speech" }: { initialSna
   }
 
   useEffect(() => {
+    const refreshTimer = window.setTimeout(() => void refreshPocket(), 0);
     const tts = subscribeApplianceEvent<TtsSnapshot>("tts", applySnapshot);
     const pocketTts = subscribeApplianceEvent<PocketTtsSnapshot>("pocket-tts", setPocket);
-    return () => { tts(); pocketTts(); };
-  }, [applySnapshot]);
+    return () => { window.clearTimeout(refreshTimer); tts(); pocketTts(); };
+  }, [applySnapshot, refreshPocket]);
 
   async function createVoice(formData: FormData): Promise<void> {
     await run(async () => {

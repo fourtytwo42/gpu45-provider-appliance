@@ -37,4 +37,11 @@ describe("tts client", () => {
     expect(snapshot.voices).toEqual([]);
     expect(snapshot.error).toContain("down");
   });
+
+  it("builds synthesis playback and download URLs for the tracked API route", async () => {
+    const { ttsSynthesisAudioUrl } = await import("./tts");
+
+    expect(ttsSynthesisAudioUrl("job id")).toBe("/api/tts/audio?id=job+id");
+    expect(ttsSynthesisAudioUrl("job id", true)).toBe("/api/tts/audio?id=job+id&download=1");
+  });
 });
