@@ -29,10 +29,10 @@ def build_long_context_prompt() -> str:
     records = "\n".join(
         f"record_{index:04d} = id:{index:04d}; value:{(index * 7919) % 100000:05d}; "
         f"group:{index % 37:02d}; marker:M{(index * 104729) % 1000000:06d}"
-        for index in range(1400)
+        for index in range(350)
     )
     return (
-        "Read every record. Reply with only the complete line for record_1399.\n\n"
+        "Read every record. Reply with only the complete line for record_0349.\n\n"
         + records
     )
 
