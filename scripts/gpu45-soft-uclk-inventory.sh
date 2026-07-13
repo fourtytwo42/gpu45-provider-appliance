@@ -45,5 +45,5 @@ cd "$REPO"
 git status --short --branch > "$DEST/git-status.txt"
 git log -10 --oneline > "$DEST/git-log.txt"
 git bundle create "$DEST/appliance.bundle" --all
-find "$DEST" -type f -print0 | sort -z | xargs -0 sha256sum > "$DEST/SHA256SUMS"
+find "$DEST" -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > "$DEST/SHA256SUMS"
 printf '%s\n' "$DEST"
