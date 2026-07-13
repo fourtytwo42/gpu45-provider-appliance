@@ -76,7 +76,15 @@ install_target() {
   fallback_hashes > "$STATE_DIR/fallback-before-install.sha256"
 
   trap 'restore_target' EXIT INT TERM
+  # This DKMS package returns nonzero after successfully removing its modules.
+  # Verify the resulting state instead of trusting that misleading exit code.
+  set +e
   dkms uninstall -m "$OLD_NAME" -v "$OLD_VERSION" -k "$TARGET_KERNEL"
+  set -e
+  if dkms status -m "$OLD_NAME" -v "$OLD_VERSION" -k "$TARGET_KERNEL" | grep -q installed; then
+    echo "stock driver remains installed for $TARGET_KERNEL" >&2
+    exit 1
+  fi
   # The stock and experimental DKMS packages provide the same module names.
   # Force is required when replacing those modules under a different package
   # identity, even though this only targets the dormant evaluation kernel.
