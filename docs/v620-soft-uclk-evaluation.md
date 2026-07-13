@@ -52,3 +52,12 @@ After a physical power cycle, GRUB returned to the saved `5.15.0-185-generic` fa
 ROCm 7.2.4's official Jammy installer points to AMDGPU release `30.30.4`, which packages kernel module version `6.16.13`. The `gpu45-amdgpu-experimental.sh` recipe extracts the checksummed DKMS source under the distinct package name `amdgpu-gpu45`, builds it only for kernel 6.8, and leaves ROCm 7.0 userspace unchanged.
 
 The recipe does not install the newer shared firmware package. Before installing its modules, it backs up the complete 6.8 DKMS module directory and initramfs. It verifies that the production 5.15 AMDGPU module and initramfs checksums are unchanged and restores the original 6.8 image on any installation failure.
+
+### AMDGPU 6.16.13 Installation Checkpoint
+
+The signed AMDGPU `6.16.13` modules built and installed successfully for `6.8.0-124-generic`. The experimental package provides all eight expected modules, including `amddrm_exec`, and the 6.8 initramfs was regenerated. The production 5.15 initramfs and AMDGPU module retained their recorded SHA-256 checksums:
+
+- `initrd.img-5.15.0-185-generic`: `e6fa1ab84b522c1cf7eee6e66313cf3d05c2744cf98d5dc521e35249577295c5`
+- `amdgpu.ko` for 5.15: `8ab8995a95e1c98cd223cd48f588ab0024e46c71df1e1faf827f584c021eff9c`
+
+The 6.8 initramfs reports missing firmware for unrelated AMD architectures. It also reports `sienna_cichlid_cap.bin`, but the working production 6.12.12 module requests the same absent optional capability file. All other Navi21 and Sienna Cichlid firmware requested by the experimental module is present.
