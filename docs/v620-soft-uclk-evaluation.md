@@ -61,3 +61,19 @@ The signed AMDGPU `6.16.13` modules built and installed successfully for `6.8.0-
 - `amdgpu.ko` for 5.15: `8ab8995a95e1c98cd223cd48f588ab0024e46c71df1e1faf827f584c021eff9c`
 
 The 6.8 initramfs reports missing firmware for unrelated AMD architectures. It also reports `sienna_cichlid_cap.bin`, but the working production 6.12.12 module requests the same absent optional capability file. All other Navi21 and Sienna Cichlid firmware requested by the experimental module is present.
+
+### Kernel 6.8 With AMDGPU 6.16.13 Result
+
+The one-time boot with AMDGPU `6.16.13` also failed before networking and persistent journaling became available. The host remained unreachable for more than three minutes and required a physical power cycle. On the next boot, GRUB returned to the pinned 5.15 fallback and the observer recorded `returned-to-fallback` for stage `kernel-6.8-amdgpu-6.16.13`.
+
+The original AMDGPU `6.12.12` modules and initramfs were restored for kernel 6.8. The production 5.15 module and initramfs checksums still match the rollback baseline. Because the newer driver cannot boot reliably on this V620 platform, the experimental driver-patch prerequisite is not met and no patched UCLK interface will be attempted.
+
+## Final Result
+
+No supported soft-memory-clock path is available on the tested V620 firmware and host combination:
+
+- AMD SMI on the working 5.15 stack returns `AMDSMI_STATUS_NOT_SUPPORTED` for a 1025 MHz MCLK maximum.
+- Kernel 6.8 hard-locks during early V620 initialization with both AMDGPU 6.12.12 and 6.16.13.
+- A narrow driver patch is unsafe because its required newer driver baseline cannot reach userspace reliably.
+
+The appliance therefore retains the stock 1000 MHz memory clock, the production 5.15 kernel, AMDGPU 6.12.12, and the existing `-80 mV` graphics offset. No experimental clock profile is promoted.
