@@ -190,7 +190,7 @@ def run_generation(args: argparse.Namespace, run: int) -> dict:
     usage = body.get("usage") or {}
     timings = body.get("timings") or {}
     completion_tokens = usage.get("completion_tokens") or timings.get("predicted_n") or 0
-    content = message.get("content") or ""
+    content = message.get("content") or message.get("reasoning_content") or ""
     return {
         "label": args.label,
         "kind": args.kind,

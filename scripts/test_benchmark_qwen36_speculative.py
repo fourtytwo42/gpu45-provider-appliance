@@ -22,6 +22,10 @@ class OutputIntegrityTests(unittest.TestCase):
         self.assertEqual(result["repeatedLineCount"], 2)
         self.assertAlmostEqual(result["repeatedLineRatio"], 2 / 3, places=4)
 
+    def test_reasoning_style_text_is_hashable(self):
+        result = MODULE.output_integrity("Reasoning output returned by a reasoning model.")
+        self.assertNotEqual(result["contentSha256"], MODULE.output_integrity("")["contentSha256"])
+
 
 if __name__ == "__main__":
     unittest.main()
