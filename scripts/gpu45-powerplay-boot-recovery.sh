@@ -8,14 +8,14 @@ STOCK_TABLE=${GPU45_STOCK_PP_TABLE:-/etc/gpu45/powerplay/v620-stock.pp_table}
 EXPECTED_SHA=a6fc019fdada096422629293bee778e8857af3330fd2dc2de42dd9d9d921b1c8
 
 [ -f "$MARKER" ] || exit 0
-echo "gpu45 powerplay recovery: unfinished experiment found; forcing stock table" >&2
+echo "gpu45 powerplay recovery: unfinished experiment found; verifying reboot-restored VBIOS table" >&2
 
 for _ in $(seq 1 60); do
-  [ -w "$GPU/pp_table" ] && break
+  [ -r "$GPU/pp_table" ] && break
   sleep 1
 done
-if [ ! -w "$GPU/pp_table" ]; then
-  echo "gpu45 powerplay recovery: pp_table did not become writable" >&2
+if [ ! -r "$GPU/pp_table" ]; then
+  echo "gpu45 powerplay recovery: pp_table did not become readable" >&2
   exit 1
 fi
 
@@ -25,11 +25,9 @@ if [ "$actual_stock_sha" != "$EXPECTED_SHA" ]; then
   exit 1
 fi
 
-cp "$STOCK_TABLE" "$GPU/pp_table"
-sleep 2
 live_sha=$(cat "$GPU/pp_table" | sha256sum | awk '{print $1}')
 if [ "$live_sha" != "$EXPECTED_SHA" ]; then
-  echo "gpu45 powerplay recovery: stock readback mismatch $live_sha" >&2
+  echo "gpu45 powerplay recovery: reboot did not restore the stock table: $live_sha" >&2
   exit 1
 fi
 
@@ -38,4 +36,4 @@ date -u +%Y-%m-%dT%H:%M:%SZ > "$STATE_DIR/last-stock-recovery-at"
 systemctl stop gpu45-powerplay-failsafe.timer gpu45-powerplay-failsafe.service 2>/dev/null || true
 systemctl reset-failed gpu45-powerplay-failsafe.timer gpu45-powerplay-failsafe.service 2>/dev/null || true
 rm -f "$MARKER"
-echo "gpu45 powerplay recovery: stock table restored and verified" >&2
+echo "gpu45 powerplay recovery: reboot-restored stock table verified" >&2
