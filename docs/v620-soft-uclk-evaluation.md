@@ -46,3 +46,9 @@ xgpu_nv_mailbox_trans_msg: callbacks suppressed
 ```
 
 After a physical power cycle, GRUB returned to the saved `5.15.0-185-generic` fallback. The boot observer recorded `returned-to-fallback`, cleared the pending marker, and disabled automatic retry. The stock 1000 MHz memory states, automatic performance mode, fan service, resource manager, management console, and Responses model catalog all recovered.
+
+## Isolated Newer Driver
+
+ROCm 7.2.4's official Jammy installer points to AMDGPU release `30.30.4`, which packages kernel module version `6.16.13`. The `gpu45-amdgpu-experimental.sh` recipe extracts the checksummed DKMS source under the distinct package name `amdgpu-gpu45`, builds it only for kernel 6.8, and leaves ROCm 7.0 userspace unchanged.
+
+The recipe does not install the newer shared firmware package. Before installing its modules, it backs up the complete 6.8 DKMS module directory and initramfs. It verifies that the production 5.15 AMDGPU module and initramfs checksums are unchanged and restores the original 6.8 image on any installation failure.
