@@ -77,3 +77,12 @@ No supported soft-memory-clock path is available on the tested V620 firmware and
 - A narrow driver patch is unsafe because its required newer driver baseline cannot reach userspace reliably.
 
 The appliance therefore retains the stock 1000 MHz memory clock, the production 5.15 kernel, AMDGPU 6.12.12, and the existing `-80 mV` graphics offset. No experimental clock profile is promoted.
+
+## Recovery Validation
+
+After the final physical power cycle and driver restoration:
+
+- The management console, Caddy, resource manager, fan controller, and Responses proxy were active.
+- The management health probe returned `ok` and the public model catalog remained available.
+- Lint, TypeScript, all 63 Vitest tests, all 16 PowerPlay/UCLK tests, and the production Next.js build passed.
+- A live Qwen3.6 27B Q5 streamed request emitted `response.created`, `response.in_progress`, and `response.completed` in 22.46 seconds.
