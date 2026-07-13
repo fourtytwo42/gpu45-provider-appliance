@@ -53,6 +53,7 @@ PROMPTS = {
     ),
     "rewrite": build_rewrite_prompt(),
     "long-context": build_long_context_prompt(),
+    "cache-incremental": build_long_context_prompt(),
 }
 
 
@@ -79,11 +80,17 @@ def first_choice(body: dict) -> dict:
 
 
 def run_generation(args: argparse.Namespace, run: int) -> dict:
+    prompt = PROMPTS[args.kind]
+    if args.kind == "cache-incremental" and run > 0:
+        prompt += (
+            "\n\nFollow-up: reply with only the complete line for record_0348 instead. "
+            "Do not repeat the previous answer."
+        )
     body, elapsed = post_json(
         f"{args.url.rstrip('/')}/v1/chat/completions",
         {
             "model": args.model,
-            "messages": [{"role": "user", "content": PROMPTS[args.kind]}],
+            "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
             "top_p": 1,
             "top_k": 1,
