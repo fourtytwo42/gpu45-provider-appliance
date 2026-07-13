@@ -23,6 +23,7 @@ fi
 install -m 0755 "$ROOT/scripts/gpu45-powerplay.py" /usr/local/sbin/gpu45-powerplay
 install -m 0755 "$ROOT/scripts/gpu45-powerplay-hard-reboot.sh" /usr/local/sbin/gpu45-powerplay-hard-reboot.sh
 install -m 0755 "$ROOT/scripts/gpu45-powerplay-guard.sh" /usr/local/sbin/gpu45-powerplay-guard
+install -m 0755 "$ROOT/scripts/gpu45-powerplay-apply.sh" /usr/local/sbin/gpu45-powerplay-apply
 install -m 0755 "$ROOT/scripts/gpu45-powerplay-boot-recovery.sh" /usr/local/sbin/gpu45-powerplay-boot-recovery.sh
 install -m 0644 "$ROOT/scripts/gpu45-powerplay-boot-recovery.service" /etc/systemd/system/gpu45-powerplay-boot-recovery.service
 systemctl daemon-reload
