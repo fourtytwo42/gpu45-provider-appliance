@@ -17,7 +17,7 @@ Date: 2026-07-13
 
 The production binary, launcher, profile, and systemd unit were copied into the rollback snapshot before testing. Experimental servers use a separate port and unit. Existing model files and production runtime paths remain unchanged until a candidate passes all gates.
 
-## Results So Far
+## Final Results
 
 ### Embedded MTP on production build 9592
 
@@ -41,7 +41,18 @@ Additional n=2 and n=3 threshold tests also regressed. The published n=6, p=0.75
 - Production binary and symlink were not changed.
 - Same Q5 MTP profile: 30.58 tok/s coding and 30.07 tok/s creative.
 
-The new engine is neutral across these ordinary prompts and does not yet justify replacing build 9592.
+Clean, PID-verified comparisons produced:
+
+| Workload | Build 9592 | Build 9992 | Change |
+| --- | ---: | ---: | ---: |
+| Coding, 1,024 output | 31.86 tok/s | 30.56 tok/s | -4.1% |
+| Creative, 1,024 output | 29.50 tok/s | 30.07 tok/s | +1.9% |
+| Repository rewrite, 1,024 output | 33.38 tok/s | 33.57 tok/s | +0.6% |
+| 12,628-token retrieval, 64 output | 34.38 tok/s | 34.47 tok/s | +0.3% |
+| Repository rewrite prompt | 362.99 tok/s | 367.52 tok/s | +1.2% |
+| 12,628-token prompt | 356.78 tok/s | 361.22 tok/s | +1.2% |
+
+The new engine does not pass the no-regression gate because coding decode falls by more than 2 percent. Build 9592 remains production.
 
 ### Native DFlash
 
@@ -55,6 +66,8 @@ Pinned post-merge draft revision: `5f2ed671305fb1fd8de023d6b335cef4d2663888`.
 
 DFlash is rejected on this `gfx1030` stack. It is much slower and has worse cancellation behavior than embedded MTP.
 
+The draft assets were moved to recoverable quarantine at `/models/.trash/029b1f6e-6058-4de1-87fa-0edf2e396f1b` with a purge date of 2026-07-20.
+
 ### N-gram speculation
 
 - N-gram only: 17.69 tok/s coding and 17.25 tok/s creative.
@@ -62,6 +75,34 @@ DFlash is rejected on this `gfx1030` stack. It is much slower and has worse canc
 - A 50,428-token stress prompt processed at 303.98 tok/s and decoded at 25.31 tok/s with 81.25 percent draft acceptance.
 
 N-gram only is rejected. The combined profile is effectively tied with production on ordinary prompts and does not justify additional runtime complexity.
+
+### Prompt cache
+
+Build 9592 with prompt caching passed both direct llama.cpp and production Responses API tests.
+
+- First direct 12,628-token request: 37.45 seconds.
+- Identical direct request: 2.00 seconds with only four prompt tokens reprocessed.
+- Incremental direct follow-up: 6.79 seconds with 1,566 tokens reprocessed.
+- Fresh production Responses request, including model startup: 48.14 seconds.
+- Production `previous_response_id` follow-up: 2.34 seconds with 12,624 cached tokens.
+- Ten of ten forced direct tool calls passed at a 512-token reasoning budget.
+- The production Responses tool smoke emitted the correct function call and `response.completed`.
+- Three consecutive 2,048-token coding runs held 32.13, 32.20, and 32.21 tok/s.
+
+The active production profile already uses `cacheRamMiB=16384`, `cacheReuse=1024`, and prompt caching. No production profile change is required. llama.cpp reports that cache reuse shifting is disabled for this multimodal model, but exact prefix caching remains effective and is the behavior used by Codex follow-up turns.
+
+## Decision
+
+Keep the current production configuration:
+
+- llama.cpp build 9592.
+- Qwen3.6 27B Q5 at 262,144 context.
+- Embedded MTP with draft maximum 2 and probability minimum 0.
+- Q4 K/V cache and full GPU model residency.
+- Prompt caching enabled through the existing 16 GiB ceiling.
+- Existing vision projector and Responses proxy.
+
+None of the higher MTP draft settings, upstream engine, DFlash, or n-gram candidates improves the overall production profile. Prompt-prefix reuse is the only large measured latency reduction, and it was already configured correctly.
 
 ### Discarded measurements
 
