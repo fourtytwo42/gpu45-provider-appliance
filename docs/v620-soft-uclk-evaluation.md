@@ -21,3 +21,7 @@ It contains checksummed copies of both kernels and initramfs files, AMDGPU modul
 The appliance uses versioned ROCm packages such as `rocm-core7.0.0`. The unversioned `amd-smi-lib` package depends on unversioned `rocm-core`, which conflicts with files already owned by `rocm-core7.0.0`. Installing the package normally was rejected without changing the kernel or driver.
 
 `install-amd-smi-isolated.sh` verifies the official package checksum and extracts AMD SMI under `/opt/amd-smi-gpu45-7.0.0`. The dedicated `/usr/local/bin/amd-smi-gpu45` wrapper keeps it separate from dpkg and the production ROCm tree.
+
+## Soft-Limit Test Contract
+
+`gpu45-soft-uclk-apply.sh` refuses to run with an active or queued GPU lease. It records active services, stops GPU workers, waits for VRAM to fall below 2 GB, creates an atomic experiment marker, and arms the SysRq failsafe before invoking AMD SMI. A rejected request restores automatic performance mode and the prior service state without writing `pp_table`.
