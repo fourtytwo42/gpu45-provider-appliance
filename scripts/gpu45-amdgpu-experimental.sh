@@ -77,7 +77,13 @@ install_target() {
 
   trap 'restore_target' EXIT INT TERM
   dkms uninstall -m "$OLD_NAME" -v "$OLD_VERSION" -k "$TARGET_KERNEL"
-  dkms install -m "$NEW_NAME" -v "$NEW_VERSION" -k "$TARGET_KERNEL"
+  # The stock and experimental DKMS packages provide the same module names.
+  # Force is required when replacing those modules under a different package
+  # identity, even though this only targets the dormant evaluation kernel.
+  dkms install --force -m "$NEW_NAME" -v "$NEW_VERSION" -k "$TARGET_KERNEL"
+  for module in amdgpu amdttm amdkcl amd-sched amddrm_ttm_helper amddrm_buddy amddrm_exec amdxcp; do
+    modinfo -k "$TARGET_KERNEL" "$module" >/dev/null
+  done
   update-initramfs -u -k "$TARGET_KERNEL"
   depmod "$TARGET_KERNEL"
   modinfo -k "$TARGET_KERNEL" amdgpu | grep -q "^version:[[:space:]]*6.16.13"
