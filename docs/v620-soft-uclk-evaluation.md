@@ -35,3 +35,14 @@ The typed AMD SMI request entered manual performance mode successfully, but `amd
 ## One-Time Kernel Tests
 
 `gpu45-kernel-attempt` schedules kernel 6.8 through `grub-reboot` while preserving kernel 5.15 as `GRUB_DEFAULT`. Its boot observer records the actual kernel. Returning to 5.15 with a pending marker is treated as a failed attempt and disables automatic retry.
+
+### Kernel 6.8 With AMDGPU 6.12.12 Result
+
+The one-time `6.8.0-124-generic` boot reached the kernel but never reached usable userspace. AMDGPU entered a continuous V620 virtual-GPU mailbox loop beginning during device initialization:
+
+```text
+amdgpu 0000:2d:00.0: amdgpu: trn=2 ACK should not assert! wait again !
+xgpu_nv_mailbox_trans_msg: callbacks suppressed
+```
+
+After a physical power cycle, GRUB returned to the saved `5.15.0-185-generic` fallback. The boot observer recorded `returned-to-fallback`, cleared the pending marker, and disabled automatic retry. The stock 1000 MHz memory states, automatic performance mode, fan service, resource manager, management console, and Responses model catalog all recovered.
