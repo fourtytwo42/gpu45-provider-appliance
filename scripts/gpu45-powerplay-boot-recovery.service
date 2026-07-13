@@ -1,0 +1,13 @@
+[Unit]
+Description=GPU45 unfinished PowerPlay experiment recovery
+After=local-fs.target systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+Before=gpu45-host-tune.service llama-openai.service gpu45-resource-manager.service
+ConditionPathExists=/var/lib/gpu45/powerplay-guard/experiment-armed.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gpu45-powerplay-boot-recovery.sh
+
+[Install]
+WantedBy=multi-user.target
