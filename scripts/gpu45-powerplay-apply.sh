@@ -6,10 +6,33 @@ STOCK_TABLE=${GPU45_STOCK_PP_TABLE:-/etc/gpu45/powerplay/v620-stock.pp_table}
 RESOURCE_DB=${GPU45_RESOURCE_DB:-/var/lib/gpu45/resource-manager.db}
 STATE_DIR=${GPU45_POWERPLAY_STATE_DIR:-/var/lib/gpu45/powerplay-guard}
 SERVICES="llama-openai.service qwen3-tts-api.service gpu45-image-api.service wan2-video-api.service gpu45-whisper-api.service"
+EVALUATION_DIR=${GPU45_POWERPLAY_EVALUATION_DIR:-/var/lib/gpu45/powerplay-evaluation}
 
 candidate=${1:-}
 clock=${2:-}
 guard_seconds=${3:-900}
+
+fail_and_reboot() {
+  reason=$1
+  mkdir -p "$EVALUATION_DIR"
+  python3 - "$EVALUATION_DIR/last-failure.json" "$clock" "$reason" <<'PY'
+import json, os, sys, time
+from pathlib import Path
+
+path = Path(sys.argv[1])
+temporary = path.with_suffix(".tmp")
+temporary.write_text(json.dumps({
+    "clockMHz": int(sys.argv[2]),
+    "failedAtEpoch": int(time.time()),
+    "reason": sys.argv[3],
+    "recovery": "sysrq-reboot-to-vbios-stock",
+}, indent=2) + "\n", encoding="utf-8")
+os.replace(temporary, path)
+PY
+  echo "$reason; invoking SysRq recovery" >&2
+  /usr/local/sbin/gpu45-powerplay-hard-reboot.sh
+  exit 1
+}
 
 [ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
 [ -n "$candidate" ] && [ -f "$candidate" ] || { echo "candidate table is required" >&2; exit 2; }
@@ -37,27 +60,19 @@ mkdir -p "$STATE_DIR"
 cp "$candidate" "$STATE_DIR/armed-candidate.pp_table"
 
 if ! timeout 20 cp "$candidate" "$GPU/pp_table"; then
-  echo "PowerPlay upload failed; invoking SysRq recovery" >&2
-  /usr/local/sbin/gpu45-powerplay-hard-reboot.sh
-  exit 1
+  fail_and_reboot "PowerPlay upload failed"
 fi
 sleep 3
 
 if ! live_sha=$(cat "$GPU/pp_table" | sha256sum | awk '{print $1}'); then
-  echo "PowerPlay readback failed; invoking SysRq recovery" >&2
-  /usr/local/sbin/gpu45-powerplay-hard-reboot.sh
-  exit 1
+  fail_and_reboot "PowerPlay readback failed"
 fi
 candidate_sha=$(sha256sum "$candidate" | awk '{print $1}')
 if [ "$live_sha" != "$candidate_sha" ]; then
-  echo "PowerPlay readback checksum mismatch; invoking SysRq recovery" >&2
-  /usr/local/sbin/gpu45-powerplay-hard-reboot.sh
-  exit 1
+  fail_and_reboot "PowerPlay readback checksum mismatch"
 fi
 if ! grep -Eq "3: ${clock}Mhz" "$GPU/pp_dpm_mclk"; then
-  echo "requested ${clock} MHz UCLK is unavailable after upload; invoking SysRq recovery" >&2
-  /usr/local/sbin/gpu45-powerplay-hard-reboot.sh
-  exit 1
+  fail_and_reboot "requested ${clock} MHz UCLK is unavailable after upload"
 fi
 
 python3 - "$STATE_DIR/live-experiment.json" "$clock" "$candidate_sha" <<'PY'
