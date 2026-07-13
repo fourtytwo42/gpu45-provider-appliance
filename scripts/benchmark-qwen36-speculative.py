@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
+import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 
 def build_rewrite_prompt() -> str:
@@ -57,6 +61,86 @@ PROMPTS = {
 }
 
 
+class HardwareSampler:
+    """Collect lightweight amdgpu sysfs peaks while a benchmark request runs."""
+
+    def __init__(self, device: Path, interval: float = 0.25) -> None:
+        self.device = device
+        self.interval = interval
+        self.stop_event = threading.Event()
+        self.thread: threading.Thread | None = None
+        self.samples: list[dict[str, float]] = []
+
+    @staticmethod
+    def _read_number(path: Path, scale: float = 1.0) -> float | None:
+        try:
+            return float(path.read_text(encoding="utf-8").strip()) / scale
+        except (OSError, ValueError):
+            return None
+
+    def _sample(self) -> None:
+        hwmon = next(iter(sorted(self.device.glob("hwmon/hwmon*"))), None)
+        sample: dict[str, float] = {}
+        busy = self._read_number(self.device / "gpu_busy_percent")
+        vram = self._read_number(self.device / "mem_info_vram_used")
+        if busy is not None:
+            sample["gpuBusyPercent"] = busy
+        if vram is not None:
+            sample["vramUsedBytes"] = vram
+        if hwmon:
+            temperatures = [
+                value
+                for path in hwmon.glob("temp*_input")
+                if (value := self._read_number(path, 1000.0)) is not None
+            ]
+            powers = [
+                value
+                for path in hwmon.glob("power*_average")
+                if (value := self._read_number(path, 1_000_000.0)) is not None
+            ]
+            if temperatures:
+                sample["temperatureC"] = max(temperatures)
+            if powers:
+                sample["powerW"] = max(powers)
+        if sample:
+            self.samples.append(sample)
+
+    def _run(self) -> None:
+        while not self.stop_event.wait(self.interval):
+            self._sample()
+
+    def __enter__(self) -> "HardwareSampler":
+        if self.device.exists():
+            self.thread = threading.Thread(target=self._run, daemon=True)
+            self.thread.start()
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.stop_event.set()
+        if self.thread:
+            self.thread.join(timeout=2)
+        self._sample()
+
+    def summary(self) -> dict[str, float]:
+        result: dict[str, float] = {}
+        for key in {key for sample in self.samples for key in sample}:
+            values = [sample[key] for sample in self.samples if key in sample]
+            if values:
+                result[f"peak{key[0].upper()}{key[1:]}"] = round(max(values), 3)
+        return result
+
+
+def output_integrity(content: str) -> dict[str, object]:
+    normalized_lines = [re.sub(r"\s+", " ", line).strip() for line in content.splitlines()]
+    meaningful = [line for line in normalized_lines if len(line) >= 24]
+    duplicates = len(meaningful) - len(set(meaningful))
+    return {
+        "contentSha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "repeatedLineCount": duplicates,
+        "repeatedLineRatio": round(duplicates / len(meaningful), 4) if meaningful else 0.0,
+    }
+
+
 def post_json(url: str, payload: dict, timeout: int) -> tuple[dict, float]:
     request = urllib.request.Request(
         url,
@@ -86,25 +170,27 @@ def run_generation(args: argparse.Namespace, run: int) -> dict:
             "\n\nFollow-up: reply with only the complete line for record_0348 instead. "
             "Do not repeat the previous answer."
         )
-    body, elapsed = post_json(
-        f"{args.url.rstrip('/')}/v1/chat/completions",
-        {
-            "model": args.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0,
-            "top_p": 1,
-            "top_k": 1,
-            "seed": 42 + run,
-            "max_tokens": args.max_tokens,
-            "stream": False,
-        },
-        args.timeout,
-    )
+    with HardwareSampler(Path(args.gpu_device)) as sampler:
+        body, elapsed = post_json(
+            f"{args.url.rstrip('/')}/v1/chat/completions",
+            {
+                "model": args.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "top_p": 1,
+                "top_k": 1,
+                "seed": 42 + run,
+                "max_tokens": args.max_tokens,
+                "stream": False,
+            },
+            args.timeout,
+        )
     choice = first_choice(body)
     message = choice.get("message") or {}
     usage = body.get("usage") or {}
     timings = body.get("timings") or {}
     completion_tokens = usage.get("completion_tokens") or timings.get("predicted_n") or 0
+    content = message.get("content") or ""
     return {
         "label": args.label,
         "kind": args.kind,
@@ -116,8 +202,11 @@ def run_generation(args: argparse.Namespace, run: int) -> dict:
         "decodeTokensPerSecond": timings.get("predicted_per_second"),
         "wallSeconds": round(elapsed, 3),
         "finishReason": choice.get("finish_reason"),
-        "contentCharacters": len(message.get("content") or ""),
+        "contentCharacters": len(content),
         "hasToolCalls": bool(message.get("tool_calls")),
+        "metadata": args.metadata,
+        **output_integrity(content),
+        **sampler.summary(),
     }
 
 
@@ -179,7 +268,13 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=1024)
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--gpu-device", default="/sys/class/drm/card1/device")
+    parser.add_argument("--metadata-json", default="{}")
     args = parser.parse_args()
+    try:
+        args.metadata = json.loads(args.metadata_json)
+    except json.JSONDecodeError as exc:
+        parser.error(f"invalid --metadata-json: {exc}")
 
     for run in range(args.runs):
         result = run_tool(args, run) if args.kind == "tool" else run_generation(args, run)
