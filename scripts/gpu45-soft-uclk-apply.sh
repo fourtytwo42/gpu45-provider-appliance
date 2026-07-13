@@ -7,6 +7,7 @@ MARKER="$STATE_DIR/experiment-armed.json"
 SERVICES="gpu45-responses-proxy.service llama-openai.service qwen3-tts-api.service gpu45-image-api.service wan2-video-api.service gpu45-whisper-api.service"
 RESOURCE_DB=${GPU45_RESOURCE_DB:-/var/lib/gpu45/resource-manager.db}
 AMD_SMI=${GPU45_AMD_SMI:-/usr/local/bin/amd-smi-gpu45}
+AMD_SMI_DIRECT=${GPU45_AMD_SMI_DIRECT:-/usr/local/sbin/gpu45-amd-smi-direct}
 
 restore_services() {
   [ -f "$STATE_DIR/services-before.txt" ] || return 0
@@ -16,7 +17,7 @@ restore_services() {
 }
 
 restore_stock_state() {
-  timeout 20 "$AMD_SMI" set -l AUTO -g 0 >/dev/null 2>&1 || true
+  timeout 20 "$AMD_SMI_DIRECT" set-performance AUTO >/dev/null 2>&1 || true
   /usr/local/sbin/gpu45-powerplay-guard cancel >/dev/null 2>&1 || true
   rm -f "$MARKER"
   restore_services
@@ -34,12 +35,12 @@ apply_clock() {
     --kernel "$(uname -r)" >/dev/null
 
   /usr/local/sbin/gpu45-powerplay-guard arm "$guard_seconds" "soft-uclk-${clock}-${stage}"
-  if ! timeout 20 "$AMD_SMI" set -l MANUAL -g 0 > "$STATE_DIR/set-manual.log" 2>&1; then
+  if ! timeout 20 "$AMD_SMI_DIRECT" set-performance MANUAL > "$STATE_DIR/set-manual.log" 2>&1; then
     restore_stock_state
     echo "AMD SMI could not enable manual performance mode" >&2
     exit 3
   fi
-  if ! timeout 20 "$AMD_SMI" set -L mclk max "$clock" -g 0 > "$STATE_DIR/set-limit.log" 2>&1; then
+  if ! timeout 20 "$AMD_SMI_DIRECT" set-mclk-max "$clock" > "$STATE_DIR/set-limit.log" 2>&1; then
     cat "$STATE_DIR/set-limit.log" >&2
     restore_stock_state
     echo "AMD SMI rejected the ${clock} MHz memory soft limit" >&2
@@ -55,6 +56,7 @@ start_experiment() {
   case "$clock" in 1025|1050) ;; *) echo "clock must be 1025 or 1050 MHz" >&2; exit 2 ;; esac
   [ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
   [ -x "$AMD_SMI" ] || { echo "AMD SMI wrapper is unavailable" >&2; exit 1; }
+  [ -x "$AMD_SMI_DIRECT" ] || { echo "AMD SMI direct helper is unavailable" >&2; exit 1; }
   [ ! -f "$MARKER" ] || { echo "another soft-UCLK experiment is armed" >&2; exit 1; }
 
   if [ -f "$RESOURCE_DB" ]; then

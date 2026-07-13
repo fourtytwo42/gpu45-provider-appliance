@@ -25,3 +25,5 @@ The appliance uses versioned ROCm packages such as `rocm-core7.0.0`. The unversi
 ## Soft-Limit Test Contract
 
 `gpu45-soft-uclk-apply.sh` refuses to run with an active or queued GPU lease. It records active services, stops GPU workers, waits for VRAM to fall below 2 GB, creates an atomic experiment marker, and arms the SysRq failsafe before invoking AMD SMI. A rejected request restores automatic performance mode and the prior service state without writing `pp_table`.
+
+AMD SMI 26.0 has a CLI validation bug that compares the integer limit against string bounds. `gpu45-amd-smi-direct.py` bypasses only that parser and invokes the package's typed `amdsmi_set_gpu_clk_limit` API directly.
