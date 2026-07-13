@@ -145,7 +145,7 @@ def run_tool(args: argparse.Namespace, run: int) -> dict:
             "tool_choice": {"type": "function", "function": {"name": "get_weather"}},
             "temperature": 0,
             "seed": 42,
-            "max_tokens": 128,
+            "max_tokens": args.max_tokens,
             "stream": False,
         },
         args.timeout,
