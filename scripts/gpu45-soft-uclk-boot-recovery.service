@@ -1,0 +1,11 @@
+[Unit]
+Description=GPU45 soft-UCLK experiment boot recovery
+After=local-fs.target gpu45-host-tune.service
+Before=gpu45-resource-manager.service llama-openai.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gpu45-soft-uclk-boot-recovery.sh
+
+[Install]
+WantedBy=multi-user.target
