@@ -46,7 +46,7 @@ def test_i2v_submission_persists_job_and_starts_runner(tmp_path, monkeypatch) ->
         negative_prompt="blur",
         profile="wan22-ti2v-5b",
         size="832*480",
-        steps=20,
+        steps=30,
         duration_seconds=2,
         seed=7,
     ))
@@ -99,3 +99,20 @@ def test_video_output_validation_accepts_requested_duration() -> None:
     )
 
     assert error is None
+
+
+def test_vae_decode_progress_does_not_restart_denoising(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "LOG_DIR", tmp_path)
+    (tmp_path / "job-4.log").write_text(
+        "100%|██████████| 50/50 [1:00:43<00:00, 72.80s/it]\n"
+        "VAE decoding:  22%|██▏       | 2/9 [00:59<03:26, 29.48s/it]",
+        encoding="utf-8",
+    )
+
+    progress = main.job_progress({"id": "job-4", "status": "running"})
+
+    assert progress == {
+        "progress_percent": 92,
+        "progress_label": "Decoding frame tiles 2/9",
+        "progress_stage": "decoding",
+    }

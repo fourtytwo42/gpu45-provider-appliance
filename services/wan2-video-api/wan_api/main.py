@@ -284,6 +284,18 @@ def job_progress(job: dict[str, Any]) -> dict[str, Any]:
     if generated_match:
         return {"progress_percent": 90, "progress_label": "Encoding output", "progress_stage": "encoding"}
 
+    decode_matches = re.findall(r"VAE decoding:\s+(\d+)%\|.*?\|\s*(\d+)/(\d+)\s*\[", log_text)
+    if decode_matches:
+        _raw_percent, step, total = decode_matches[-1]
+        step_int = int(step)
+        total_int = max(1, int(total))
+        percent = min(98, 90 + round((step_int / total_int) * 8))
+        return {
+            "progress_percent": percent,
+            "progress_label": f"Decoding frame tiles {step_int}/{total_int}",
+            "progress_stage": "decoding",
+        }
+
     step_matches = re.findall(r"(\d+)%\|.*?\|\s*(\d+)/(\d+)\s*\[", log_text)
     if step_matches:
         raw_percent, step, total = step_matches[-1]
