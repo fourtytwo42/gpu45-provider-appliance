@@ -13,8 +13,9 @@ and UI selected lower-quality inference settings:
   to the target aspect ratio.
 - The service used a short custom English negative prompt instead of Wan's
   reference negative prompt.
-- VAE tiles were smaller than DiffSynth's documented Wan defaults, increasing
-  the opportunity for tiled decode inconsistencies.
+- VAE tiles were smaller than DiffSynth's documented Wan defaults. A hardware
+  comparison showed the larger reference tiles are not practical on gfx1030:
+  one of six decode tiles took 222 seconds for a two-second 720p smoke clip.
 
 These differences explain why increasing a web job from 30 to 50 steps helped
 but still did not match reference examples: the job remained at the appliance's
@@ -28,9 +29,11 @@ non-reference 832x480 resolution and retained the other preprocessing changes.
 | Balanced | 1280x704 | 50 | 2 seconds | Reference spatial and sampling quality, shorter clip |
 | Quality | 1280x704 | 50 | 5 seconds | Full reference frame count and quality |
 
-The runner now uses CFG 5, shift 5, `30x52` VAE tiles with `15x26` stride, and
-aspect-aware center cropping for source images. Portrait output uses the matching
-`704x1280` reference orientation.
+The runner now uses CFG 5, shift 5, aspect-aware center cropping for source
+images, and the full reference output resolution. It retains `24x40` VAE tiles
+with `12x20` stride as a documented V620-specific performance concession; this
+changes decode tiling, not the generated frame resolution. Portrait output uses
+the matching `704x1280` reference orientation.
 
 ## Model Limit
 

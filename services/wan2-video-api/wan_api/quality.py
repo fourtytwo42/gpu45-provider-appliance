@@ -16,8 +16,11 @@ REFERENCE_SIZE = "1280*704"
 REFERENCE_STEPS = 50
 REFERENCE_CFG_SCALE = 5.0
 REFERENCE_SIGMA_SHIFT = 5.0
-REFERENCE_TILE_SIZE = (30, 52)
-REFERENCE_TILE_STRIDE = (15, 26)
+# The reference 30x52 tiles take more than 20 minutes to decode a two-second
+# 720p clip on gfx1030. These smaller overlapping tiles preserve full output
+# resolution while keeping decode practical on the V620.
+REFERENCE_TILE_SIZE = (24, 40)
+REFERENCE_TILE_STRIDE = (12, 20)
 
 
 def prepare_input_image(image: Image.Image, width: int, height: int) -> Image.Image:

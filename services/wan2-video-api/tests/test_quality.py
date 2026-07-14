@@ -22,8 +22,8 @@ class QualitySettingsTests(unittest.TestCase):
         self.assertEqual(REFERENCE_STEPS, 50)
         self.assertEqual(REFERENCE_CFG_SCALE, 5.0)
         self.assertEqual(REFERENCE_SIGMA_SHIFT, 5.0)
-        self.assertEqual(REFERENCE_TILE_SIZE, (30, 52))
-        self.assertEqual(REFERENCE_TILE_STRIDE, (15, 26))
+        self.assertEqual(REFERENCE_TILE_SIZE, (24, 40))
+        self.assertEqual(REFERENCE_TILE_STRIDE, (12, 20))
         self.assertIn("最差质量", REFERENCE_NEGATIVE_PROMPT)
 
     def test_source_image_is_center_cropped_without_letterboxing(self) -> None:
