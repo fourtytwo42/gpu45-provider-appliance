@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 EnvironmentFile=/etc/gpu45/resource-manager.env
 Environment=PYTHONPATH=/opt/gpu45/current/services/common
+Environment=GPU45_DB_PATH=/var/lib/gpu45/appliance.db
 Type=simple
 User=root
 Group=root
