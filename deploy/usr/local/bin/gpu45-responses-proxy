@@ -1011,6 +1011,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         )
 
         upstream_events = queue.Queue()
+        cancel_event = threading.Event()
+        upstream_response = [None]
+        upstream_response_lock = threading.Lock()
 
         def read_upstream():
             stream_lease = None
@@ -1022,13 +1025,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 ensure_model_loaded(selected)
                 deadline = time.time() + 600
                 while True:
+                    if cancel_event.is_set():
+                        break
                     try:
                         with urllib.request.urlopen(req, timeout=600) as resp:
+                            with upstream_response_lock:
+                                upstream_response[0] = resp
                             content_type = resp.headers.get("Content-Type", "application/octet-stream")
                             upstream_events.put(("open", resp.status, content_type))
                             if "text/event-stream" in content_type:
                                 event_lines = []
                                 while True:
+                                    if cancel_event.is_set(): break
                                     line = resp.readline()
                                     if not line: break
                                     if line.strip(): event_lines.append(line.rstrip(b"\r\n")); continue
@@ -1036,6 +1044,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                                 if event_lines: upstream_events.put(("event", event_lines))
                             else:
                                 upstream_events.put(("payload", resp.status, content_type, resp.read()))
+                            with upstream_response_lock:
+                                upstream_response[0] = None
                         break
                     except urllib.error.HTTPError as exc:
                         body = exc.read().decode("utf-8", "replace")
@@ -1043,6 +1053,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                             upstream_events.put(("waiting", "loading model")); time.sleep(5); continue
                         upstream_events.put(("http_error", exc.code, body)); break
                     except (urllib.error.URLError, ConnectionRefusedError, TimeoutError, OSError) as exc:
+                        if cancel_event.is_set():
+                            break
                         if time.time() < deadline:
                             upstream_events.put(("waiting", "backend starting")); time.sleep(5); continue
                         upstream_events.put(("error", repr(exc))); break
@@ -1051,6 +1063,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 upstream_events.put(("error", repr(exc)))
             finally:
+                with upstream_response_lock:
+                    upstream_response[0] = None
                 if stream_lease is not None:
                     stream_lease.release()
                 upstream_events.put(("done",))
@@ -1127,6 +1141,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             elapsed_ms = int((time.time() - started_at) * 1000)
             print(f"{request_id} downstream disconnected elapsed_ms={elapsed_ms}", flush=True)
+            cancel_event.set()
+            with upstream_response_lock:
+                response = upstream_response[0]
+                if response is not None:
+                    response.close()
+            thread.join(timeout=5)
             return completed
 
     def write_sse_comment(self, text):
