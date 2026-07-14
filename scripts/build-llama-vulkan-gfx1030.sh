@@ -22,7 +22,7 @@ cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" \
   -DGGML_NATIVE=ON \
   -DGGML_LTO=OFF \
   -DGGML_BUILD_TESTS=OFF \
-  -DGGML_BUILD_EXAMPLES=ON
+  -DGGML_BUILD_EXAMPLES=OFF
 cmake --build "$BUILD_DIR" --parallel "$(nproc)" --target llama-server llama-bench
 
 {
