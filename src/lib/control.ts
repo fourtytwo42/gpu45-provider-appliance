@@ -146,6 +146,7 @@ export async function activateModel(modelPath: string): Promise<ControlResult> {
   const specType = modelDraftPath || embeddedMtp ? "draft-mtp" : "none";
   const profile: LaunchProfile = {
     ...base,
+    backend: base.backend === "vulkan" ? "vulkan" : "rocm",
     name: saved?.name ?? modelProfileName(modelPath),
     description: saved?.description ?? `${model.name}${modelDraftPath ? " with external MTP" : embeddedMtp ? " with embedded MTP" : ""}`,
     modelPath,
