@@ -131,6 +131,10 @@ export type LaunchProfile = {
   specType: string;
   specDraftNMax: number;
   flashAttention: string;
+  backend?: "rocm" | "vulkan";
+  serverBinary?: string | null;
+  runtimeLibraryPath?: string | null;
+  fanBoostOnBusy?: boolean;
   imageMinTokens: number;
   metrics: boolean;
   jinja: boolean;

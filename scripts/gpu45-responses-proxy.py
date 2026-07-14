@@ -212,7 +212,8 @@ def model_launch_profile(db, model_path):
         """
         SELECT host, port, ctxSize, gpuLayers, batchSize, uBatchSize, cacheRamMiB,
                cacheTypeK, cacheTypeV, cacheReuse, specType, specDraftNMax,
-               flashAttention, imageMinTokens, metrics, jinja
+               flashAttention, backend, serverBinary, runtimeLibraryPath,
+               fanBoostOnBusy, imageMinTokens, metrics, jinja
         FROM LaunchProfile
         WHERE modelPath = ?
         ORDER BY active DESC, updatedAt DESC
@@ -239,12 +240,15 @@ def apply_launch_profile_settings(next_profile, launch_profile):
         "specType",
         "specDraftNMax",
         "flashAttention",
+        "backend",
+        "serverBinary",
+        "runtimeLibraryPath",
         "imageMinTokens",
     ):
         value = launch_profile[key]
         if value is not None:
             next_profile[key] = value
-    for key in ("metrics", "jinja"):
+    for key in ("metrics", "jinja", "fanBoostOnBusy"):
         value = launch_profile[key]
         if value is not None:
             next_profile[key] = bool(value)
@@ -300,6 +304,10 @@ def ensure_model_loaded(model):
         "specDraftNMax",
         "specType",
         "flashAttention",
+        "backend",
+        "serverBinary",
+        "runtimeLibraryPath",
+        "fanBoostOnBusy",
     )
     if all(current.get(key) == next_profile.get(key) for key in restart_keys):
         active = subprocess.run(["systemctl", "is-active", "--quiet", PROVIDER_SERVICE], check=False).returncode == 0

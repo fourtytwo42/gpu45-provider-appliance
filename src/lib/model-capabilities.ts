@@ -33,6 +33,7 @@ function hasVision(model: ModelAsset): boolean {
 
 function knownIssue(model: ModelAsset): string | null {
   const name = model.name.toLowerCase();
+  if (model.launchProfile?.backend === "vulkan") return "Fast decode profile. Load-aware fan boost is required; uncached prompt processing is slightly slower than the ROCm profile.";
   if (name.includes("gemma")) return "Watch tool-calling behavior in Codex; prior Gemma runs talked about actions without executing tools.";
   if (name.includes("qwythos")) return "Use tested context settings; prior long-context runs hit stream completion issues.";
   return null;
@@ -47,7 +48,7 @@ export function deriveModelCapabilities(models: ModelAsset[], benchmarks: Benchm
     const bestPromptTps = benchMatches.length ? Math.max(...benchMatches.map((run) => run.promptTokensPerSecond)) : null;
     const bestDecodeTps = benchMatches.length ? Math.max(...benchMatches.map((run) => run.generationTokensPerSecond)) : null;
     const latestBenchmark = benchMatches.map((run) => run.createdAt).sort((a, b) => b.localeCompare(a))[0];
-    const mtp = Boolean(model.draftPath || /mtp/.test(lower));
+    const mtp = Boolean(model.draftPath || model.launchProfile?.specType === "draft-mtp" || /mtp/.test(`${lower} ${model.path.toLowerCase()}`));
     const maxContext = model.launchProfile?.ctxSize ?? 262144;
     const issue = knownIssue(model);
     const toolCalling: ModelCapability["toolCalling"] = lower.includes("gemma") ? "limited" : model.served ? "expected" : "unknown";

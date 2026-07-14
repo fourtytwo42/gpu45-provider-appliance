@@ -55,12 +55,19 @@ function serializeLaunchProfile(profile: {
   specType: string;
   specDraftNMax: number;
   flashAttention: string;
+  backend: string;
+  serverBinary: string | null;
+  runtimeLibraryPath: string | null;
+  fanBoostOnBusy: boolean;
   imageMinTokens: number;
   metrics: boolean;
   jinja: boolean;
   active: boolean;
 }): LaunchProfile {
-  return profile;
+  return {
+    ...profile,
+    backend: profile.backend === "vulkan" ? "vulkan" : "rocm",
+  };
 }
 
 export async function syncModelCatalog(models: ModelAsset[]): Promise<ModelAsset[]> {
@@ -169,6 +176,10 @@ export async function updateModelSettings(modelPath: string, input: unknown): Pr
     specType: settings.specType ?? existing?.specType ?? (supportsMtp ? "draft-mtp" : "none"),
     specDraftNMax: settings.specDraftNMax ?? existing?.specDraftNMax ?? activeProfile?.specDraftNMax ?? 2,
     flashAttention: settings.flashAttention ?? existing?.flashAttention ?? activeProfile?.flashAttention ?? "on",
+    backend: existing?.backend === "vulkan" ? "vulkan" : "rocm",
+    serverBinary: existing?.serverBinary ?? null,
+    runtimeLibraryPath: existing?.runtimeLibraryPath ?? null,
+    fanBoostOnBusy: existing?.fanBoostOnBusy ?? false,
     imageMinTokens: settings.imageMinTokens ?? existing?.imageMinTokens ?? activeProfile?.imageMinTokens ?? 1024,
     metrics: settings.metrics ?? existing?.metrics ?? activeProfile?.metrics ?? true,
     jinja: settings.jinja ?? existing?.jinja ?? activeProfile?.jinja ?? true,

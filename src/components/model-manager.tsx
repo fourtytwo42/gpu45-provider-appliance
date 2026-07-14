@@ -64,7 +64,8 @@ function defaultSettings(model: ModelAsset): ModelSettingsForm {
 
 function settingsSummary(model: ModelAsset): string {
   const settings = defaultSettings(model);
-  return `${settings.ctxSize.toLocaleString()} ctx · ${settings.gpuLayers} layers · b${settings.batchSize}/ub${settings.uBatchSize} · ${settings.cacheTypeK}/${settings.cacheTypeV}`;
+  const backend = model.launchProfile?.backend === "vulkan" ? "Vulkan Fast" : "ROCm";
+  return `${backend} · ${settings.ctxSize.toLocaleString()} ctx · ${settings.gpuLayers} layers · b${settings.batchSize}/ub${settings.uBatchSize} · ${settings.cacheTypeK}/${settings.cacheTypeV}`;
 }
 
 export function ModelManager({ initialModels, diskFreeBytes }: { initialModels: ModelAsset[]; diskFreeBytes: number }) {

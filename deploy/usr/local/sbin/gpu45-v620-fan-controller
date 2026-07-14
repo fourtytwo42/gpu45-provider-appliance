@@ -9,12 +9,15 @@ from datetime import datetime
 AMD_PCI = "0000:2d:00.0"
 NCT_NAME = "nct6687"
 INTERVAL_SECONDS = 5
+BOOST_INTERVAL_SECONDS = 1
+BOOST_BUSY_THRESHOLD = 5
 MIN_EXPECTED_RPM = 1000
 MIN_PWM = 70
 STARTUP_PWM = 255
 STARTUP_SECONDS = 6
 PROFILE_FILE = os.environ.get("GPU45_FAN_PROFILE_PATH", "/etc/gpu45/fan-curve.json")
 STATE_FILE = os.environ.get("GPU45_FAN_STATE_PATH", "/etc/gpu45/fan-state.json")
+BOOST_FLAG = os.environ.get("GPU45_VULKAN_FAN_BOOST_FLAG", "/run/gpu45/vulkan-fast-active")
 DEFAULT_CHANNELS = [
     {"pwm": "pwm3", "fan": "fan3_input", "label": "gpu-fan-a"},
     {"pwm": "pwm4", "fan": "fan4_input", "label": "gpu-fan-b"},
@@ -131,6 +134,30 @@ def read_gpu_temps_c(amd_hwmon):
     return temps
 
 
+def read_gpu_busy_percent():
+    try:
+        return max(0, min(100, int(read_text("/sys/class/drm/card1/device/gpu_busy_percent"))))
+    except (OSError, ValueError):
+        return 0
+
+
+def fast_profile_active():
+    try:
+        owner_pid = int(read_text(BOOST_FLAG))
+        os.kill(owner_pid, 0)
+        return True
+    except (OSError, ValueError):
+        try:
+            os.unlink(BOOST_FLAG)
+        except OSError:
+            pass
+        return False
+
+
+def should_boost_fans(profile_active, gpu_busy_percent):
+    return bool(profile_active and gpu_busy_percent >= BOOST_BUSY_THRESHOLD)
+
+
 def pwm_for_temp(temp_c):
     if temp_c is None:
         return 255
@@ -188,7 +215,7 @@ def read_fan_rpms(nct_hwmon):
     }
 
 
-def write_state(temps, max_temp, target_pwm, rpms, status="ok"):
+def write_state(temps, max_temp, target_pwm, rpms, status="ok", boost_active=False, gpu_busy_percent=0):
     payload = {
         "status": status,
         "pwm": int(target_pwm) if target_pwm is not None else None,
@@ -201,6 +228,8 @@ def write_state(temps, max_temp, target_pwm, rpms, status="ok"):
         "temperaturesC": {key: round(value, 1) for key, value in temps.items()},
         "label": ",".join(channel["label"] for channel in channels),
         "channels": channels,
+        "performanceBoost": bool(boost_active),
+        "gpuBusyPercent": int(gpu_busy_percent),
         "updatedAt": datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
     directory = os.path.dirname(STATE_FILE)
@@ -250,10 +279,13 @@ def main():
                 raise RuntimeError("no amdgpu temperature sensors found")
 
             max_temp = max(temps.values())
-            target_pwm = target_pwm_for_temp(max_temp, last_pwm)
+            profile_active = fast_profile_active()
+            gpu_busy_percent = read_gpu_busy_percent()
+            boost_active = should_boost_fans(profile_active, gpu_busy_percent)
+            target_pwm = 255 if boost_active else target_pwm_for_temp(max_temp, last_pwm)
             set_all_pwm(nct_hwmon, target_pwm)
             rpms = read_fan_rpms(nct_hwmon)
-            write_state(temps, max_temp, target_pwm, rpms)
+            write_state(temps, max_temp, target_pwm, rpms, boost_active=boost_active, gpu_busy_percent=gpu_busy_percent)
 
             failing = []
             for label, rpm in rpms.items():
@@ -271,7 +303,7 @@ def main():
             else:
                 now = time.time()
                 if last_pwm != target_pwm or now - last_log >= 60:
-                    log(f"temps={{{', '.join(f'{k}: {v:.1f}C' for k, v in temps.items())}}} max={max_temp:.1f}C pwm={target_pwm} rpms={rpms}")
+                    log(f"temps={{{', '.join(f'{k}: {v:.1f}C' for k, v in temps.items())}}} max={max_temp:.1f}C pwm={target_pwm} busy={gpu_busy_percent}% boost={boost_active} rpms={rpms}")
                     last_pwm = target_pwm
                     last_log = now
 
@@ -284,7 +316,7 @@ def main():
                 log(f"ERROR {exc}; forced GPU fan pwm=255 where possible")
                 last_pwm = 255
 
-        time.sleep(INTERVAL_SECONDS)
+        time.sleep(BOOST_INTERVAL_SECONDS if fast_profile_active() else INTERVAL_SECONDS)
 
     nct_hwmon = find_hwmon_by_name(NCT_NAME)
     if nct_hwmon:

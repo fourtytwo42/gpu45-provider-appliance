@@ -14,6 +14,7 @@ CACHE_TYPE_K=${GPU45_CACHE_TYPE_K:-q4_0}
 CACHE_TYPE_V=${GPU45_CACHE_TYPE_V:-q4_0}
 LLAMA_SERVER_BIN=${GPU45_LLAMA_SERVER_BIN:-$(command -v llama-server 2>/dev/null || true)}
 ROCM_RUNTIME_PATH=${GPU45_ROCM_RUNTIME_PATH:-/opt/rocm-7.0.0}
+VULKAN_FAN_BOOST_FLAG=${GPU45_VULKAN_FAN_BOOST_FLAG:-/run/gpu45/vulkan-fast-active}
 
 load_profile() {
   local file=$1
@@ -54,6 +55,10 @@ emit("CACHE_REUSE", data.get("cacheReuse", 1024))
 emit("SPEC_TYPE", data.get("specType", "draft-mtp"))
 emit("SPEC_DRAFT_N_MAX", data.get("specDraftNMax", 2))
 emit("FLASH_ATTN", data.get("flashAttention", "on"))
+emit("BACKEND", data.get("backend", "rocm"))
+emit("SERVER_BINARY", data.get("serverBinary"))
+emit("RUNTIME_LIBRARY_PATH", data.get("runtimeLibraryPath"))
+emit("FAN_BOOST_ON_BUSY", data.get("fanBoostOnBusy", False))
 emit("REASONING", data.get("reasoning"))
 emit("REASONING_FORMAT", data.get("reasoningFormat"))
 emit("REASONING_BUDGET", data.get("reasoningBudget"))
@@ -186,6 +191,10 @@ else
   SPEC_TYPE=draft-mtp
   SPEC_DRAFT_N_MAX=2
   FLASH_ATTN=on
+  BACKEND=rocm
+  SERVER_BINARY=
+  RUNTIME_LIBRARY_PATH=
+  FAN_BOOST_ON_BUSY=0
   REASONING=
   REASONING_FORMAT=
   REASONING_BUDGET=
@@ -287,12 +296,44 @@ if [[ "${METRICS:-0}" == "1" ]]; then
   build_args+=(--metrics)
 fi
 build_args+=(--no-webui)
-export HSA_OVERRIDE_GFX_VERSION=${GPU45_HSA_OVERRIDE_GFX_VERSION:-10.3.0}
-if [[ -d "$ROCM_RUNTIME_PATH/lib" ]]; then
-  export LD_LIBRARY_PATH="$ROCM_RUNTIME_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+BACKEND=${BACKEND:-rocm}
+case "$BACKEND" in
+  rocm)
+    export HSA_OVERRIDE_GFX_VERSION=${GPU45_HSA_OVERRIDE_GFX_VERSION:-10.3.0}
+    if [[ -d "$ROCM_RUNTIME_PATH/lib" ]]; then
+      export LD_LIBRARY_PATH="$ROCM_RUNTIME_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
+    ;;
+  vulkan)
+    if [[ -n "${RUNTIME_LIBRARY_PATH:-}" && -d "$RUNTIME_LIBRARY_PATH" ]]; then
+      export LD_LIBRARY_PATH="$RUNTIME_LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
+    ;;
+  *)
+    echo "gpu45 error: unsupported inference backend '$BACKEND'" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -n "${SERVER_BINARY:-}" ]]; then
+  LLAMA_SERVER_BIN=$SERVER_BINARY
 fi
 
 if [[ -x "$LLAMA_SERVER_BIN" ]]; then
+  if [[ "$BACKEND" == "vulkan" && "${FAN_BOOST_ON_BUSY:-0}" == "1" ]]; then
+    install -d -m 0755 "$(dirname "$VULKAN_FAN_BOOST_FLAG")"
+    printf '%s\n' "$$" > "$VULKAN_FAN_BOOST_FLAG"
+    cleanup_fan_boost() {
+      rm -f "$VULKAN_FAN_BOOST_FLAG"
+    }
+    trap cleanup_fan_boost EXIT
+    trap 'kill -TERM "$child_pid" 2>/dev/null || true' TERM INT
+    "$LLAMA_SERVER_BIN" "${build_args[@]}" &
+    child_pid=$!
+    wait "$child_pid"
+    exit $?
+  fi
   exec "$LLAMA_SERVER_BIN" "${build_args[@]}"
 fi
 

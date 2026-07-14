@@ -166,6 +166,10 @@ model LaunchProfile {
   specType     String   @default("draft-mtp")
   specDraftNMax Int     @default(2)
   flashAttention String @default("on")
+  backend      String   @default("rocm")
+  serverBinary String?
+  runtimeLibraryPath String?
+  fanBoostOnBusy Boolean @default(false)
   imageMinTokens Int     @default(1024)
   metrics      Boolean  @default(true)
   jinja        Boolean  @default(true)

@@ -307,6 +307,10 @@ class EndpointControlTests(unittest.TestCase):
                     specType TEXT,
                     specDraftNMax INTEGER,
                     flashAttention TEXT,
+                    backend TEXT DEFAULT 'rocm',
+                    serverBinary TEXT,
+                    runtimeLibraryPath TEXT,
+                    fanBoostOnBusy INTEGER DEFAULT 0,
                     imageMinTokens INTEGER,
                     metrics INTEGER,
                     jinja INTEGER,
@@ -428,6 +432,8 @@ class EndpointControlTests(unittest.TestCase):
 
         self.assertEqual(profile["batchSize"], 4096)
         self.assertEqual(profile["uBatchSize"], 1024)
+        self.assertEqual(profile["backend"], "rocm")
+        self.assertFalse(profile["fanBoostOnBusy"])
         self.assertTrue(profile["metrics"])
         self.assertTrue(profile["jinja"])
 
