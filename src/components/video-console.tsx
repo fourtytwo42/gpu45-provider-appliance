@@ -9,12 +9,12 @@ import { videoOutputUrl } from "@/lib/video";
 import { subscribeApplianceEvent } from "@/lib/appliance-events";
 
 type RunState = "idle" | "working" | "error";
-const DEFAULT_NEGATIVE_PROMPT = "abstract colors, smoke only, overexposed, blown out highlights, blurry, low quality, distorted subject, missing subject, text, watermark, painting, cartoon";
+const DEFAULT_NEGATIVE_PROMPT = "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走，watermark，logo";
 const VIDEO_PRESETS = {
-  preview: { label: "Preview", size: "832*480", steps: 20, duration: 2 },
-  balanced: { label: "Balanced", size: "832*480", steps: 30, duration: 2 },
-  quality: { label: "Quality", size: "832*480", steps: 50, duration: 2 },
-  custom: { label: "Custom", size: "832*480", steps: 30, duration: 2 },
+  preview: { label: "Preview", size: "832*480", steps: 30, duration: 2 },
+  balanced: { label: "Balanced", size: "1280*704", steps: 50, duration: 2 },
+  quality: { label: "Quality", size: "1280*704", steps: 50, duration: 5 },
+  custom: { label: "Custom", size: "1280*704", steps: 50, duration: 2 },
 };
 
 async function parseJson(response: Response): Promise<Record<string, unknown>> {
@@ -35,10 +35,10 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
   const [message, setMessage] = useState("");
   const [mode, setMode] = useState<"t2v" | "i2v">("t2v");
   const [selectedProfile, setSelectedProfile] = useState(initialSnapshot.profiles.find((profile) => profile.ready)?.id ?? "wan22-ti2v-5b");
-  const [preset, setPreset] = useState<keyof typeof VIDEO_PRESETS>("preview");
-  const [size, setSize] = useState(VIDEO_PRESETS.preview.size);
-  const [steps, setSteps] = useState(VIDEO_PRESETS.preview.steps);
-  const [duration, setDuration] = useState(VIDEO_PRESETS.preview.duration);
+  const [preset, setPreset] = useState<keyof typeof VIDEO_PRESETS>("balanced");
+  const [size, setSize] = useState(VIDEO_PRESETS.balanced.size);
+  const [steps, setSteps] = useState(VIDEO_PRESETS.balanced.steps);
+  const [duration, setDuration] = useState(VIDEO_PRESETS.balanced.duration);
   const activeJob = useMemo(() => snapshot.jobs.find((job) => job.status === "running" || job.status === "queued"), [snapshot.jobs]);
   const selectedProfileInfo = useMemo(() => snapshot.profiles.find((profile) => profile.id === selectedProfile), [selectedProfile, snapshot.profiles]);
   const modeProfiles = useMemo(() => snapshot.profiles.filter((profile) => profile.modes?.includes(mode) ?? mode === "t2v"), [mode, snapshot.profiles]);
@@ -50,7 +50,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
     const profile = snapshot.profiles.find((item) => item.id === profileId);
     setSelectedProfile(profileId);
     if (!profile) return;
-    setSize(profile.sizes?.[0] ?? "832*480");
+    setSize(profile.recommended_size ?? profile.sizes?.[0] ?? "1280*704");
     setSteps(profile.default_steps ?? profile.step_counts?.[0] ?? 8);
     setDuration(profile.durations?.[0] ?? 2);
     setPreset("custom");
@@ -206,6 +206,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
             <div className={cn("grid gap-1 border px-3 py-2 text-xs", selectedProfileInfo.ready ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-100" : "border-amber-400/30 bg-amber-400/10 text-amber-100")}>
               <span>{selectedProfileInfo.description}</span>
               <span className="text-slate-400">{selectedProfileInfo.backend ?? "WAN"} · {selectedProfileInfo.modes?.join(" / ") ?? "T2V"}{selectedProfileInfo.expected_vram_gb ? ` · about ${selectedProfileInfo.expected_vram_gb} GB VRAM` : ""}</span>
+              {selectedProfileInfo.reference_settings ? <span className="text-slate-300">Reference quality: {selectedProfileInfo.reference_settings}</span> : null}
             </div>
           ) : null}
           {mode === "i2v" ? (
@@ -243,9 +244,9 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                 }}
                 className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
               >
-                <option value="preview">Preview - fastest usable</option>
-                <option value="balanced">Balanced</option>
-                <option value="quality">Quality</option>
+                <option value="preview">Preview - 480p, 30 steps</option>
+                <option value="balanced">Balanced - reference quality, short clip</option>
+                <option value="quality">Quality - reference 5 second clip</option>
                 <option value="custom">Custom</option>
               </select>
             </label>

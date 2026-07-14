@@ -8,11 +8,15 @@ import torch
 from PIL import Image
 from diffsynth.pipelines.wan_video import ModelConfig, WanVideoPipeline
 from diffsynth.utils.data import save_video
-
-
-DEFAULT_NEGATIVE_PROMPT = (
-    "abstract colors, smoke only, overexposed, blown out highlights, blurry, low quality, "
-    "distorted subject, missing subject, text, watermark, painting, cartoon"
+from .quality import (
+    REFERENCE_CFG_SCALE,
+    REFERENCE_NEGATIVE_PROMPT,
+    REFERENCE_SIGMA_SHIFT,
+    REFERENCE_SIZE,
+    REFERENCE_STEPS,
+    REFERENCE_TILE_SIZE,
+    REFERENCE_TILE_STRIDE,
+    prepare_input_image,
 )
 
 
@@ -27,9 +31,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--prompt", required=True)
-    parser.add_argument("--negative-prompt", default=DEFAULT_NEGATIVE_PROMPT)
-    parser.add_argument("--size", default="832*480")
-    parser.add_argument("--steps", type=int, default=30)
+    parser.add_argument("--negative-prompt", default=REFERENCE_NEGATIVE_PROMPT)
+    parser.add_argument("--size", default=REFERENCE_SIZE)
+    parser.add_argument("--steps", type=int, default=REFERENCE_STEPS)
     parser.add_argument("--frame-num", type=int, default=45)
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed", type=int, default=-1)
@@ -92,11 +96,8 @@ def main() -> None:
     generate_started = time.time()
     input_image = None
     if args.input_image:
-        input_image = Image.open(args.input_image).convert("RGB")
-        input_image.thumbnail((width, height), Image.Resampling.LANCZOS)
-        canvas = Image.new("RGB", (width, height), "black")
-        canvas.paste(input_image, ((width - input_image.width) // 2, (height - input_image.height) // 2))
-        input_image = canvas
+        with Image.open(args.input_image) as source_image:
+            input_image = prepare_input_image(source_image, width, height)
 
     video = pipe(
         prompt=args.prompt,
@@ -105,12 +106,13 @@ def main() -> None:
         width=width,
         num_frames=args.frame_num,
         num_inference_steps=args.steps,
-        cfg_scale=5.0,
+        cfg_scale=REFERENCE_CFG_SCALE,
+        sigma_shift=REFERENCE_SIGMA_SHIFT,
         seed=None if args.seed < 0 else args.seed,
         input_image=input_image,
         tiled=True,
-        tile_size=(24, 40),
-        tile_stride=(12, 20),
+        tile_size=REFERENCE_TILE_SIZE,
+        tile_stride=REFERENCE_TILE_STRIDE,
     )
     print(f"generated {len(video)} frames in {time.time() - generate_started:.1f}s", flush=True)
     save_video(video, str(output_path), fps=args.fps, quality=5)

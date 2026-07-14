@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from gpu45_resource import acquire_lease
 from .job_store import JobStore
+from .quality import REFERENCE_NEGATIVE_PROMPT, REFERENCE_SIZE, REFERENCE_STEPS
 
 
 WAN_ROOT = Path(os.environ.get("WAN2_ROOT", "/opt/wan2.2"))
@@ -46,10 +47,7 @@ runner_thread: threading.Thread | None = None
 
 SUPPORTED_SIZES = {"832*480", "480*832", "1280*704", "704*1280"}
 OUTPUT_FPS = int(os.environ.get("WAN2_OUTPUT_FPS", "24"))
-DEFAULT_NEGATIVE_PROMPT = (
-    "abstract colors, smoke only, overexposed, blown out highlights, blurry, low quality, "
-    "distorted subject, missing subject, text, watermark, painting, cartoon"
-)
+DEFAULT_NEGATIVE_PROMPT = REFERENCE_NEGATIVE_PROMPT
 
 PROFILES: dict[str, dict[str, Any]] = {
     "wan22-a14b-q3": {
@@ -118,14 +116,18 @@ PROFILES: dict[str, dict[str, Any]] = {
         "index_file": "diffusion_pytorch_model.safetensors.index.json",
         "ready_detail": "Wan2.2 TI2V-5B",
         "modes": ["t2v", "i2v"],
-        "sizes": ["832*480", "480*832", "1280*704", "704*1280"],
+        "sizes": ["1280*704", "704*1280", "832*480", "480*832"],
         "durations": [2, 3, 4, 5],
-        "step_counts": [20, 30, 40, 50],
-        "default_steps": 30,
+        "step_counts": [30, 40, 50],
+        "default_steps": REFERENCE_STEPS,
         "default_fps": OUTPUT_FPS,
         "expected_vram_gb": 28,
+        "recommended_size": REFERENCE_SIZE,
+        "recommended_steps": REFERENCE_STEPS,
+        "reference_settings": "1280x704, 121 frames, 50 steps, CFG 5, shift 5",
         "known_limitations": [
-            "The base TI2V model is not distilled; 12 steps and below produce visibly degraded results.",
+            "832x480 is a faster appliance preview mode; 1280x704 is the model's reference landscape resolution.",
+            "The base TI2V model is not distilled; fewer than 50 steps trade visible quality for speed.",
             "Text-to-video is less compositionally reliable than image-to-video.",
         ],
     },
@@ -152,8 +154,8 @@ class CreateJobBody(BaseModel):
     prompt: str = Field(..., min_length=1)
     profile: str = "wan22-ti2v-5b"
     negative_prompt: str | None = None
-    size: str = "832*480"
-    steps: int = Field(default=30, ge=1, le=50)
+    size: str = REFERENCE_SIZE
+    steps: int = Field(default=REFERENCE_STEPS, ge=1, le=50)
     duration_seconds: int = Field(default=2, ge=1, le=15)
     seed: int = -1
 
@@ -660,8 +662,8 @@ async def create_i2v_job(
     prompt: str = Form(...),
     negative_prompt: str = Form(DEFAULT_NEGATIVE_PROMPT),
     profile: str = Form("wan22-ti2v-5b"),
-    size: str = Form("832*480"),
-    steps: int = Form(30),
+    size: str = Form(REFERENCE_SIZE),
+    steps: int = Form(REFERENCE_STEPS),
     duration_seconds: int = Form(2),
     seed: int = Form(-1),
 ) -> dict[str, Any]:

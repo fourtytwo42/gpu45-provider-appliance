@@ -43,6 +43,9 @@ export type VideoProfile = {
   default_steps?: number;
   default_fps?: number;
   expected_vram_gb?: number | null;
+  recommended_size?: string;
+  recommended_steps?: number;
+  reference_settings?: string;
   known_limitations?: string[];
 };
 

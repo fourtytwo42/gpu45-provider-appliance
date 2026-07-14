@@ -381,8 +381,8 @@ async function toolVideoGenerate(baseUrl, args) {
     prompt: args.prompt,
     negative_prompt: args.negative_prompt || undefined,
     profile: args.profile || "wan22-ti2v-5b",
-    size: args.size || "832*480",
-    steps: args.steps || 8,
+    size: args.size || "1280*704",
+    steps: args.steps || 50,
     duration_seconds: args.duration_seconds || 2,
     seed: Number.isInteger(args.seed) ? args.seed : -1,
   };
