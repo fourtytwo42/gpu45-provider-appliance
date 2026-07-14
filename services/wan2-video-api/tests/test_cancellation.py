@@ -81,3 +81,21 @@ def test_startup_requeues_interrupted_jobs(tmp_path, monkeypatch) -> None:
     assert job["process_pid"] is None
     assert job["error"] is None
     assert runner_calls == [True]
+
+
+def test_video_output_validation_rejects_truncated_duration() -> None:
+    error = main.validate_video_output(
+        {"duration_seconds": 5},
+        {"duration_seconds": 1.292, "frame_count": 31},
+    )
+
+    assert error == "Output duration was 1.29s; expected approximately 5.00s."
+
+
+def test_video_output_validation_accepts_requested_duration() -> None:
+    error = main.validate_video_output(
+        {"duration_seconds": 5},
+        {"duration_seconds": 5.042, "frame_count": 121},
+    )
+
+    assert error is None

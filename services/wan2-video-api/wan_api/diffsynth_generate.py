@@ -111,7 +111,6 @@ def main() -> None:
         tiled=True,
         tile_size=(24, 40),
         tile_stride=(12, 20),
-        framewise_decoding=True,
     )
     print(f"generated {len(video)} frames in {time.time() - generate_started:.1f}s", flush=True)
     save_video(video, str(output_path), fps=args.fps, quality=5)

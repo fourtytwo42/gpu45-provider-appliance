@@ -407,6 +407,38 @@ def find_output(job_id: str) -> Path | None:
     return None
 
 
+def probe_video(path: Path) -> dict[str, Any]:
+    result = subprocess.run(
+        [
+            "/usr/bin/ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=nb_frames,width,height:format=duration",
+            "-of", "json", str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+    stream = (payload.get("streams") or [{}])[0]
+    return {
+        "duration_seconds": float((payload.get("format") or {}).get("duration") or 0),
+        "frame_count": int(stream.get("nb_frames") or 0),
+        "width": int(stream.get("width") or 0),
+        "height": int(stream.get("height") or 0),
+    }
+
+
+def validate_video_output(job: dict[str, Any], metadata: dict[str, Any]) -> str | None:
+    expected_duration = float(job.get("duration_seconds") or 0)
+    actual_duration = float(metadata.get("duration_seconds") or 0)
+    tolerance = max(0.5, expected_duration * 0.15)
+    if expected_duration > 0 and abs(actual_duration - expected_duration) > tolerance:
+        return f"Output duration was {actual_duration:.2f}s; expected approximately {expected_duration:.2f}s."
+    if int(metadata.get("frame_count") or 0) <= 1:
+        return "Output video does not contain enough decoded frames."
+    return None
+
+
 def run_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     log_path = LOG_DIR / f"{job_id}.log"
@@ -494,7 +526,22 @@ def run_job(job: dict[str, Any]) -> None:
         if not output:
             update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error="No output video found.", process_pid=None)
             return
-        update_job_unless_cancelled(job_id, status="completed", completed_at=now(), output_path=str(output), process_pid=None)
+        metadata = probe_video(output)
+        validation_error = validate_video_output(job, metadata)
+        if validation_error:
+            update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error=validation_error, process_pid=None)
+            return
+        update_job_unless_cancelled(
+            job_id,
+            status="completed",
+            completed_at=now(),
+            output_path=str(output),
+            output_duration_seconds=metadata["duration_seconds"],
+            output_frame_count=metadata["frame_count"],
+            output_width=metadata["width"],
+            output_height=metadata["height"],
+            process_pid=None,
+        )
     except Exception as exc:
         update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error=str(exc), process_pid=None)
     finally:
