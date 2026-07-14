@@ -392,6 +392,102 @@ def flatten_namespace_tools(body):
     return normalized, name_map
 
 
+def normalize_local_schema_refs(schema):
+    """Inline local JSON Schema definitions that llama.cpp cannot resolve."""
+    if not isinstance(schema, dict):
+        return schema, 0
+
+    definitions = {}
+
+    def collect(value):
+        if isinstance(value, list):
+            for item in value:
+                collect(item)
+            return
+        if not isinstance(value, dict):
+            return
+        for keyword in ("$defs", "definitions"):
+            candidates = value.get(keyword)
+            if isinstance(candidates, dict):
+                for name, definition in candidates.items():
+                    definitions.setdefault(str(name), definition)
+        for item in value.values():
+            collect(item)
+
+    collect(schema)
+    resolved_count = 0
+
+    def expand(value, stack=()):
+        nonlocal resolved_count
+        if isinstance(value, list):
+            return [expand(item, stack) for item in value]
+        if not isinstance(value, dict):
+            return value
+
+        ref = value.get("$ref")
+        if isinstance(ref, str):
+            prefix = next(
+                (candidate for candidate in ("#/$defs/", "#/definitions/") if ref.startswith(candidate)),
+                None,
+            )
+            if prefix:
+                name = ref[len(prefix):].replace("~1", "/").replace("~0", "~")
+                definition = definitions.get(name)
+                if definition is not None:
+                    resolved_count += 1
+                    base = {} if name in stack else expand(definition, stack + (name,))
+                    siblings = {
+                        key: expand(item, stack)
+                        for key, item in value.items()
+                        if key != "$ref"
+                    }
+                    if isinstance(base, dict):
+                        return {**base, **siblings}
+                    return siblings or base
+
+        return {
+            key: expand(item, stack)
+            for key, item in value.items()
+            if key not in {"$defs", "definitions"}
+        }
+
+    return expand(schema), resolved_count
+
+
+def normalize_tool_schemas(body):
+    """Make Responses function schemas portable across llama.cpp backends."""
+    tools = body.get("tools")
+    if not isinstance(tools, list):
+        return body, 0
+
+    normalized_tools = []
+    resolved_count = 0
+    changed = False
+    for tool in tools:
+        if not isinstance(tool, dict):
+            normalized_tools.append(tool)
+            continue
+        normalized_tool = dict(tool)
+        if isinstance(tool.get("parameters"), dict):
+            normalized_tool["parameters"], count = normalize_local_schema_refs(tool["parameters"])
+            resolved_count += count
+            changed = changed or count > 0
+        function = tool.get("function")
+        if isinstance(function, dict) and isinstance(function.get("parameters"), dict):
+            normalized_function = dict(function)
+            normalized_function["parameters"], count = normalize_local_schema_refs(function["parameters"])
+            normalized_tool["function"] = normalized_function
+            resolved_count += count
+            changed = changed or count > 0
+        normalized_tools.append(normalized_tool)
+
+    if not changed:
+        return body, 0
+    normalized = dict(body)
+    normalized["tools"] = normalized_tools
+    return normalized, resolved_count
+
+
 def restore_namespaced_calls(value, name_map):
     """Restore the namespace/name split Codex's tool router requires."""
     if isinstance(value, list):
@@ -885,6 +981,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             request_body = normalize_responses_instructions(request_body)
             request_body = apply_model_behavior_hints(request_body)
             request_body, namespace_map = flatten_namespace_tools(request_body)
+            request_body, normalized_schema_refs = normalize_tool_schemas(request_body)
             request_body["input"] = normalize_tool_output_items(
                 flatten_namespaced_calls(request_body.get("input"), namespace_map)
             )
@@ -898,6 +995,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 )
             if namespace_map:
                 print(f"flattened {len(namespace_map)} namespaced tools", flush=True)
+            if normalized_schema_refs:
+                print(f"normalized {normalized_schema_refs} local tool schema refs", flush=True)
             request_body["stream"] = True
             raw_body = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
 

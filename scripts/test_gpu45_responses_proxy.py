@@ -92,6 +92,71 @@ class NamespaceToolTranslationTests(unittest.TestCase):
         self.assertEqual(call["namespace"], "mcp__node_repl__")
         self.assertEqual(call["name"], "js")
 
+    def test_inlines_nested_local_schema_definitions(self):
+        body = {
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "search_properties",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "request": {
+                                "type": "object",
+                                "properties": {
+                                    "bedrooms": {"$ref": "#/$defs/MinMaxInt"},
+                                    "location": {"$ref": "#/$defs/LatLong"},
+                                },
+                                "$defs": {
+                                    "MinMaxInt": {
+                                        "type": "object",
+                                        "properties": {
+                                            "min": {"type": "integer"},
+                                            "max": {"type": "integer"},
+                                        },
+                                    },
+                                    "LatLong": {
+                                        "type": "object",
+                                        "properties": {
+                                            "latitude": {"type": "number"},
+                                            "longitude": {"type": "number"},
+                                        },
+                                    },
+                                },
+                            }
+                        },
+                    },
+                }
+            ]
+        }
+
+        normalized, count = PROXY.normalize_tool_schemas(body)
+
+        request = normalized["tools"][0]["parameters"]["properties"]["request"]
+        self.assertEqual(count, 2)
+        self.assertEqual(request["properties"]["bedrooms"]["type"], "object")
+        self.assertEqual(request["properties"]["location"]["type"], "object")
+        self.assertNotIn("$defs", request)
+        self.assertIn("$defs", body["tools"][0]["parameters"]["properties"]["request"])
+
+    def test_breaks_recursive_local_schema_cycle_without_mutating_input(self):
+        schema = {
+            "type": "object",
+            "properties": {"node": {"$ref": "#/$defs/Node"}},
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {"next": {"$ref": "#/$defs/Node"}},
+                }
+            },
+        }
+
+        normalized, count = PROXY.normalize_local_schema_refs(schema)
+
+        self.assertEqual(count, 2)
+        self.assertEqual(normalized["properties"]["node"]["properties"]["next"], {})
+        self.assertIn("$defs", schema)
+
     def test_builds_structured_followup_and_flattens_prior_call(self):
         PROXY.RESPONSE_STORE.clear()
         PROXY.RESPONSE_STORE["resp_1"] = {
