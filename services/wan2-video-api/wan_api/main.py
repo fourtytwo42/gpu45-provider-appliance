@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -518,7 +519,35 @@ def ensure_runner() -> None:
     runner_thread.start()
 
 
-app = FastAPI(title="GPU45 Wan2.2 Video API")
+def recover_pending_jobs() -> int:
+    recovered = 0
+    with lock:
+        jobs = load_jobs()
+        for job in jobs:
+            if job.get("status") != "running":
+                continue
+            job.update(
+                status="queued",
+                started_at=None,
+                process_pid=None,
+                process_group=None,
+                error=None,
+                recovery_message="Resumed after the video service restarted.",
+            )
+            recovered += 1
+        if recovered:
+            save_jobs(jobs)
+    ensure_runner()
+    return recovered
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    recover_pending_jobs()
+    yield
+
+
+app = FastAPI(title="GPU45 Wan2.2 Video API", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -628,6 +657,8 @@ async def create_i2v_job(
         jobs = load_jobs()
         jobs.append(job)
         save_jobs(jobs)
+    ensure_runner()
+    return public_job(job)
 
 
 def update_job_unless_cancelled(job_id: str, **updates: Any) -> bool:
@@ -642,8 +673,6 @@ def update_job_unless_cancelled(job_id: str, **updates: Any) -> bool:
             save_jobs(jobs)
             return True
     return False
-    ensure_runner()
-    return public_job(job)
 
 
 @app.post("/jobs/{job_id}/cancel")
