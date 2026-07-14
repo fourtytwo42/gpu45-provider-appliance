@@ -1,5 +1,5 @@
 [Unit]
-Description=GPU45 ROCm Qwen3.6-27B-MTP inference server
+Description=GPU45 managed LLM inference server
 After=network-online.target gpu45-host-tune.service
 Wants=network-online.target
 

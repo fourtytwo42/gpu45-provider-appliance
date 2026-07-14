@@ -11,8 +11,8 @@ if [[ ! -f "$SOURCE_DIR/CMakeLists.txt" ]]; then
   echo "llama.cpp source not found: $SOURCE_DIR" >&2
   exit 1
 fi
-if ! command -v glslc >/dev/null || ! pkg-config --exists vulkan; then
-  echo "missing Vulkan build dependencies; install glslc and libvulkan-dev" >&2
+if ! command -v glslc >/dev/null || ! pkg-config --exists vulkan || ! pkg-config --exists openssl; then
+  echo "missing build dependencies; install glslc, libvulkan-dev, and libssl-dev" >&2
   exit 1
 fi
 
@@ -21,6 +21,7 @@ cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$VULKAN_PREFIX" \
   -DGGML_VULKAN=ON \
+  -DLLAMA_OPENSSL=ON \
   -DGGML_NATIVE=ON \
   -DGGML_LTO=OFF \
   -DGGML_BUILD_TESTS=OFF \
@@ -33,6 +34,7 @@ cmake --build "$BUILD_DIR" --parallel "$(nproc)" --target llama-server llama-ben
   echo "built_at=$(date --iso-8601=seconds)"
   echo "cmake_build_type=Release"
   echo "ggml_vulkan=ON"
+  echo "llama_openssl=ON"
   echo "ggml_native=ON"
   sha256sum "$BUILD_DIR/bin/llama-server" "$BUILD_DIR/bin/llama-bench"
 } > "$MANIFEST"

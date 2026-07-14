@@ -162,6 +162,7 @@ install -m 0644 deploy/systemd/gpu45-provider-appliance@.service /etc/systemd/sy
 install -m 0644 deploy/systemd/gpu45-provider-appliance-worker.service /etc/systemd/system/gpu45-provider-appliance-worker.service
 install -m 0644 deploy/systemd/gpu45-resource-manager.service /etc/systemd/system/gpu45-resource-manager.service
 install -m 0644 deploy/systemd/gpu45-responses-proxy.service /etc/systemd/system/gpu45-responses-proxy.service
+install -m 0644 deploy/systemd/llama-openai.service /etc/systemd/system/llama-openai.service
 install -m 0644 deploy/systemd/qwen3-tts-api.service /etc/systemd/system/qwen3-tts-api.service
 install -m 0644 deploy/systemd/gpu45-pocket-tts-api.service /etc/systemd/system/gpu45-pocket-tts-api.service
 install -m 0644 deploy/systemd/gpu45-image-api.service /etc/systemd/system/gpu45-image-api.service
@@ -171,6 +172,8 @@ install -m 0644 deploy/systemd/hunyuan-video-comfy.service /etc/systemd/system/h
 install -m 0755 scripts/configure-service-user.sh /usr/local/sbin/gpu45-configure-service-user
 /usr/local/sbin/gpu45-configure-service-user
 install -m 0755 deploy/usr/local/bin/gpu45-responses-proxy /usr/local/bin/gpu45-responses-proxy
+install -m 0755 scripts/gpu45-llm-server /usr/local/bin/gpu45-llm-server
+install -m 0755 deploy/usr/local/sbin/gpu45-v620-fan-controller /usr/local/sbin/gpu45-v620-fan-controller
 cp -a services/qwen3-tts-api/tts_api/. /opt/qwen3-tts/tts_api/
 mkdir -p /opt/pocket-tts/pocket_tts_api
 cp -a services/pocket-tts-api/pocket_tts_api/. /opt/pocket-tts/pocket_tts_api/

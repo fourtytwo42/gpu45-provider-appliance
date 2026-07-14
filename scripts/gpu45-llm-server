@@ -324,15 +324,28 @@ if [[ -x "$LLAMA_SERVER_BIN" ]]; then
   if [[ "$BACKEND" == "vulkan" && "${FAN_BOOST_ON_BUSY:-0}" == "1" ]]; then
     install -d -m 0755 "$(dirname "$VULKAN_FAN_BOOST_FLAG")"
     printf '%s\n' "$$" > "$VULKAN_FAN_BOOST_FLAG"
+    child_pid=""
+    stopping=0
     cleanup_fan_boost() {
       rm -f "$VULKAN_FAN_BOOST_FLAG"
     }
     trap cleanup_fan_boost EXIT
-    trap 'kill -TERM "$child_pid" 2>/dev/null || true' TERM INT
+    # systemd uses KillMode=control-group, so it already signals the child.
+    # Forwarding the signal here would interrupt llama-server twice.
+    trap 'stopping=1' TERM INT
     "$LLAMA_SERVER_BIN" "${build_args[@]}" &
     child_pid=$!
-    wait "$child_pid"
-    exit $?
+    child_status=0
+    while kill -0 "$child_pid" 2>/dev/null; do
+      set +e
+      wait "$child_pid"
+      child_status=$?
+      set -e
+    done
+    if [[ "$stopping" == "1" ]]; then
+      exit 0
+    fi
+    exit "$child_status"
   fi
   exec "$LLAMA_SERVER_BIN" "${build_args[@]}"
 fi
