@@ -5,6 +5,7 @@ SOURCE_DIR=${GPU45_LLAMA_SOURCE_DIR:-/usr/local/src/rocm-llama.cpp-c58855a895c5d
 BUILD_ROOT=${GPU45_VULKAN_BUILD_ROOT:-/opt/llama.cpp-vulkan-b9592}
 BUILD_DIR="$BUILD_ROOT/build"
 MANIFEST="$BUILD_ROOT/build-manifest.txt"
+VULKAN_PREFIX=${GPU45_VULKAN_PREFIX:-/opt/vulkan-sdk}
 
 if [[ ! -f "$SOURCE_DIR/CMakeLists.txt" ]]; then
   echo "llama.cpp source not found: $SOURCE_DIR" >&2
@@ -18,6 +19,7 @@ fi
 mkdir -p "$BUILD_ROOT"
 cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$VULKAN_PREFIX" \
   -DGGML_VULKAN=ON \
   -DGGML_NATIVE=ON \
   -DGGML_LTO=OFF \
