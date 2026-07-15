@@ -238,7 +238,12 @@ def find_saved_video(history: dict[str, Any], output_root: Path, expected_prefix
     outputs = history.get("outputs", {})
     for node in outputs.values():
         for collection in ("videos", "animated", "images"):
-            for item in node.get(collection, []):
+            items = node.get(collection, [])
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
                 filename = item.get("filename")
                 if not filename:
                     continue

@@ -80,4 +80,5 @@ def test_ltx_video_falls_back_to_expected_output_prefix(tmp_path) -> None:
     output.parent.mkdir()
     output.write_bytes(b"video")
 
-    assert find_saved_video({"outputs": {}}, tmp_path, "job-7") == output
+    history = {"outputs": {"20": {"animated": True, "videos": [False]}}}
+    assert find_saved_video(history, tmp_path, "job-7") == output
