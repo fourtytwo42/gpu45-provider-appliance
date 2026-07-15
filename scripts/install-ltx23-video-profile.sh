@@ -56,6 +56,7 @@ for source in "${!LINKS[@]}"; do
 done
 
 chown -R hendo420:hendo420 "$MODEL_ROOT" "$COMFY_ROOT/custom_nodes" /models/wan2-video/comfy-output
-rsync -a "$APP_ROOT/services/wan2-video-api/wan_api/" /opt/wan2.2/wan_api/
+mkdir -p /opt/gpu45-video-api/wan_api
+rsync -a --delete "$APP_ROOT/services/wan2-video-api/wan_api/" /opt/gpu45-video-api/wan_api/
 systemctl restart wan2-video-api.service
 systemctl --no-pager --full status wan2-video-api.service

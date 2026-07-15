@@ -34,7 +34,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
   const [state, setState] = useState<RunState>("idle");
   const [message, setMessage] = useState("");
   const [mode, setMode] = useState<"t2v" | "i2v">("t2v");
-  const [selectedProfile, setSelectedProfile] = useState(initialSnapshot.profiles.find((profile) => profile.ready)?.id ?? "wan22-ti2v-5b");
+  const [selectedProfile, setSelectedProfile] = useState(initialSnapshot.profiles.find((profile) => profile.ready)?.id ?? "ltx23-q4-preview");
   const [preset, setPreset] = useState<keyof typeof VIDEO_PRESETS>("balanced");
   const [size, setSize] = useState(VIDEO_PRESETS.balanced.size);
   const [steps, setSteps] = useState(VIDEO_PRESETS.balanced.steps);

@@ -77,43 +77,6 @@ def t2v_workflow(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def wan22_a14b_workflow(args: argparse.Namespace) -> dict[str, Any]:
-    return {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "Wan2.2-T2V-A14B-HighNoise-Q3_K_M.gguf"}},
-        "2": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "Wan2.2-T2V-A14B-LowNoise-Q3_K_M.gguf"}},
-        "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"}},
-        "4": {"class_type": "CLIPTextEncode", "inputs": {"text": args.prompt, "clip": ["3", 0]}},
-        "5": {"class_type": "CLIPTextEncode", "inputs": {"text": args.negative_prompt, "clip": ["3", 0]}},
-        "6": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1", 0], "shift": 5.0}},
-        "7": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["2", 0], "shift": 5.0}},
-        "8": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["6", 0], "lora_name": "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors", "strength_model": 1.0}},
-        "9": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["7", 0], "lora_name": "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors", "strength_model": 1.0}},
-        "10": {"class_type": "EmptyHunyuanLatentVideo", "inputs": {"width": args.width, "height": args.height, "length": args.frames, "batch_size": 1}},
-        "11": {
-            "class_type": "KSamplerAdvanced",
-            "inputs": {
-                "model": ["8", 0], "add_noise": "enable", "noise_seed": args.seed,
-                "steps": 4, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple",
-                "positive": ["4", 0], "negative": ["5", 0], "latent_image": ["10", 0],
-                "start_at_step": 0, "end_at_step": 2, "return_with_leftover_noise": "enable",
-            },
-        },
-        "12": {
-            "class_type": "KSamplerAdvanced",
-            "inputs": {
-                "model": ["9", 0], "add_noise": "disable", "noise_seed": 0,
-                "steps": 4, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple",
-                "positive": ["4", 0], "negative": ["5", 0], "latent_image": ["11", 0],
-                "start_at_step": 2, "end_at_step": 4, "return_with_leftover_noise": "disable",
-            },
-        },
-        "13": {"class_type": "VAELoader", "inputs": {"vae_name": "wan_2.1_vae.safetensors"}},
-        "14": {"class_type": "VAEDecode", "inputs": {"samples": ["12", 0], "vae": ["13", 0]}},
-        "15": {"class_type": "CreateVideo", "inputs": {"images": ["14", 0], "fps": args.fps}},
-        "16": {"class_type": "SaveVideo", "inputs": {"video": ["15", 0], "filename_prefix": f"gpu45/{args.job_id}", "format": "mp4", "codec": "h264"}},
-    }
-
-
 def ltx23_workflow(args: argparse.Namespace) -> dict[str, Any]:
     workflow: dict[str, Any] = {
         "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "ltx-2.3-22b-distilled-Q4_K_M.gguf"}},
@@ -279,7 +242,7 @@ def run(args: argparse.Namespace) -> None:
         if args.profile.startswith("ltx23-"):
             workflow = ltx23_workflow(args)
         else:
-            workflow = wan22_a14b_workflow(args) if args.profile == "wan22-a14b-q3" else t2v_workflow(args)
+            workflow = t2v_workflow(args)
         submitted = request_json(f"{args.comfy_url}/prompt", {"prompt": workflow, "client_id": client_id})
         prompt_id = str(submitted["prompt_id"])
         print(f"stage=submitted prompt_id={prompt_id}", flush=True)

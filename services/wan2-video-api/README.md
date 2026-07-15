@@ -1,19 +1,18 @@
-# GPU45 Wan2.2 Video Service
+# GPU45 LTX Video Service
 
-This service wraps the official Wan2.2 repository for the GPU45 appliance.
+This job-based controller serves the appliance's LTX-2.3 text-to-video and
+image-to-video profiles. The lightweight API runs from
+`/opt/gpu45-video-api-venv`; generation runs through the ROCm ComfyUI stack in
+`/opt/hunyuan-video-1.5` and `/opt/hunyuan-video-venv`.
 
-Default target:
+Persistent job metadata, uploads, logs, and outputs remain under
+`/models/wan2-video` for backward compatibility. The directory name is legacy;
+it does not imply that WAN model weights are installed.
 
-- model: `Wan-AI/Wan2.2-TI2V-5B`
-- task: `ti2v-5B`
-- recommended flags: `--offload_model True --convert_model_dtype --t5_cpu`
-
-The service is intentionally job-based because video generation is long-running and uses the GPU. Jobs stop `llama-openai.service` before generation and restart it afterward.
-
-Install with:
+Install or refresh the LTX integration with:
 
 ```bash
-sudo /opt/gpu45-provider-appliance/scripts/install-wan2-video-service.sh
+sudo /opt/gpu45-provider-appliance/scripts/install-ltx23-video-profile.sh
 ```
 
-The webapp proxies this API through `/api/video`.
+The webapp proxies the loopback API through `/api/video`.

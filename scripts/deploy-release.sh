@@ -179,7 +179,18 @@ mkdir -p /opt/pocket-tts/pocket_tts_api
 cp -a services/pocket-tts-api/pocket_tts_api/. /opt/pocket-tts/pocket_tts_api/
 cp -a services/image-api/image_api/. /opt/gpu45-image-api/image_api/
 cp -a services/whisper-api/whisper_api/. /opt/gpu45-whisper-api/whisper_api/
-cp -a services/wan2-video-api/wan_api/. /opt/wan2.2/wan_api/
+if [[ ! -x /opt/gpu45-video-api-venv/bin/python ]]; then
+  python3 -m venv /opt/gpu45-video-api-venv
+fi
+controller_requirements_hash="$(sha256sum services/wan2-video-api/requirements-controller.txt | cut -d' ' -f1)"
+if [[ ! -f /opt/gpu45-video-api-venv/.requirements-hash ]] || [[ "$(cat /opt/gpu45-video-api-venv/.requirements-hash)" != "$controller_requirements_hash" ]]; then
+  /opt/gpu45-video-api-venv/bin/pip install -r services/wan2-video-api/requirements-controller.txt
+  printf '%s\n' "$controller_requirements_hash" > /opt/gpu45-video-api-venv/.requirements-hash
+fi
+mkdir -p /opt/gpu45-video-api/wan_api
+rm -rf /opt/gpu45-video-api/wan_api/*
+cp -a services/wan2-video-api/wan_api/. /opt/gpu45-video-api/wan_api/
+chown -R hendo420:hendo420 /opt/gpu45-video-api /opt/gpu45-video-api-venv
 for service_db in \
   /models/qwen3-tts/api_data/jobs.db* \
   /models/image-gen/jobs.db* \

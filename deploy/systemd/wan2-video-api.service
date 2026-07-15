@@ -1,5 +1,5 @@
 [Unit]
-Description=Wan2.2 video API for GPU45 appliance
+Description=GPU45 LTX video API
 After=network-online.target
 Wants=network-online.target
 
@@ -7,14 +7,11 @@ Wants=network-online.target
 Type=simple
 User=hendo420
 Group=hendo420
-WorkingDirectory=/opt/wan2.2
+WorkingDirectory=/opt/gpu45-video-api
 Environment=WAN2_API_HOST=127.0.0.1
 Environment=WAN2_API_PORT=8010
-Environment=WAN2_ROOT=/opt/wan2.2
-Environment=WAN2_PYTHON=/opt/wan2-video-venv/bin/python
-Environment=WAN2_HF_CLI=/opt/wan2-video-venv/bin/huggingface-cli
+Environment=GPU45_VIDEO_ROOT=/opt/gpu45-video-api
 Environment=WAN2_API_DATA=/models/wan2-video
-Environment=WAN2_MODEL_DIR=/models/wan2-video/Wan2.2-TI2V-5B
 Environment=HUNYUAN_PYTHON=/opt/hunyuan-video-venv/bin/python
 Environment=HUNYUAN_MODEL_ROOT=/models/hunyuan-video-1.5
 Environment=WAN2_LLM_SERVICE=llama-openai.service
@@ -30,7 +27,7 @@ Environment=MIOPEN_FIND_MODE=2
 Environment=TOKENIZERS_PARALLELISM=false
 EnvironmentFile=/etc/gpu45/resource-manager.env
 Environment=PYTHONPATH=/opt/gpu45/current/services/common
-ExecStart=/opt/wan2-video-venv/bin/python -m wan_api
+ExecStart=/opt/gpu45-video-api-venv/bin/python -m wan_api
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60

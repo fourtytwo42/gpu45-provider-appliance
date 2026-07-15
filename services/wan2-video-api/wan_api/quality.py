@@ -12,8 +12,8 @@ REFERENCE_NEGATIVE_PROMPT = (
     "杂乱的背景，三条腿，背景人很多，倒着走，watermark，logo"
 )
 
-REFERENCE_SIZE = "1280*704"
-REFERENCE_STEPS = 50
+REFERENCE_SIZE = "512*320"
+REFERENCE_STEPS = 8
 REFERENCE_CFG_SCALE = 5.0
 REFERENCE_SIGMA_SHIFT = 5.0
 # The reference 30x52 tiles take more than 20 minutes to decode a two-second

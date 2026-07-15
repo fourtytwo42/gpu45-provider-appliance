@@ -32,7 +32,7 @@ It intentionally does not contain generated/runtime-heavy artifacts:
 1. Install Ubuntu 22.04, ROCm/amdgpu stack, Node.js, npm, Python tooling, build tools, git, and GitHub CLI.
 2. Clone this repo to `/opt/gpu45-provider-appliance`.
 3. Run `npm ci`, generate Prisma client, initialize the database, and build Next.js.
-4. Install service API dependencies and virtual environments for image, Whisper, Qwen3 TTS, and Wan video services.
+4. Install service API dependencies and virtual environments for image, Whisper, Qwen3 TTS, and LTX video services.
 5. Copy `deploy/systemd/*.service` to `/etc/systemd/system/`.
 6. Copy `deploy/etc/gpu45/*` to `/etc/gpu45/` and adjust model paths if models live somewhere different.
 7. Copy `deploy/usr/local/bin/gpu45-llm-server` to `/usr/local/bin/gpu45-llm-server` and make it executable.
@@ -64,7 +64,7 @@ Core restore should prioritize:
 
 1. `/opt/gpu45-provider-appliance` from this repo.
 2. `/opt/qwen3-tts` from the recorded upstream SHA if TTS training/synthesis is needed.
-3. `/opt/wan2.2` plus `/opt/DiffSynth-Studio` from recorded source state if video generation is needed.
+3. `/opt/hunyuan-video-1.5`, `/opt/hunyuan-video-venv`, and `/models/ltx2-eval` if video generation is needed.
 4. Recreate Python virtual environments from service dependency requirements or current package imports.
 
 `/models/qwen3-tts` contains runtime voice/model metadata and generated assets. It is intentionally excluded from git; if preserving trained voices matters, back it up separately.

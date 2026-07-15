@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_ROOT="${APP_ROOT:-/opt/gpu45-provider-appliance}"
-SOURCE_VENV="${SOURCE_VENV:-/opt/wan2-video-venv}"
+SOURCE_VENV="${SOURCE_VENV:-/opt/hunyuan-video-venv}"
 VENV_DIR="${HUNYUAN_VENV:-/opt/hunyuan-video-venv}"
 MODEL_ROOT="${HUNYUAN_MODEL_ROOT:-/models/hunyuan-video-1.5}"
 RUNTIME_ROOT="${HUNYUAN_ROOT:-/opt/hunyuan-video-1.5}"
@@ -16,6 +16,10 @@ fi
 install -d -o hendo420 -g hendo420 "$MODEL_ROOT" "$RUNTIME_ROOT"
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+  if [[ "$SOURCE_VENV" == "$VENV_DIR" ]] || [[ ! -x "$SOURCE_VENV/bin/python" ]]; then
+    echo "Missing ROCm video environment at $VENV_DIR; restore it from the appliance dependency manifest." >&2
+    exit 1
+  fi
   cp -a --reflink=auto "$SOURCE_VENV" "$VENV_DIR"
   chown -R hendo420:hendo420 "$VENV_DIR"
   sed -i "s#$SOURCE_VENV#$VENV_DIR#g" "$VENV_DIR/pyvenv.cfg" "$VENV_DIR"/bin/activate* || true

@@ -380,7 +380,7 @@ async function toolVideoGenerate(baseUrl, args) {
     action: "createJob",
     prompt: args.prompt,
     negative_prompt: args.negative_prompt || undefined,
-    profile: args.profile || "wan22-ti2v-5b",
+    profile: args.profile || "ltx23-q4-preview",
     size: args.size || "1280*704",
     steps: args.steps || 50,
     duration_seconds: args.duration_seconds || 2,

@@ -123,7 +123,7 @@ export async function createVideoJob(payload: Record<string, unknown>): Promise<
   });
 }
 
-export async function startVideoModelDownload(profile = "wan22-ti2v-5b"): Promise<Record<string, unknown>> {
+export async function startVideoModelDownload(profile = "ltx23-q4-preview"): Promise<Record<string, unknown>> {
   return await fetchJson<Record<string, unknown>>(`/model/download?profile=${encodeURIComponent(profile)}`, { method: "POST" });
 }
 

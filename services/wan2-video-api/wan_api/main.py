@@ -18,20 +18,16 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from gpu45_resource import acquire_lease
 from .job_store import JobStore
-from .quality import REFERENCE_NEGATIVE_PROMPT, REFERENCE_SIZE, REFERENCE_STEPS
+from .quality import REFERENCE_SIZE, REFERENCE_STEPS
 
 
-WAN_ROOT = Path(os.environ.get("WAN2_ROOT", "/opt/wan2.2"))
+VIDEO_ROOT = Path(os.environ.get("GPU45_VIDEO_ROOT", "/opt/gpu45-video-api"))
 DATA_DIR = Path(os.environ.get("WAN2_API_DATA", "/models/wan2-video"))
-MODEL_DIR = Path(os.environ.get("WAN2_MODEL_DIR", "/models/wan2-video/Wan2.2-TI2V-5B"))
-PYTHON = os.environ.get("WAN2_PYTHON", "/opt/wan2-video-venv/bin/python")
 HUNYUAN_PYTHON = os.environ.get("HUNYUAN_PYTHON", "/opt/hunyuan-video-venv/bin/python")
 HUNYUAN_MODEL_ROOT = Path(os.environ.get("HUNYUAN_MODEL_ROOT", "/models/hunyuan-video-1.5"))
 LTX_MODEL_ROOT = Path(os.environ.get("LTX_MODEL_ROOT", "/models/ltx2-eval"))
-HF_CLI = os.environ.get("WAN2_HF_CLI", str(Path(PYTHON).with_name("huggingface-cli")))
 LLM_SERVICE = os.environ.get("WAN2_LLM_SERVICE", "llama-openai.service")
 RESTART_LLM = os.environ.get("WAN2_RESTART_LLM_AFTER", "true").lower() in {"1", "true", "yes", "on"}
-HF_REPO = os.environ.get("WAN2_HF_REPO", "Wan-AI/Wan2.2-TI2V-5B")
 JOBS_PATH = DATA_DIR / "jobs.json"
 OUTPUT_DIR = DATA_DIR / "outputs"
 LOG_DIR = DATA_DIR / "logs"
@@ -48,7 +44,10 @@ runner_thread: threading.Thread | None = None
 
 SUPPORTED_SIZES = {"832*480", "480*832", "1280*704", "704*1280"}
 OUTPUT_FPS = int(os.environ.get("WAN2_OUTPUT_FPS", "24"))
-DEFAULT_NEGATIVE_PROMPT = REFERENCE_NEGATIVE_PROMPT
+DEFAULT_NEGATIVE_PROMPT = (
+    "low quality, blurry, static frame, malformed anatomy, duplicate subjects, "
+    "watermark, logo, subtitles, text artifacts"
+)
 
 PROFILES: dict[str, dict[str, Any]] = {
     "ltx23-q4-preview": {
@@ -126,33 +125,6 @@ PROFILES: dict[str, dict[str, Any]] = {
             "Only text-to-video has passed the balanced-profile hardware gate.",
         ],
     },
-    "wan22-a14b-q3": {
-        "id": "wan22-a14b-q3",
-        "name": "Wan2.2 A14B Q3 Turbo",
-        "description": "Dual-expert A14B profile sized for 32GB with the four-step LightX2V accelerator.",
-        "repo": "QuantStack/Wan2.2-T2V-A14B-GGUF",
-        "model_dir": DATA_DIR,
-        "backend": "hunyuan-comfy",
-        "modes": ["t2v"],
-        "sizes": ["832*480", "480*832"],
-        "durations": [2, 3, 4, 5],
-        "step_counts": [4],
-        "default_steps": 4,
-        "default_fps": 12,
-        "expected_vram_gb": 26,
-        "required_files": [
-            "Wan2.2-T2V-A14B-GGUF/HighNoise/Wan2.2-T2V-A14B-HighNoise-Q3_K_M.gguf",
-            "Wan2.2-T2V-A14B-GGUF/LowNoise/Wan2.2-T2V-A14B-LowNoise-Q3_K_M.gguf",
-            "comfy-assets/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-            "comfy-assets/split_files/vae/wan_2.1_vae.safetensors",
-            "comfy-assets/split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
-            "comfy-assets/split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
-        ],
-        "index_file": None,
-        "ready_detail": "Wan2.2 A14B Q3 Turbo",
-        "enabled": False,
-        "availability_reason": "Validation failed: dual-expert switching exhausted 32GB system RAM and entered swap.",
-    },
     "hunyuan15-t2v-q5": {
         "id": "hunyuan15-t2v-q5",
         "name": "HunyuanVideo 1.5 480p Q5",
@@ -178,58 +150,12 @@ PROFILES: dict[str, dict[str, Any]] = {
         "enabled": False,
         "availability_reason": "Validation failed: ROCm VAE decode exceeded the practical runtime limit.",
     },
-    "wan22-ti2v-5b": {
-        "id": "wan22-ti2v-5b",
-        "name": "Wan2.2 TI2V 5B",
-        "description": "Validated text-to-video and image-to-video profile for this 32GB AMD GPU.",
-        "repo": "Wan-AI/Wan2.2-TI2V-5B",
-        "model_dir": MODEL_DIR,
-        "required_files": [
-            "Wan2.2_VAE.pth",
-            "models_t5_umt5-xxl-enc-bf16.pth",
-            "google/umt5-xxl/tokenizer.json",
-        ],
-        "index_file": "diffusion_pytorch_model.safetensors.index.json",
-        "ready_detail": "Wan2.2 TI2V-5B",
-        "modes": ["t2v", "i2v"],
-        "sizes": ["1280*704", "704*1280", "832*480", "480*832"],
-        "durations": [2, 3, 4, 5],
-        "step_counts": [30, 40, 50],
-        "default_steps": REFERENCE_STEPS,
-        "default_fps": OUTPUT_FPS,
-        "expected_vram_gb": 28,
-        "solver": "unipc",
-        "recommended_size": REFERENCE_SIZE,
-        "recommended_steps": REFERENCE_STEPS,
-        "reference_settings": "1280x704, 121 frames, 50 steps, CFG 5, shift 5",
-        "known_limitations": [
-            "832x480 is a faster appliance preview mode; 1280x704 is the model's reference landscape resolution.",
-            "The base TI2V model is not distilled; fewer than 50 steps trade visible quality for speed.",
-            "Text-to-video is less compositionally reliable than image-to-video.",
-        ],
-    },
-    "wan21-t2v-13b": {
-        "id": "wan21-t2v-13b",
-        "name": "Wan2.1 T2V 1.3B",
-        "description": "Experimental fallback. Verified generation works, but prompt adherence is weaker than the 5B profile.",
-        "repo": "Wan-AI/Wan2.1-T2V-1.3B",
-        "model_dir": DATA_DIR / "Wan2.1-T2V-1.3B",
-        "required_files": [
-            "Wan2.1_VAE.pth",
-            "models_t5_umt5-xxl-enc-bf16.pth",
-            "diffusion_pytorch_model.safetensors",
-            "google/umt5-xxl/tokenizer.json",
-        ],
-        "index_file": None,
-        "ready_detail": "Wan2.1 T2V-1.3B",
-        "sizes": ["832*480", "480*832", "1280*704", "704*1280"],
-    },
 }
 
 
 class CreateJobBody(BaseModel):
     prompt: str = Field(..., min_length=1)
-    profile: str = "wan22-ti2v-5b"
+    profile: str = "ltx23-q4-preview"
     negative_prompt: str | None = None
     size: str = REFERENCE_SIZE
     steps: int = Field(default=REFERENCE_STEPS, ge=1, le=50)
@@ -285,7 +211,7 @@ def profile_ready(profile: dict[str, Any]) -> bool:
 
 
 def model_ready() -> bool:
-    return profile_ready(PROFILES["wan22-ti2v-5b"])
+    return profile_ready(PROFILES["ltx23-q4-preview"])
 
 
 def public_profile(profile: dict[str, Any]) -> dict[str, Any]:
@@ -299,7 +225,7 @@ def public_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "ready": profile_ready(profile) and profile.get("enabled", True),
         "assets_ready": profile_ready(profile),
         "availability_reason": profile.get("availability_reason"),
-        "backend": profile.get("backend", "wan-diffsynth"),
+        "backend": profile.get("backend", "comfy"),
         "modes": profile.get("modes", ["t2v"]),
         "sizes": profile.get("sizes", sorted(SUPPORTED_SIZES)),
         "durations": profile.get("durations", list(range(2, 16))),
@@ -463,7 +389,7 @@ def terminate_job_processes(job_id: str, job: dict[str, Any] | None = None) -> l
         except (ProcessLookupError, OSError):
             pass
     try:
-        result = subprocess.run(["/usr/bin/pgrep", "-f", f"wan_api.diffsynth_generate.*{job_id}"], check=False, capture_output=True, text=True)
+        result = subprocess.run(["/usr/bin/pgrep", "-f", f"wan_api.comfy_generate.*{job_id}"], check=False, capture_output=True, text=True)
     except OSError:
         return terminated
 
@@ -583,71 +509,40 @@ def run_job(job: dict[str, Any]) -> None:
     update_job(job_id, status="running", started_at=now())
     lease = None
     profile = get_profile(job["profile"])
-    if profile.get("backend") in {"hunyuan-comfy", "ltx-comfy"}:
-        width, height = str(job["size"]).split("*", 1)
-        command = [
-            HUNYUAN_PYTHON,
-            "-m",
-            "wan_api.comfy_generate",
-            "--job-id",
-            job_id,
-            "--profile",
-            job["profile"],
-            "--output",
-            str(out_prefix.with_suffix(".mp4")),
-            "--prompt",
-            job["prompt"],
-            "--negative-prompt",
-            job["negative_prompt"],
-            "--width",
-            width,
-            "--height",
-            height,
-            "--frames",
-            str(job["frame_num"]),
-            "--steps",
-            str(job["steps"]),
-            "--fps",
-            str(job.get("fps", profile.get("default_fps", 12))),
-            "--seed",
-            str(job["seed"] if int(job.get("seed", -1)) >= 0 else int(time.time())),
-        ]
-        if job.get("source_image_path"):
-            command.extend(["--input-image", str(job["source_image_path"])])
-    else:
-        command = [
-            PYTHON,
-            "-m",
-            "wan_api.diffsynth_generate",
-            "--profile",
-            job["profile"],
-            "--model-dir",
-            job["model_dir"],
-            "--output",
-            str(out_prefix.with_suffix(".mp4")),
-            "--prompt",
-            job["prompt"],
-            "--size",
-            job["size"],
-            "--steps",
-            str(job["steps"]),
-            "--frame-num",
-            str(job["frame_num"]),
-            "--fps",
-            str(job.get("fps", OUTPUT_FPS)),
-            "--solver",
-            str(job.get("solver") or profile.get("solver", "euler")),
-        ]
-        if job.get("negative_prompt"):
-            command.extend(["--negative-prompt", job["negative_prompt"]])
-        if int(job.get("seed", -1)) >= 0:
-            command.extend(["--seed", str(job["seed"])])
-        if job.get("source_image_path"):
-            command.extend(["--input-image", str(job["source_image_path"])])
+    width, height = str(job["size"]).split("*", 1)
+    command = [
+        HUNYUAN_PYTHON,
+        "-m",
+        "wan_api.comfy_generate",
+        "--job-id",
+        job_id,
+        "--profile",
+        job["profile"],
+        "--output",
+        str(out_prefix.with_suffix(".mp4")),
+        "--prompt",
+        job["prompt"],
+        "--negative-prompt",
+        job["negative_prompt"],
+        "--width",
+        width,
+        "--height",
+        height,
+        "--frames",
+        str(job["frame_num"]),
+        "--steps",
+        str(job["steps"]),
+        "--fps",
+        str(job.get("fps", profile.get("default_fps", 12))),
+        "--seed",
+        str(job["seed"] if int(job.get("seed", -1)) >= 0 else int(time.time())),
+    ]
+    if job.get("source_image_path"):
+        command.extend(["--input-image", str(job["source_image_path"])])
 
     try:
         lease = acquire_lease(job_id, "video", 50, False, "atomic", timeout=1800)
-        max_attempts = 2 if profile.get("backend") in {"hunyuan-comfy", "ltx-comfy"} else 1
+        max_attempts = 2
         return_code = 1
         with log_path.open("w", encoding="utf-8") as log:
             log.write("$ " + " ".join(command) + "\n\n")
@@ -655,7 +550,7 @@ def run_job(job: dict[str, Any]) -> None:
             for attempt in range(1, max_attempts + 1):
                 process = subprocess.Popen(
                     command,
-                    cwd=WAN_ROOT,
+                    cwd=VIDEO_ROOT,
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -755,13 +650,13 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="GPU45 Wan2.2 Video API", lifespan=lifespan)
+app = FastAPI(title="GPU45 LTX Video API", lifespan=lifespan)
 
 
 @app.get("/health")
 def health() -> dict[str, Any]:
     profiles = [public_profile(profile) for profile in PROFILES.values()]
-    return {"status": "ok", "model_ready": model_ready(), "model_dir": str(MODEL_DIR), "profiles": profiles}
+    return {"status": "ok", "model_ready": model_ready(), "model_dir": str(LTX_MODEL_ROOT), "profiles": profiles}
 
 
 @app.get("/jobs")
@@ -825,7 +720,7 @@ async def create_i2v_job(
     file: UploadFile = File(...),
     prompt: str = Form(...),
     negative_prompt: str = Form(DEFAULT_NEGATIVE_PROMPT),
-    profile: str = Form("wan22-ti2v-5b"),
+    profile: str = Form("ltx23-q4-preview"),
     size: str = Form(REFERENCE_SIZE),
     steps: int = Form(REFERENCE_STEPS),
     duration_seconds: int = Form(2),
@@ -947,23 +842,6 @@ def get_video(job_id: str) -> FileResponse:
     if not path.exists():
         raise HTTPException(status_code=404, detail="Video output file missing.")
     return FileResponse(path, media_type="video/mp4", filename=path.name)
-
-
-@app.post("/model/download", status_code=202)
-def download_model(profile: str = "wan22-ti2v-5b") -> dict[str, Any]:
-    selected = get_profile(profile)
-    if profile_ready(selected):
-        return {"ok": True, "message": "Model already downloaded."}
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    command = [
-        HF_CLI,
-        "download",
-        selected["repo"],
-        "--local-dir",
-        str(selected["model_dir"]),
-    ]
-    subprocess.Popen(command, cwd=WAN_ROOT, stdout=(LOG_DIR / "model-download.log").open("a"), stderr=subprocess.STDOUT)
-    return {"ok": True, "message": "Model download started.", "repo": selected["repo"], "target": str(selected["model_dir"])}
 
 
 def run() -> None:

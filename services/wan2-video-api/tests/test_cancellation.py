@@ -44,16 +44,16 @@ def test_i2v_submission_persists_job_and_starts_runner(tmp_path, monkeypatch) ->
         file=UploadFile(filename="source.png", file=BytesIO(b"image-data")),
         prompt="A camera moves through a forest.",
         negative_prompt="blur",
-        profile="wan22-ti2v-5b",
-        size="832*480",
-        steps=30,
+        profile="ltx23-q4-preview",
+        size="512*320",
+        steps=8,
         duration_seconds=2,
         seed=7,
     ))
 
     assert result["status"] == "queued"
     assert result["mode"] == "i2v"
-    assert result["solver"] == "unipc"
+    assert result["solver"] == "euler"
     assert runner_calls == [True]
     assert len(main.load_jobs()) == 1
     assert (upload_dir / f"{result['id']}.png").read_bytes() == b"image-data"
