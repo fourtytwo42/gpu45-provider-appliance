@@ -125,6 +125,13 @@ def test_video_request_accepts_twenty_second_duration() -> None:
     assert request.duration_seconds == 20
 
 
+def test_ltx_balanced_exposes_one_through_twenty_seconds() -> None:
+    profile = main.PROFILES["ltx23-q4-balanced"]
+
+    assert profile["durations"] == list(range(1, 21))
+    assert profile["max_tested_duration_seconds"] == 2
+
+
 def test_vae_decode_progress_does_not_restart_denoising(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(main, "LOG_DIR", tmp_path)
     (tmp_path / "job-4.log").write_text(
