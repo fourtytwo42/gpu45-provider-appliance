@@ -102,6 +102,29 @@ def test_video_output_validation_accepts_requested_duration() -> None:
     assert error is None
 
 
+def test_detects_recoverable_gpu_transfer_fault(tmp_path) -> None:
+    log_path = tmp_path / "video.log"
+    log_path.write_text(
+        "Memory access fault by GPU node-1 on address 0x123. Reason: Page not present.\n",
+        encoding="utf-8",
+    )
+
+    assert main.has_recoverable_gpu_transfer_fault(log_path)
+
+
+def test_does_not_retry_ordinary_generation_failure(tmp_path) -> None:
+    log_path = tmp_path / "video.log"
+    log_path.write_text("HIP out of memory. Tried to allocate 72 MiB.\n", encoding="utf-8")
+
+    assert not main.has_recoverable_gpu_transfer_fault(log_path)
+
+
+def test_video_request_accepts_twenty_second_duration() -> None:
+    request = main.CreateJobBody(prompt="A slow camera pan.", duration_seconds=20)
+
+    assert request.duration_seconds == 20
+
+
 def test_vae_decode_progress_does_not_restart_denoising(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(main, "LOG_DIR", tmp_path)
     (tmp_path / "job-4.log").write_text(

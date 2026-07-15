@@ -98,11 +98,11 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
 
   async function createJob(formData: FormData): Promise<void> {
     await run(async () => {
+      const submittedSize = String(formData.get("size") ?? size);
+      const submittedSteps = Number(formData.get("steps") ?? steps);
+      const submittedDuration = Number(formData.get("duration_seconds") ?? duration);
       let response: Response;
       if (mode === "i2v") {
-        formData.set("size", size);
-        formData.set("steps", String(steps));
-        formData.set("duration_seconds", String(duration));
         response = await fetch("/api/video/i2v", { method: "POST", body: formData });
       } else {
         response = await fetch("/api/video", {
@@ -113,9 +113,9 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
             profile: formData.get("profile"),
             prompt: formData.get("prompt"),
             negative_prompt: formData.get("negative_prompt"),
-            size,
-            steps,
-            duration_seconds: duration,
+            size: submittedSize,
+            steps: submittedSteps,
+            duration_seconds: submittedDuration,
             seed: Number(formData.get("seed") || -1),
           }),
         });

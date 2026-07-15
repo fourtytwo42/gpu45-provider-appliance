@@ -231,7 +231,7 @@ class CreateJobBody(BaseModel):
     negative_prompt: str | None = None
     size: str = REFERENCE_SIZE
     steps: int = Field(default=REFERENCE_STEPS, ge=1, le=50)
-    duration_seconds: int = Field(default=2, ge=1, le=15)
+    duration_seconds: int = Field(default=2, ge=1, le=20)
     seed: int = -1
 
 
@@ -546,6 +546,34 @@ def validate_video_output(job: dict[str, Any], metadata: dict[str, Any]) -> str 
     return None
 
 
+RECOVERABLE_GPU_FAULT_MARKERS = (
+    "Memory access fault by GPU node",
+    "Faulty UTCL2 client ID: SDMA",
+)
+
+
+def has_recoverable_gpu_transfer_fault(log_path: Path) -> bool:
+    try:
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(marker in log_text for marker in RECOVERABLE_GPU_FAULT_MARKERS)
+
+
+def gpu_runtime_recovered() -> bool:
+    try:
+        result = subprocess.run(
+            ["/opt/rocm/bin/rocm-smi", "--showuse", "--showmeminfo", "vram"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and "GPU use (%)" in result.stdout
+
+
 def run_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     log_path = LOG_DIR / f"{job_id}.log"
@@ -617,21 +645,41 @@ def run_job(job: dict[str, Any]) -> None:
 
     try:
         lease = acquire_lease(job_id, "video", 50, False, "atomic", timeout=1800)
+        max_attempts = 2 if profile.get("backend") in {"hunyuan-comfy", "ltx-comfy"} else 1
+        return_code = 1
         with log_path.open("w", encoding="utf-8") as log:
             log.write("$ " + " ".join(command) + "\n\n")
             log.flush()
-            process = subprocess.Popen(
-                command,
-                cwd=WAN_ROOT,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                text=True,
-                start_new_session=True,
-            )
-            update_job(job_id, process_pid=process.pid, process_group=True)
-            return_code = process.wait()
+            for attempt in range(1, max_attempts + 1):
+                process = subprocess.Popen(
+                    command,
+                    cwd=WAN_ROOT,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    start_new_session=True,
+                )
+                update_job(job_id, process_pid=process.pid, process_group=True, attempt=attempt)
+                return_code = process.wait()
+                log.flush()
+                if return_code == 0:
+                    break
+                if attempt >= max_attempts or not has_recoverable_gpu_transfer_fault(log_path):
+                    break
+                log.write("\nstage=recovering_gpu reason=sdma_memory_transfer_fault retry=1/1\n")
+                log.flush()
+                time.sleep(8)
+                if not gpu_runtime_recovered():
+                    log.write("stage=gpu_recovery_failed\n")
+                    log.flush()
+                    break
+                log.write("stage=retrying_generation attempt=2/2\n")
+                log.flush()
         if return_code != 0:
-            update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error=f"generate.py exited with {return_code}", process_pid=None)
+            error = f"generate.py exited with {return_code}"
+            if has_recoverable_gpu_transfer_fault(log_path):
+                error = "AMD GPU memory transfer fault while loading the video model; automatic recovery did not complete the job."
+            update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error=error, process_pid=None)
             return
         output = find_output(job_id)
         if not output:
