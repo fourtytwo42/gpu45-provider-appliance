@@ -28,7 +28,7 @@ def test_t2v_workflow_uses_distilled_hunyuan_settings() -> None:
 
 def ltx_args(**overrides):
     values = dict(
-        profile="ltx23-q4-preview", prompt="A car drives across a table.", negative_prompt="blur",
+        profile="ltx23-q4", preset="preview", prompt="A car drives across a table.", negative_prompt="blur",
         seed=42, width=512, height=320, frames=49, fps=24, job_id="ltx-1", input_image=None,
     )
     values.update(overrides)
@@ -53,7 +53,7 @@ def test_ltx_i2v_conditions_the_video_latent() -> None:
 
 
 def test_ltx_balanced_adds_upscale_and_refinement() -> None:
-    workflow = ltx23_workflow(ltx_args(profile="ltx23-q4-balanced"))
+    workflow = ltx23_workflow(ltx_args(preset="balanced"))
 
     assert workflow["22"]["class_type"] == "LTXVLatentUpsampler"
     assert workflow["27"]["inputs"]["sigmas"] == ["25", 0]

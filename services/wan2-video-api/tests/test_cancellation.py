@@ -44,7 +44,8 @@ def test_i2v_submission_persists_job_and_starts_runner(tmp_path, monkeypatch) ->
         file=UploadFile(filename="source.png", file=BytesIO(b"image-data")),
         prompt="A camera moves through a forest.",
         negative_prompt="blur",
-        profile="ltx23-q4-preview",
+        profile="ltx23-q4",
+        preset="preview",
         size="512*320",
         steps=8,
         duration_seconds=2,
@@ -125,19 +126,26 @@ def test_video_request_accepts_twenty_second_duration() -> None:
     assert request.duration_seconds == 20
 
 
-def test_ltx_balanced_exposes_one_through_twenty_seconds() -> None:
-    profile = main.PROFILES["ltx23-q4-balanced"]
+def test_ltx_model_exposes_one_through_twenty_seconds() -> None:
+    profile = main.PROFILES["ltx23-q4"]
 
     assert profile["durations"] == list(range(1, 21))
     assert profile["max_tested_duration_seconds"] == 2
 
 
-def test_ltx_balanced_defaults_to_higher_resolution_sixteen_by_nine() -> None:
-    profile = main.PROFILES["ltx23-q4-balanced"]
+def test_ltx_balanced_is_a_preset_on_the_q4_model() -> None:
+    profile = main.PROFILES["ltx23-q4"]
+    balanced = profile["presets"]["balanced"]
 
-    assert profile["recommended_size"] == "512*288"
+    assert balanced["size"] == "512*288"
+    assert balanced["steps"] == 11
     assert "512*288" in profile["sizes"]
-    assert profile["output_scale"] == 2
+    assert balanced["output_scale"] == 2
+
+
+def test_legacy_ltx_profile_ids_resolve_to_one_model() -> None:
+    assert main.get_profile("ltx23-q4-preview")["id"] == "ltx23-q4"
+    assert main.get_profile("ltx23-q4-balanced")["id"] == "ltx23-q4"
 
 
 def test_vae_decode_progress_does_not_restart_denoising(tmp_path, monkeypatch) -> None:

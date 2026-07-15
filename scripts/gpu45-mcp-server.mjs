@@ -380,9 +380,10 @@ async function toolVideoGenerate(baseUrl, args) {
     action: "createJob",
     prompt: args.prompt,
     negative_prompt: args.negative_prompt || undefined,
-    profile: args.profile || "ltx23-q4-preview",
-    size: args.size || "1280*704",
-    steps: args.steps || 50,
+    profile: args.profile || "ltx23-q4",
+    preset: args.preset || "preview",
+    size: args.size || "512*320",
+    steps: args.steps || 8,
     duration_seconds: args.duration_seconds || 2,
     seed: Number.isInteger(args.seed) ? args.seed : -1,
   };

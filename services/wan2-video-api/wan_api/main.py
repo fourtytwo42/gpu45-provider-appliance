@@ -51,60 +51,23 @@ DEFAULT_NEGATIVE_PROMPT = (
 )
 
 PROFILES: dict[str, dict[str, Any]] = {
-    "ltx23-q4-preview": {
-        "id": "ltx23-q4-preview",
-        "name": "LTX-2.3 Q4 Preview",
-        "description": "Fastest validated LTX-2.3 path with synchronized audio and image conditioning.",
+    "ltx23-q4": {
+        "id": "ltx23-q4",
+        "name": "LTX-2.3 Q4",
+        "description": "LTX-2.3 Q4 with fast Preview and upscaled Balanced generation presets.",
         "repo": "Lightricks/LTX-2.3 + unsloth/LTX-2.3-GGUF",
         "model_dir": LTX_MODEL_ROOT,
         "backend": "ltx-comfy",
         "modes": ["t2v", "i2v"],
-        "sizes": ["512*320", "320*512"],
+        "sizes": ["512*320", "320*512", "512*288", "288*512", "480*272", "272*480"],
         "durations": list(range(1, 21)),
-        "step_counts": [8],
+        "step_counts": [8, 11],
         "default_steps": 8,
         "default_fps": 24,
         "frame_multiple": 8,
         "expected_vram_gb": 19,
         "native_audio": True,
-        "features": ["synchronized audio", "text-to-video", "image-to-video"],
-        "required_files": [
-            "distilled/ltx-2.3-22b-distilled-Q4_K_M.gguf",
-            "text_encoders/gemma-3-12b-it-Q2_K.gguf",
-            "text_encoders/ltx-2.3_text_projection_bf16.safetensors",
-            "vae/LTX23_video_vae_bf16.safetensors",
-            "vae/LTX23_audio_vae_bf16.safetensors",
-        ],
-        "index_file": None,
-        "ready_detail": "LTX-2.3 Q4 Preview",
-        "recommended_size": "512*320",
-        "recommended_steps": 8,
-        "reference_settings": "512x320, 24 fps, 8 distilled steps, native synchronized audio",
-        "tested_runtime_seconds": 209,
-        "max_tested_duration_seconds": 5,
-        "known_limitations": [
-            "One- through five-second clips are hardware-validated. Six- through twenty-second clips are experimental and can take substantially longer.",
-            "Retake, keyframes, lip-sync, and video-to-video are not yet exposed because they have not passed appliance validation.",
-        ],
-    },
-    "ltx23-q4-balanced": {
-        "id": "ltx23-q4-balanced",
-        "name": "LTX-2.3 Q4 Balanced",
-        "description": "Two-stage LTX-2.3 generation with latent 2x upscaling, three-step refinement, and synchronized audio.",
-        "repo": "Lightricks/LTX-2.3 + unsloth/LTX-2.3-GGUF",
-        "model_dir": LTX_MODEL_ROOT,
-        "backend": "ltx-comfy",
-        "modes": ["t2v"],
-        "sizes": ["512*288", "288*512", "480*272", "272*480"],
-        "durations": list(range(1, 21)),
-        "step_counts": [11],
-        "default_steps": 11,
-        "default_fps": 24,
-        "frame_multiple": 8,
-        "output_scale": 2,
-        "expected_vram_gb": 20,
-        "native_audio": True,
-        "features": ["synchronized audio", "two-stage latent upscaling", "text-to-video"],
+        "features": ["synchronized audio", "text-to-video", "image-to-video", "two-stage latent upscaling"],
         "required_files": [
             "distilled/ltx-2.3-22b-distilled-Q4_K_M.gguf",
             "text_encoders/gemma-3-12b-it-Q2_K.gguf",
@@ -114,16 +77,37 @@ PROFILES: dict[str, dict[str, Any]] = {
             "latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
         ],
         "index_file": None,
-        "ready_detail": "LTX-2.3 Q4 Balanced",
-        "recommended_size": "512*288",
-        "recommended_steps": 11,
-        "reference_settings": "512x288 latent to 1024x576 output, 8+3 distilled steps, native synchronized audio",
-        "tested_runtime_seconds": 604,
-        "max_tested_duration_seconds": 2,
+        "ready_detail": "LTX-2.3 Q4",
+        "recommended_size": "512*320",
+        "recommended_steps": 8,
+        "reference_settings": "Preview: 8 distilled steps. Balanced: 8 distilled + 3 refinement steps and 2x latent upscaling.",
+        "tested_runtime_seconds": 209,
+        "max_tested_duration_seconds": 5,
+        "presets": {
+            "preview": {
+                "label": "Preview",
+                "description": "Fast native-resolution generation with synchronized audio.",
+                "size": "512*320",
+                "steps": 8,
+                "duration_seconds": 2,
+                "output_scale": 1,
+                "max_tested_duration_seconds": 5,
+                "modes": ["t2v", "i2v"],
+            },
+            "balanced": {
+                "label": "Balanced",
+                "description": "Two-stage generation with 2x latent upscaling and three refinement steps.",
+                "size": "512*288",
+                "steps": 11,
+                "duration_seconds": 2,
+                "output_scale": 2,
+                "max_tested_duration_seconds": 2,
+                "modes": ["t2v"],
+            },
+        },
         "known_limitations": [
-            "A two-second clip takes about ten minutes on the V620 because tiled ROCm VAE decode dominates runtime.",
-            "The 512x288 starting resolution and clips longer than two seconds are experimental and use memory-efficient split attention.",
-            "Only text-to-video has passed the balanced-profile hardware gate.",
+            "Preview is hardware-validated through five seconds; longer clips are experimental.",
+            "Balanced is hardware-validated through two seconds and currently supports text-to-video only.",
         ],
     },
     "hunyuan15-t2v-q5": {
@@ -156,7 +140,8 @@ PROFILES: dict[str, dict[str, Any]] = {
 
 class CreateJobBody(BaseModel):
     prompt: str = Field(..., min_length=1)
-    profile: str = "ltx23-q4-preview"
+    profile: str = "ltx23-q4"
+    preset: str = "preview"
     negative_prompt: str | None = None
     size: str = REFERENCE_SIZE
     steps: int = Field(default=REFERENCE_STEPS, ge=1, le=50)
@@ -182,10 +167,25 @@ def save_jobs(jobs: list[dict[str, Any]]) -> None:
 
 
 def get_profile(profile_id: str) -> dict[str, Any]:
+    profile_id = {
+        "ltx23-q4-preview": "ltx23-q4",
+        "ltx23-q4-balanced": "ltx23-q4",
+    }.get(profile_id, profile_id)
     try:
         return PROFILES[profile_id]
     except KeyError:
-        raise HTTPException(status_code=400, detail=f"Unsupported Wan profile: {profile_id}.")
+        raise HTTPException(status_code=400, detail=f"Unsupported video model: {profile_id}.")
+
+
+def get_preset(profile: dict[str, Any], requested: str, steps: int) -> tuple[str, dict[str, Any]]:
+    presets = profile.get("presets") or {}
+    preset_id = "balanced" if steps == 11 and "balanced" in presets else requested
+    if preset_id not in presets:
+        raise HTTPException(status_code=400, detail=f"Unsupported preset for {profile['name']}: {preset_id}.")
+    preset = presets[preset_id]
+    if steps != int(preset["steps"]):
+        raise HTTPException(status_code=400, detail=f"{preset['label']} uses {preset['steps']} steps.")
+    return preset_id, preset
 
 
 def profile_ready(profile: dict[str, Any]) -> bool:
@@ -212,7 +212,7 @@ def profile_ready(profile: dict[str, Any]) -> bool:
 
 
 def model_ready() -> bool:
-    return profile_ready(PROFILES["ltx23-q4-preview"])
+    return profile_ready(PROFILES["ltx23-q4"])
 
 
 def public_profile(profile: dict[str, Any]) -> dict[str, Any]:
@@ -244,6 +244,7 @@ def public_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "output_scale": profile.get("output_scale", 1),
         "tested_runtime_seconds": profile.get("tested_runtime_seconds"),
         "max_tested_duration_seconds": profile.get("max_tested_duration_seconds"),
+        "presets": profile.get("presets", {}),
     }
 
 
@@ -519,6 +520,8 @@ def run_job(job: dict[str, Any]) -> None:
         job_id,
         "--profile",
         job["profile"],
+        "--preset",
+        job.get("preset", "balanced" if job.get("profile") == "ltx23-q4-balanced" else "preview"),
         "--output",
         str(out_prefix.with_suffix(".mp4")),
         "--prompt",
@@ -678,6 +681,9 @@ def create_job(body: CreateJobBody) -> dict[str, Any]:
     supported_steps = profile.get("step_counts")
     if supported_steps and body.steps not in supported_steps:
         raise HTTPException(status_code=400, detail=f"Unsupported step count for {profile['name']}: {body.steps}.")
+    preset_id, preset = get_preset(profile, body.preset, body.steps)
+    if "t2v" not in preset.get("modes", ["t2v"]):
+        raise HTTPException(status_code=400, detail=f"{preset['label']} does not support text-to-video.")
     supported_durations = profile.get("durations")
     if supported_durations and body.duration_seconds not in supported_durations:
         raise HTTPException(status_code=400, detail=f"Unsupported duration for {profile['name']}: {body.duration_seconds}s.")
@@ -691,6 +697,8 @@ def create_job(body: CreateJobBody) -> dict[str, Any]:
         "id": str(uuid.uuid4()),
         "profile": profile["id"],
         "profile_name": profile["name"],
+        "preset": preset_id,
+        "preset_name": preset["label"],
         "model_dir": str(profile["model_dir"]),
         "prompt": body.prompt,
         "negative_prompt": (body.negative_prompt or DEFAULT_NEGATIVE_PROMPT).strip(),
@@ -721,7 +729,8 @@ async def create_i2v_job(
     file: UploadFile = File(...),
     prompt: str = Form(...),
     negative_prompt: str = Form(DEFAULT_NEGATIVE_PROMPT),
-    profile: str = Form("ltx23-q4-preview"),
+    profile: str = Form("ltx23-q4"),
+    preset: str = Form("preview"),
     size: str = Form(REFERENCE_SIZE),
     steps: int = Form(REFERENCE_STEPS),
     duration_seconds: int = Form(2),
@@ -739,7 +748,7 @@ async def create_i2v_job(
     if not payload or len(payload) > 20 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Source image must be between 1 byte and 20 MB.")
     body = CreateJobBody(
-        prompt=prompt, profile=profile, negative_prompt=negative_prompt,
+        prompt=prompt, profile=profile, preset=preset, negative_prompt=negative_prompt,
         size=size, steps=steps, duration_seconds=duration_seconds, seed=seed,
     )
     supported_sizes = set(selected.get("sizes", SUPPORTED_SIZES))
@@ -747,6 +756,9 @@ async def create_i2v_job(
         raise HTTPException(status_code=400, detail=f"Unsupported size for {selected['name']}: {body.size}.")
     if selected.get("step_counts") and body.steps not in selected["step_counts"]:
         raise HTTPException(status_code=400, detail=f"Unsupported step count for {selected['name']}: {body.steps}.")
+    preset_id, preset_config = get_preset(selected, body.preset, body.steps)
+    if "i2v" not in preset_config.get("modes", []):
+        raise HTTPException(status_code=400, detail=f"{preset_config['label']} does not support image-to-video.")
     if selected.get("durations") and body.duration_seconds not in selected["durations"]:
         raise HTTPException(status_code=400, detail=f"Unsupported duration for {selected['name']}: {body.duration_seconds}s.")
     fps = int(selected.get("default_fps", OUTPUT_FPS))
@@ -760,6 +772,7 @@ async def create_i2v_job(
     source_path.write_bytes(payload)
     job = {
         "id": job_id, "profile": selected["id"], "profile_name": selected["name"],
+        "preset": preset_id, "preset_name": preset_config["label"],
         "model_dir": str(selected["model_dir"]), "mode": "i2v", "source_image_path": str(source_path),
         "prompt": body.prompt, "negative_prompt": (body.negative_prompt or DEFAULT_NEGATIVE_PROMPT).strip(),
         "size": body.size, "steps": body.steps, "duration_seconds": body.duration_seconds,

@@ -144,7 +144,7 @@ def ltx23_workflow(args: argparse.Namespace) -> dict[str, Any]:
         })
         workflow["8"]["inputs"]["video_latent"] = ["32", 0]
 
-    if args.profile == "ltx23-q4-balanced":
+    if args.preset == "balanced":
         workflow.update({
             "21": {"class_type": "LatentUpscaleModelLoader", "inputs": {"model_name": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"}},
             "22": {"class_type": "LTXVLatentUpsampler", "inputs": {"samples": ["15", 0], "upscale_model": ["21", 0], "vae": ["16", 0]}},
@@ -289,6 +289,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--negative-prompt", default="low quality, blurry, artifacts, watermark, distorted anatomy")
     result.add_argument("--model", default="hunyuanvideo1.5_480p_t2v_cfg_distilled-Q5_K_S.gguf")
     result.add_argument("--profile", default="hunyuan15-t2v-q5")
+    result.add_argument("--preset", choices=["preview", "balanced"], default="preview")
     result.add_argument("--input-image")
     result.add_argument("--width", type=int, default=848)
     result.add_argument("--height", type=int, default=480)

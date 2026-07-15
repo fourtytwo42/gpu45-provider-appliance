@@ -9,13 +9,12 @@ import { videoOutputUrl } from "@/lib/video";
 import { subscribeApplianceEvent } from "@/lib/appliance-events";
 
 type RunState = "idle" | "working" | "error";
-const DEFAULT_NEGATIVE_PROMPT = "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走，watermark，logo";
+const DEFAULT_NEGATIVE_PROMPT = "low quality, blurry, static frame, malformed anatomy, duplicate subjects, watermark, logo, subtitles, text artifacts";
 const VIDEO_PRESETS = {
-  preview: { label: "Preview", size: "832*480", steps: 30, duration: 2 },
-  balanced: { label: "Balanced", size: "1280*704", steps: 50, duration: 2 },
-  quality: { label: "Quality", size: "1280*704", steps: 50, duration: 5 },
-  custom: { label: "Custom", size: "1280*704", steps: 50, duration: 2 },
-};
+  preview: { label: "Preview", size: "512*320", steps: 8, duration: 2 },
+  balanced: { label: "Balanced", size: "512*288", steps: 11, duration: 2 },
+} as const;
+type VideoPresetId = keyof typeof VIDEO_PRESETS;
 
 async function parseJson(response: Response): Promise<Record<string, unknown>> {
   const text = await response.text();
@@ -34,32 +33,44 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
   const [state, setState] = useState<RunState>("idle");
   const [message, setMessage] = useState("");
   const [mode, setMode] = useState<"t2v" | "i2v">("t2v");
-  const [selectedProfile, setSelectedProfile] = useState(initialSnapshot.profiles.find((profile) => profile.ready)?.id ?? "ltx23-q4-preview");
-  const [preset, setPreset] = useState<keyof typeof VIDEO_PRESETS>("balanced");
-  const [size, setSize] = useState(VIDEO_PRESETS.balanced.size);
-  const [steps, setSteps] = useState(VIDEO_PRESETS.balanced.steps);
-  const [duration, setDuration] = useState(VIDEO_PRESETS.balanced.duration);
+  const [selectedProfile, setSelectedProfile] = useState(initialSnapshot.profiles.find((profile) => profile.ready)?.id ?? "ltx23-q4");
+  const [preset, setPreset] = useState<VideoPresetId>("balanced");
+  const [size, setSize] = useState<string>(VIDEO_PRESETS.balanced.size);
+  const [steps, setSteps] = useState<number>(VIDEO_PRESETS.balanced.steps);
+  const [duration, setDuration] = useState<number>(VIDEO_PRESETS.balanced.duration);
   const activeJob = useMemo(() => snapshot.jobs.find((job) => job.status === "running" || job.status === "queued"), [snapshot.jobs]);
   const selectedProfileInfo = useMemo(() => snapshot.profiles.find((profile) => profile.id === selectedProfile), [selectedProfile, snapshot.profiles]);
   const modeProfiles = useMemo(() => snapshot.profiles.filter((profile) => profile.modes?.includes(mode) ?? mode === "t2v"), [mode, snapshot.profiles]);
   const availableSizes = selectedProfileInfo?.sizes?.length ? selectedProfileInfo.sizes : ["832*480", "480*832", "1280*704", "704*1280"];
   const availableSteps = selectedProfileInfo?.step_counts?.length ? selectedProfileInfo.step_counts : Array.from({ length: 24 }, (_, index) => index + 1);
   const availableDurations = selectedProfileInfo?.durations?.length ? selectedProfileInfo.durations : Array.from({ length: 14 }, (_, index) => index + 2);
+  const selectedPresetInfo = selectedProfileInfo?.presets?.[preset];
+
+  function choosePreset(nextPreset: VideoPresetId): void {
+    const values = VIDEO_PRESETS[nextPreset];
+    setPreset(nextPreset);
+    setSize(availableSizes.includes(values.size) ? values.size : availableSizes[0]);
+    setSteps(values.steps);
+    setDuration(availableDurations.includes(values.duration) ? values.duration : availableDurations[0]);
+  }
 
   function chooseProfile(profileId: string): void {
     const profile = snapshot.profiles.find((item) => item.id === profileId);
     setSelectedProfile(profileId);
     if (!profile) return;
-    setSize(profile.recommended_size ?? profile.sizes?.[0] ?? "1280*704");
-    setSteps(profile.default_steps ?? profile.step_counts?.[0] ?? 8);
-    setDuration(profile.durations?.[0] ?? 2);
-    setPreset("custom");
+    const nextPreset: VideoPresetId = profile.presets?.balanced ? "balanced" : "preview";
+    const values = VIDEO_PRESETS[nextPreset];
+    setPreset(nextPreset);
+    setSize(profile.sizes?.includes(values.size) ? values.size : profile.recommended_size ?? profile.sizes?.[0] ?? "512*320");
+    setSteps(values.steps);
+    setDuration(values.duration);
   }
 
   function chooseMode(nextMode: "t2v" | "i2v"): void {
     setMode(nextMode);
     const nextProfile = snapshot.profiles.find((profile) => profile.ready && (profile.modes?.includes(nextMode) ?? nextMode === "t2v"));
     if (nextProfile) chooseProfile(nextProfile.id);
+    if (nextMode === "i2v") choosePreset("preview");
   }
 
   async function refresh(): Promise<void> {
@@ -111,6 +122,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
           body: JSON.stringify({
             action: "createJob",
             profile: formData.get("profile"),
+            preset: formData.get("preset"),
             prompt: formData.get("prompt"),
             negative_prompt: formData.get("negative_prompt"),
             size: submittedSize,
@@ -208,7 +220,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
               <span className="text-slate-400">{selectedProfileInfo.backend ?? "WAN"} · {selectedProfileInfo.solver?.toUpperCase() ?? "Euler"} · {selectedProfileInfo.modes?.join(" / ") ?? "T2V"}{selectedProfileInfo.expected_vram_gb ? ` · about ${selectedProfileInfo.expected_vram_gb} GB VRAM` : ""}</span>
               {selectedProfileInfo.reference_settings ? <span className="text-slate-300">Reference quality: {selectedProfileInfo.reference_settings}</span> : null}
               {selectedProfileInfo.native_audio ? <span className="text-emerald-200">Native synchronized audio is included.</span> : null}
-              {selectedProfileInfo.output_scale && selectedProfileInfo.output_scale > 1 ? <span className="text-slate-300">Final video is decoded at {selectedProfileInfo.output_scale}x the selected latent size.</span> : null}
+              {selectedPresetInfo?.output_scale && selectedPresetInfo.output_scale > 1 ? <span className="text-slate-300">Balanced output is decoded at {selectedPresetInfo.output_scale}x the selected latent size.</span> : null}
             </div>
           ) : null}
           {mode === "i2v" ? (
@@ -235,21 +247,13 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
             <label className="grid gap-1 text-xs text-slate-400">
               Preset
               <select
+                name="preset"
                 value={preset}
-                onChange={(event) => {
-                  const nextPreset = event.target.value as keyof typeof VIDEO_PRESETS;
-                  const values = VIDEO_PRESETS[nextPreset];
-                  setPreset(nextPreset);
-                  setSize(availableSizes.includes(values.size) ? values.size : availableSizes[0]);
-                  setSteps(availableSteps.includes(values.steps) ? values.steps : selectedProfileInfo?.default_steps ?? availableSteps[0]);
-                  setDuration(availableDurations.includes(values.duration) ? values.duration : availableDurations[0]);
-                }}
+                onChange={(event) => choosePreset(event.target.value as VideoPresetId)}
                 className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
               >
-                <option value="preview">Preview - 480p, 30 steps</option>
-                <option value="balanced">Balanced - reference quality, short clip</option>
-                <option value="quality">Quality - reference 5 second clip</option>
-                <option value="custom">Custom</option>
+                <option value="preview">Preview - native size, 8 steps</option>
+                <option value="balanced" disabled={mode === "i2v"}>Balanced - 2x upscale, 11 total steps</option>
               </select>
             </label>
             <label className="grid gap-1 text-xs text-slate-400">
@@ -257,7 +261,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
               <select
                 name="size"
                 value={size}
-                onChange={(event) => { setSize(event.target.value); setPreset("custom"); }}
+                onChange={(event) => setSize(event.target.value)}
                 className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
               >
                 {availableSizes.map((value) => <option key={value} value={value}>{value.replace("*", "x")}</option>)}
@@ -268,10 +272,14 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
               <select
                 name="steps"
                 value={steps}
-                onChange={(event) => { setSteps(Number(event.target.value)); setPreset("custom"); }}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setSteps(value);
+                  setPreset(value === 11 ? "balanced" : "preview");
+                }}
                 className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
               >
-                {availableSteps.map((value) => <option key={value} value={value}>{value}</option>)}
+                {availableSteps.map((value) => <option key={value} value={value} disabled={mode === "i2v" && value === 11}>{value}</option>)}
               </select>
             </label>
             <label className="grid gap-1 text-xs text-slate-400">
@@ -279,11 +287,11 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
               <select
                 name="duration_seconds"
                 value={duration}
-                onChange={(event) => { setDuration(Number(event.target.value)); setPreset("custom"); }}
+                onChange={(event) => setDuration(Number(event.target.value))}
                 className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
               >
                 {availableDurations.map((seconds) => (
-                  <option key={seconds} value={seconds}>{seconds}s{selectedProfileInfo?.max_tested_duration_seconds && seconds > selectedProfileInfo.max_tested_duration_seconds ? " (experimental)" : ""}</option>
+                  <option key={seconds} value={seconds}>{seconds}s{selectedPresetInfo?.max_tested_duration_seconds && seconds > selectedPresetInfo.max_tested_duration_seconds ? " (experimental)" : ""}</option>
                 ))}
               </select>
             </label>
@@ -292,9 +300,9 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
               <input name="seed" type="number" defaultValue={-1} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" />
             </label>
           </div>
-          {selectedProfileInfo?.max_tested_duration_seconds && duration > selectedProfileInfo.max_tested_duration_seconds ? (
+          {selectedPresetInfo?.max_tested_duration_seconds && duration > selectedPresetInfo.max_tested_duration_seconds ? (
             <div className="border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
-              This duration exceeds the {selectedProfileInfo.max_tested_duration_seconds}s hardware-verified limit. Longer clips use more VRAM, run hotter, and can take considerably longer to finish.
+              This duration exceeds the {selectedPresetInfo.max_tested_duration_seconds}s hardware-verified limit for {selectedPresetInfo.label}. Longer clips use more VRAM, run hotter, and can take considerably longer to finish.
             </div>
           ) : null}
           <button disabled={state === "working" || Boolean(activeJob) || !selectedProfileInfo?.ready} className="inline-flex items-center justify-center gap-2 border border-fuchsia-400/40 bg-fuchsia-400/10 px-4 py-2 text-sm font-medium text-fuchsia-100 hover:bg-fuchsia-400/20 disabled:opacity-50">
@@ -304,7 +312,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
         </form>
       </SectionCard>
 
-      <SectionCard title="Models" description="Only profiles verified on this appliance are exposed here.">
+      <SectionCard title="Models" description="One installed model with capability-driven generation presets.">
         <div className="grid gap-3 text-sm text-slate-300">
           {snapshot.profiles.map((profile: VideoProfile) => (
             <div key={profile.id} className="grid gap-3 border border-white/10 bg-black/20 p-3">
@@ -318,6 +326,17 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                 </span>
               </div>
               <div>{profile.description}</div>
+              {profile.presets ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {Object.entries(profile.presets).map(([id, item]) => (
+                    <div key={id} className="border border-white/10 bg-white/[0.03] px-3 py-2">
+                      <div className="text-xs font-medium text-white">{item.label}</div>
+                      <div className="mt-1 text-xs text-slate-400">{item.description}</div>
+                      <div className="mt-1 text-[11px] text-slate-500">{item.size.replace("*", "x")} · {item.steps} steps · {item.output_scale}x output</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {!profile.ready && profile.availability_reason ? <div className="border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">{profile.availability_reason}</div> : null}
               <div className="grid grid-cols-2 gap-2 text-xs text-slate-400">
                 <span>{profile.modes?.join(" / ").toUpperCase() ?? "T2V"}</span>
@@ -358,7 +377,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                       <span className={cn("border px-2 py-0.5 text-xs", job.status === "completed" ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : job.status === "failed" ? "border-red-400/40 bg-red-400/10 text-red-200" : "border-fuchsia-400/40 bg-fuchsia-400/10 text-fuchsia-200")}>
                         {job.status}
                       </span>
-                      <span className="truncate text-xs text-slate-500">{job.profile_name ?? job.profile ?? "Wan"}</span>
+                      <span className="truncate text-xs text-slate-500">{job.profile_name ?? job.profile ?? "Video"}{job.preset_name ? ` · ${job.preset_name}` : ""}</span>
                       {job.mode ? <span className="border border-white/10 px-1.5 py-0.5 text-[10px] uppercase text-slate-400">{job.mode}</span> : null}
                     </div>
                   </div>

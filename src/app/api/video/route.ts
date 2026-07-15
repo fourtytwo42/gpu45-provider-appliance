@@ -61,7 +61,7 @@ export async function POST(request: Request): Promise<Response> {
     const body = await request.json() as Record<string, unknown>;
     const action = String(body.action ?? "");
     if (action === "downloadModel") {
-      return Response.json(await startVideoModelDownload(String(body.profile ?? "wan22-ti2v-5b")), { status: 202 });
+      return Response.json(await startVideoModelDownload(String(body.profile ?? "ltx23-q4")), { status: 202 });
     }
     if (action === "createJob") {
       const job = await createVideoJob(body);

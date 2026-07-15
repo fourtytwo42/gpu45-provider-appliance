@@ -7,6 +7,8 @@ export type VideoJob = {
   id: string;
   profile?: string;
   profile_name?: string;
+  preset?: "preview" | "balanced";
+  preset_name?: string;
   mode?: "t2v" | "i2v";
   prompt: string;
   negative_prompt?: string;
@@ -54,6 +56,16 @@ export type VideoProfile = {
   output_scale?: number;
   tested_runtime_seconds?: number;
   max_tested_duration_seconds?: number;
+  presets?: Record<string, {
+    label: string;
+    description: string;
+    size: string;
+    steps: number;
+    duration_seconds: number;
+    output_scale: number;
+    max_tested_duration_seconds: number;
+    modes: Array<"t2v" | "i2v">;
+  }>;
 };
 
 export type VideoSnapshot = {
@@ -123,7 +135,7 @@ export async function createVideoJob(payload: Record<string, unknown>): Promise<
   });
 }
 
-export async function startVideoModelDownload(profile = "ltx23-q4-preview"): Promise<Record<string, unknown>> {
+export async function startVideoModelDownload(profile = "ltx23-q4"): Promise<Record<string, unknown>> {
   return await fetchJson<Record<string, unknown>>(`/model/download?profile=${encodeURIComponent(profile)}`, { method: "POST" });
 }
 
