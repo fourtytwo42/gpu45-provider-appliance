@@ -78,6 +78,16 @@ source image; unrelated scene replacement remains unreliable on the 5B model.
   The output visibly introduced the prompted foreground motion and completed
   without a ROCm or driver fault. Four steps were visibly under-resolved and are
   not exposed as a user preset.
+- Full UniPC production validation: job
+  `1c2dee91-2dd9-4ffa-a167-b1fd79175027` completed 50 steps and all nine VAE
+  decode tiles at 1280x704 in 66 minutes 11 seconds. The resulting H.264 MP4 is
+  2.042 seconds and 49 frames. The theater source remained sharp and stable,
+  and the prompted foreground object appeared and moved consistently. The 5B
+  model interpreted the requested twenty-sided die as a wheel-like object, so
+  strict geometry and identity adherence remain model limitations rather than
+  pipeline failures.
+- Live progress correctly transitioned from denoising to `Decoding frame tiles
+  X/9` at 90-98 percent instead of appearing to restart denoising.
 - Peak observed junction temperature was 92 C during VAE decode. The fan curve
   brought the card back down between tiles. GPU utilization and VRAM returned to
   zero after each run, and kernel logs contained no GPU reset, timeout, or page
