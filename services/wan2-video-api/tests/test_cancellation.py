@@ -132,6 +132,14 @@ def test_ltx_balanced_exposes_one_through_twenty_seconds() -> None:
     assert profile["max_tested_duration_seconds"] == 2
 
 
+def test_ltx_balanced_defaults_to_higher_resolution_sixteen_by_nine() -> None:
+    profile = main.PROFILES["ltx23-q4-balanced"]
+
+    assert profile["recommended_size"] == "512*288"
+    assert "512*288" in profile["sizes"]
+    assert profile["output_scale"] == 2
+
+
 def test_vae_decode_progress_does_not_restart_denoising(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(main, "LOG_DIR", tmp_path)
     (tmp_path / "job-4.log").write_text(
