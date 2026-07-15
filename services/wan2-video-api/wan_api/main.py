@@ -27,6 +27,7 @@ MODEL_DIR = Path(os.environ.get("WAN2_MODEL_DIR", "/models/wan2-video/Wan2.2-TI2
 PYTHON = os.environ.get("WAN2_PYTHON", "/opt/wan2-video-venv/bin/python")
 HUNYUAN_PYTHON = os.environ.get("HUNYUAN_PYTHON", "/opt/hunyuan-video-venv/bin/python")
 HUNYUAN_MODEL_ROOT = Path(os.environ.get("HUNYUAN_MODEL_ROOT", "/models/hunyuan-video-1.5"))
+LTX_MODEL_ROOT = Path(os.environ.get("LTX_MODEL_ROOT", "/models/ltx2-eval"))
 HF_CLI = os.environ.get("WAN2_HF_CLI", str(Path(PYTHON).with_name("huggingface-cli")))
 LLM_SERVICE = os.environ.get("WAN2_LLM_SERVICE", "llama-openai.service")
 RESTART_LLM = os.environ.get("WAN2_RESTART_LLM_AFTER", "true").lower() in {"1", "true", "yes", "on"}
@@ -50,6 +51,78 @@ OUTPUT_FPS = int(os.environ.get("WAN2_OUTPUT_FPS", "24"))
 DEFAULT_NEGATIVE_PROMPT = REFERENCE_NEGATIVE_PROMPT
 
 PROFILES: dict[str, dict[str, Any]] = {
+    "ltx23-q4-preview": {
+        "id": "ltx23-q4-preview",
+        "name": "LTX-2.3 Q4 Preview",
+        "description": "Fastest validated LTX-2.3 path with synchronized audio and image conditioning.",
+        "repo": "Lightricks/LTX-2.3 + unsloth/LTX-2.3-GGUF",
+        "model_dir": LTX_MODEL_ROOT,
+        "backend": "ltx-comfy",
+        "modes": ["t2v", "i2v"],
+        "sizes": ["512*320", "320*512"],
+        "durations": [1, 2],
+        "step_counts": [8],
+        "default_steps": 8,
+        "default_fps": 24,
+        "frame_multiple": 8,
+        "expected_vram_gb": 19,
+        "native_audio": True,
+        "features": ["synchronized audio", "text-to-video", "image-to-video"],
+        "required_files": [
+            "distilled/ltx-2.3-22b-distilled-Q4_K_M.gguf",
+            "text_encoders/gemma-3-12b-it-Q2_K.gguf",
+            "text_encoders/ltx-2.3_text_projection_bf16.safetensors",
+            "vae/LTX23_video_vae_bf16.safetensors",
+            "vae/LTX23_audio_vae_bf16.safetensors",
+        ],
+        "index_file": None,
+        "ready_detail": "LTX-2.3 Q4 Preview",
+        "recommended_size": "512*320",
+        "recommended_steps": 8,
+        "reference_settings": "512x320, 24 fps, 8 distilled steps, native synchronized audio",
+        "tested_runtime_seconds": 148,
+        "known_limitations": [
+            "Validated for one- and two-second clips; longer clips remain experimental on this GPU.",
+            "Retake, keyframes, lip-sync, and video-to-video are not yet exposed because they have not passed appliance validation.",
+        ],
+    },
+    "ltx23-q4-balanced": {
+        "id": "ltx23-q4-balanced",
+        "name": "LTX-2.3 Q4 Balanced",
+        "description": "Two-stage LTX-2.3 generation with latent 2x upscaling, three-step refinement, and synchronized audio.",
+        "repo": "Lightricks/LTX-2.3 + unsloth/LTX-2.3-GGUF",
+        "model_dir": LTX_MODEL_ROOT,
+        "backend": "ltx-comfy",
+        "modes": ["t2v"],
+        "sizes": ["480*272", "272*480"],
+        "durations": [2],
+        "step_counts": [11],
+        "default_steps": 11,
+        "default_fps": 24,
+        "frame_multiple": 8,
+        "output_scale": 2,
+        "expected_vram_gb": 20,
+        "native_audio": True,
+        "features": ["synchronized audio", "two-stage latent upscaling", "text-to-video"],
+        "required_files": [
+            "distilled/ltx-2.3-22b-distilled-Q4_K_M.gguf",
+            "text_encoders/gemma-3-12b-it-Q2_K.gguf",
+            "text_encoders/ltx-2.3_text_projection_bf16.safetensors",
+            "vae/LTX23_video_vae_bf16.safetensors",
+            "vae/LTX23_audio_vae_bf16.safetensors",
+            "latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        ],
+        "index_file": None,
+        "ready_detail": "LTX-2.3 Q4 Balanced",
+        "recommended_size": "480*272",
+        "recommended_steps": 11,
+        "reference_settings": "480x272 latent to 960x512 output, 8+3 distilled steps, native synchronized audio",
+        "tested_runtime_seconds": 604,
+        "known_limitations": [
+            "A two-second clip takes about ten minutes on the V620 because tiled ROCm VAE decode dominates runtime.",
+            "Only text-to-video has passed the balanced-profile hardware gate.",
+        ],
+    },
     "wan22-a14b-q3": {
         "id": "wan22-a14b-q3",
         "name": "Wan2.2 A14B Q3 Turbo",
@@ -236,6 +309,10 @@ def public_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "recommended_steps": profile.get("recommended_steps"),
         "reference_settings": profile.get("reference_settings"),
         "known_limitations": profile.get("known_limitations", []),
+        "native_audio": profile.get("native_audio", False),
+        "features": profile.get("features", []),
+        "output_scale": profile.get("output_scale", 1),
+        "tested_runtime_seconds": profile.get("tested_runtime_seconds"),
     }
 
 
@@ -465,7 +542,7 @@ def run_job(job: dict[str, Any]) -> None:
     update_job(job_id, status="running", started_at=now())
     lease = None
     profile = get_profile(job["profile"])
-    if profile.get("backend") == "hunyuan-comfy":
+    if profile.get("backend") in {"hunyuan-comfy", "ltx-comfy"}:
         width, height = str(job["size"]).split("*", 1)
         command = [
             HUNYUAN_PYTHON,
@@ -494,6 +571,8 @@ def run_job(job: dict[str, Any]) -> None:
             "--seed",
             str(job["seed"] if int(job.get("seed", -1)) >= 0 else int(time.time())),
         ]
+        if job.get("source_image_path"):
+            command.extend(["--input-image", str(job["source_image_path"])])
     else:
         command = [
             PYTHON,
@@ -646,7 +725,11 @@ def create_job(body: CreateJobBody) -> dict[str, Any]:
     if supported_durations and body.duration_seconds not in supported_durations:
         raise HTTPException(status_code=400, detail=f"Unsupported duration for {profile['name']}: {body.duration_seconds}s.")
     fps = int(profile.get("default_fps", OUTPUT_FPS))
-    frame_num = duration_to_frame_num(body.duration_seconds) if profile.get("backend") != "hunyuan-comfy" else max(5, ((body.duration_seconds * fps - 1) // 4) * 4 + 1)
+    if profile.get("backend") in {"hunyuan-comfy", "ltx-comfy"}:
+        multiple = int(profile.get("frame_multiple", 4))
+        frame_num = max(multiple + 1, round((body.duration_seconds * fps - 1) / multiple) * multiple + 1)
+    else:
+        frame_num = duration_to_frame_num(body.duration_seconds)
     job = {
         "id": str(uuid.uuid4()),
         "profile": profile["id"],
@@ -710,6 +793,11 @@ async def create_i2v_job(
     if selected.get("durations") and body.duration_seconds not in selected["durations"]:
         raise HTTPException(status_code=400, detail=f"Unsupported duration for {selected['name']}: {body.duration_seconds}s.")
     fps = int(selected.get("default_fps", OUTPUT_FPS))
+    if selected.get("backend") in {"hunyuan-comfy", "ltx-comfy"}:
+        multiple = int(selected.get("frame_multiple", 4))
+        frame_num = max(multiple + 1, round((body.duration_seconds * fps - 1) / multiple) * multiple + 1)
+    else:
+        frame_num = duration_to_frame_num(body.duration_seconds)
     job_id = str(uuid.uuid4())
     source_path = UPLOAD_DIR / f"{job_id}{suffix}"
     source_path.write_bytes(payload)
@@ -718,7 +806,7 @@ async def create_i2v_job(
         "model_dir": str(selected["model_dir"]), "mode": "i2v", "source_image_path": str(source_path),
         "prompt": body.prompt, "negative_prompt": (body.negative_prompt or DEFAULT_NEGATIVE_PROMPT).strip(),
         "size": body.size, "steps": body.steps, "duration_seconds": body.duration_seconds,
-        "frame_num": duration_to_frame_num(body.duration_seconds), "fps": fps, "seed": body.seed,
+        "frame_num": frame_num, "fps": fps, "seed": body.seed,
         "solver": selected.get("solver", "euler"),
         "status": "queued", "created_at": now(), "started_at": None, "completed_at": None,
         "output_path": None, "error": None,

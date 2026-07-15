@@ -49,6 +49,10 @@ export type VideoProfile = {
   recommended_steps?: number;
   reference_settings?: string;
   known_limitations?: string[];
+  native_audio?: boolean;
+  features?: string[];
+  output_scale?: number;
+  tested_runtime_seconds?: number;
 };
 
 export type VideoSnapshot = {

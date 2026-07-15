@@ -158,7 +158,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
               <Film className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-white">Wan2.2 Video Lab</h1>
+              <h1 className="text-lg font-semibold text-white">Video Lab</h1>
               <p className="text-sm text-slate-400">{snapshot.serviceUrl}</p>
             </div>
           </div>
@@ -183,7 +183,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
         {!snapshot.healthy && snapshot.error ? <div className="mt-3 border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{snapshot.error}</div> : null}
       </section>
 
-      <SectionCard title="Generate" description="Wan uses the GPU. The service stops the LLM during a generation job and restarts it afterward.">
+      <SectionCard title="Generate" description="Video generation owns the GPU. The appliance pauses resumable work, unloads the LLM, and restores both afterward.">
         <form action={(formData) => void createJob(formData)} className="grid gap-3">
           <div className="grid grid-cols-2 border border-white/10 bg-black/20 p-1" role="group" aria-label="Generation mode">
             <button type="button" onClick={() => chooseMode("t2v")} className={cn("inline-flex items-center justify-center gap-2 px-3 py-2 text-sm", mode === "t2v" ? "bg-fuchsia-400/15 text-fuchsia-100" : "text-slate-400 hover:text-white")}><Type className="h-4 w-4" />Text to video</button>
@@ -207,6 +207,8 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
               <span>{selectedProfileInfo.description}</span>
               <span className="text-slate-400">{selectedProfileInfo.backend ?? "WAN"} · {selectedProfileInfo.solver?.toUpperCase() ?? "Euler"} · {selectedProfileInfo.modes?.join(" / ") ?? "T2V"}{selectedProfileInfo.expected_vram_gb ? ` · about ${selectedProfileInfo.expected_vram_gb} GB VRAM` : ""}</span>
               {selectedProfileInfo.reference_settings ? <span className="text-slate-300">Reference quality: {selectedProfileInfo.reference_settings}</span> : null}
+              {selectedProfileInfo.native_audio ? <span className="text-emerald-200">Native synchronized audio is included.</span> : null}
+              {selectedProfileInfo.output_scale && selectedProfileInfo.output_scale > 1 ? <span className="text-slate-300">Final video is decoded at {selectedProfileInfo.output_scale}x the selected latent size.</span> : null}
             </div>
           ) : null}
           {mode === "i2v" ? (
@@ -318,6 +320,8 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                 <span>{profile.step_counts?.join(" / ") ?? "Variable"} steps</span>
                 <span>{profile.expected_vram_gb ? `~${profile.expected_vram_gb} GB VRAM` : "VRAM varies"}</span>
               </div>
+              {profile.features?.length ? <div className="flex flex-wrap gap-1.5">{profile.features.map((feature) => <span key={feature} className="border border-fuchsia-400/25 bg-fuchsia-400/10 px-2 py-1 text-[11px] text-fuchsia-100">{feature}</span>)}</div> : null}
+              {profile.tested_runtime_seconds ? <div className="text-xs text-slate-400">Measured on this V620: about {Math.round(profile.tested_runtime_seconds / 60)} minutes for the tested profile.</div> : null}
               <button disabled={state === "working" || profile.ready || Boolean(profile.availability_reason)} className="inline-flex items-center justify-center gap-2 border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50" onClick={() => void downloadModel(profile.id)}>
                 <Download className="h-4 w-4" />
                 {profile.ready ? "Model Installed" : profile.availability_reason ? "Failed Validation" : "Download Model"}
