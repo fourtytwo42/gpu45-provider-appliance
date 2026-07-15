@@ -48,3 +48,10 @@ keeps seed control exposed for reproducible comparisons.
 - Wan2.2 repository: https://github.com/Wan-Video/Wan2.2
 - Wan2.2 TI2V-5B model: https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
 - DiffSynth Wan documentation: https://github.com/modelscope/DiffSynth-Studio/blob/main/docs/en/Model_Details/Wan.md
+
+## Scheduler Evaluation
+
+The official Wan runner uses Flow UniPC, while DiffSynth defaults to a first-order
+flow Euler scheduler. The appliance runner now exposes `--solver unipc` through a
+small compatibility adapter for isolated hardware comparison. Euler remains the
+default until UniPC passes generation, repeated-run, and output inspection gates.

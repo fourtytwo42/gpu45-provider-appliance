@@ -18,6 +18,7 @@ from .quality import (
     REFERENCE_TILE_STRIDE,
     prepare_input_image,
 )
+from .scheduler import DiffSynthUniPCScheduler
 
 
 def parse_size(value: str) -> tuple[int, int]:
@@ -38,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed", type=int, default=-1)
     parser.add_argument("--input-image")
+    parser.add_argument("--solver", choices=("euler", "unipc"), default="euler")
     return parser
 
 
@@ -91,6 +93,8 @@ def main() -> None:
     if tokenizer_config is not None:
         kwargs["tokenizer_config"] = tokenizer_config
     pipe = WanVideoPipeline.from_pretrained(**kwargs)
+    if args.solver == "unipc":
+        pipe.scheduler = DiffSynthUniPCScheduler()
     print(f"pipeline loaded in {time.time() - started:.1f}s", flush=True)
 
     generate_started = time.time()
