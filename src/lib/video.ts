@@ -53,6 +53,7 @@ export type VideoProfile = {
   features?: string[];
   output_scale?: number;
   tested_runtime_seconds?: number;
+  max_tested_duration_seconds?: number;
 };
 
 export type VideoSnapshot = {

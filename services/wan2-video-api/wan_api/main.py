@@ -80,7 +80,8 @@ PROFILES: dict[str, dict[str, Any]] = {
         "recommended_size": "512*320",
         "recommended_steps": 8,
         "reference_settings": "512x320, 24 fps, 8 distilled steps, native synchronized audio",
-        "tested_runtime_seconds": 148,
+        "tested_runtime_seconds": 209,
+        "max_tested_duration_seconds": 5,
         "known_limitations": [
             "One- through five-second clips use the validated 8n+1 frame sequence; runtime grows with duration.",
             "Retake, keyframes, lip-sync, and video-to-video are not yet exposed because they have not passed appliance validation.",
@@ -313,6 +314,7 @@ def public_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "features": profile.get("features", []),
         "output_scale": profile.get("output_scale", 1),
         "tested_runtime_seconds": profile.get("tested_runtime_seconds"),
+        "max_tested_duration_seconds": profile.get("max_tested_duration_seconds"),
     }
 
 

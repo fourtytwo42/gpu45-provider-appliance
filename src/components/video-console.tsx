@@ -321,7 +321,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                 <span>{profile.expected_vram_gb ? `~${profile.expected_vram_gb} GB VRAM` : "VRAM varies"}</span>
               </div>
               {profile.features?.length ? <div className="flex flex-wrap gap-1.5">{profile.features.map((feature) => <span key={feature} className="border border-fuchsia-400/25 bg-fuchsia-400/10 px-2 py-1 text-[11px] text-fuchsia-100">{feature}</span>)}</div> : null}
-              {profile.tested_runtime_seconds ? <div className="text-xs text-slate-400">Measured on this V620: about {Math.round(profile.tested_runtime_seconds / 60)} minutes for the tested profile.</div> : null}
+              {profile.tested_runtime_seconds ? <div className="text-xs text-slate-400">Measured on this V620: {profile.max_tested_duration_seconds ? `${profile.max_tested_duration_seconds}s in ` : "about "}{Math.round(profile.tested_runtime_seconds / 60)} minutes.</div> : null}
               <button disabled={state === "working" || profile.ready || Boolean(profile.availability_reason)} className="inline-flex items-center justify-center gap-2 border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50" onClick={() => void downloadModel(profile.id)}>
                 <Download className="h-4 w-4" />
                 {profile.ready ? "Model Installed" : profile.availability_reason ? "Failed Validation" : "Download Model"}
