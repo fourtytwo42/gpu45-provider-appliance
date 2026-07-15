@@ -62,3 +62,23 @@ The official runner also offers optional local-Qwen prompt extension. The
 appliance does not silently rewrite user prompts in this release. I2V prompts
 should describe motion and transitions that are plausible from the supplied
 source image; unrelated scene replacement remains unreliable on the 5B model.
+
+## Hardware Results
+
+- Reference-memory smoke: 1280x704, 49 frames, one Euler step completed in 397
+  seconds. The output was 2.042 seconds long with all 49 frames present.
+- Production-path validation: job `736c067a-e684-421e-9345-1472520ea4ed`
+  completed 50 Euler steps and all nine VAE tiles at 1280x704. Denoising took 60
+  minutes 43 seconds. The resulting MP4 is 2.042 seconds and 49 frames.
+- The production-path source frame was preserved more cleanly than the earlier
+  832x480 output, but its test prompt requested unrelated objects absent from the
+  source and produced little motion. This confirms that resolution alone does
+  not repair an implausible I2V transition.
+- UniPC validation: 1280x704, 49 frames, four steps completed in 615 seconds.
+  The output visibly introduced the prompted foreground motion and completed
+  without a ROCm or driver fault. Four steps were visibly under-resolved and are
+  not exposed as a user preset.
+- Peak observed junction temperature was 92 C during VAE decode. The fan curve
+  brought the card back down between tiles. GPU utilization and VRAM returned to
+  zero after each run, and kernel logs contained no GPU reset, timeout, or page
+  fault.
