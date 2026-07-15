@@ -141,6 +141,7 @@ def test_ltx_balanced_is_a_preset_on_the_q4_model() -> None:
     assert balanced["steps"] == 11
     assert "512*288" in profile["sizes"]
     assert balanced["output_scale"] == 2
+    assert balanced["modes"] == ["t2v", "i2v"]
 
 
 def test_legacy_ltx_profile_ids_resolve_to_one_model() -> None:

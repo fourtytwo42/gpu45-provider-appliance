@@ -61,6 +61,15 @@ def test_ltx_balanced_adds_upscale_and_refinement() -> None:
     assert workflow["18"]["inputs"]["samples"] == ["28", 1]
 
 
+def test_ltx_balanced_i2v_keeps_image_conditioning_through_upscale() -> None:
+    workflow = ltx23_workflow(ltx_args(preset="balanced", input_image="/tmp/source.png"))
+
+    assert workflow["8"]["inputs"]["video_latent"] == ["32", 0]
+    assert workflow["22"]["inputs"]["samples"] == ["15", 0]
+    assert workflow["23"]["inputs"]["video_latent"] == ["22", 0]
+    assert workflow["17"]["inputs"]["latents"] == ["28", 0]
+
+
 def test_ltx_video_falls_back_to_expected_output_prefix(tmp_path) -> None:
     output = tmp_path / "gpu45" / "job-7_00001_.mp4"
     output.parent.mkdir()

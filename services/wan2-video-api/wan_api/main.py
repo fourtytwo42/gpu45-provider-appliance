@@ -102,12 +102,12 @@ PROFILES: dict[str, dict[str, Any]] = {
                 "duration_seconds": 2,
                 "output_scale": 2,
                 "max_tested_duration_seconds": 2,
-                "modes": ["t2v"],
+                "modes": ["t2v", "i2v"],
             },
         },
         "known_limitations": [
             "Preview is hardware-validated through five seconds; longer clips are experimental.",
-            "Balanced is hardware-validated through two seconds and currently supports text-to-video only.",
+            "Balanced is hardware-validated through two seconds; longer clips are experimental.",
         ],
     },
     "hunyuan15-t2v-q5": {

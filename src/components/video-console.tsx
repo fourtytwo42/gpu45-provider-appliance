@@ -70,7 +70,6 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
     setMode(nextMode);
     const nextProfile = snapshot.profiles.find((profile) => profile.ready && (profile.modes?.includes(nextMode) ?? nextMode === "t2v"));
     if (nextProfile) chooseProfile(nextProfile.id);
-    if (nextMode === "i2v") choosePreset("preview");
   }
 
   async function refresh(): Promise<void> {
@@ -253,7 +252,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                 className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
               >
                 <option value="preview">Preview - native size, 8 steps</option>
-                <option value="balanced" disabled={mode === "i2v"}>Balanced - 2x upscale, 11 total steps</option>
+                <option value="balanced">Balanced - 2x upscale, 11 total steps</option>
               </select>
             </label>
             <label className="grid gap-1 text-xs text-slate-400">
@@ -279,7 +278,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                 }}
                 className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
               >
-                {availableSteps.map((value) => <option key={value} value={value} disabled={mode === "i2v" && value === 11}>{value}</option>)}
+                {availableSteps.map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
             </label>
             <label className="grid gap-1 text-xs text-slate-400">
