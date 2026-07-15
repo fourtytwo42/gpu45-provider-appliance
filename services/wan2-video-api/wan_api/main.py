@@ -60,7 +60,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "backend": "ltx-comfy",
         "modes": ["t2v", "i2v"],
         "sizes": ["512*320", "320*512"],
-        "durations": [1, 2],
+        "durations": [1, 2, 3, 4, 5],
         "step_counts": [8],
         "default_steps": 8,
         "default_fps": 24,
@@ -82,7 +82,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "reference_settings": "512x320, 24 fps, 8 distilled steps, native synchronized audio",
         "tested_runtime_seconds": 148,
         "known_limitations": [
-            "Validated for one- and two-second clips; longer clips remain experimental on this GPU.",
+            "One- through five-second clips use the validated 8n+1 frame sequence; runtime grows with duration.",
             "Retake, keyframes, lip-sync, and video-to-video are not yet exposed because they have not passed appliance validation.",
         ],
     },
