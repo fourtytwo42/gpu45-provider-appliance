@@ -3,26 +3,6 @@ from __future__ import annotations
 from PIL import Image, ImageOps
 
 
-# Wan's reference TI2V-5B negative prompt. Keeping the original language avoids
-# weakening a prompt tuned with the model's multilingual text encoder.
-REFERENCE_NEGATIVE_PROMPT = (
-    "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，"
-    "最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，"
-    "画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，"
-    "杂乱的背景，三条腿，背景人很多，倒着走，watermark，logo"
-)
-
-REFERENCE_SIZE = "512*320"
-REFERENCE_STEPS = 8
-REFERENCE_CFG_SCALE = 5.0
-REFERENCE_SIGMA_SHIFT = 5.0
-# The reference 30x52 tiles take more than 20 minutes to decode a two-second
-# 720p clip on gfx1030. These smaller overlapping tiles preserve full output
-# resolution while keeping decode practical on the V620.
-REFERENCE_TILE_SIZE = (24, 40)
-REFERENCE_TILE_STRIDE = (12, 20)
-
-
 def prepare_input_image(image: Image.Image, width: int, height: int) -> Image.Image:
     """Crop and resize an input image to the requested frame without black bars."""
     return ImageOps.fit(

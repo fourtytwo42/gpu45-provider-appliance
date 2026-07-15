@@ -18,7 +18,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from gpu45_resource import acquire_lease
 from .job_store import JobStore
-from .quality import REFERENCE_SIZE, REFERENCE_STEPS
+REFERENCE_SIZE = "512*320"
+REFERENCE_STEPS = 8
 
 
 VIDEO_ROOT = Path(os.environ.get("GPU45_VIDEO_ROOT", "/opt/gpu45-video-api"))
