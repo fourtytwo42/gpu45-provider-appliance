@@ -212,6 +212,7 @@ def comfy_ready(url: str) -> bool:
 def start_comfy(args: argparse.Namespace) -> subprocess.Popen[str] | None:
     if comfy_ready(args.comfy_url):
         return None
+    Path(args.comfy_output_root).mkdir(parents=True, exist_ok=True)
     command = [
         args.comfy_python, str(Path(args.comfy_root) / "main.py"),
         "--listen", "127.0.0.1", "--port", "8188", "--disable-auto-launch",
@@ -320,7 +321,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--cfg", type=float, default=1.0)
     result.add_argument("--shift", type=float, default=5.0)
     result.add_argument("--comfy-url", default=DEFAULT_COMFY_URL)
-    result.add_argument("--comfy-output-root", default="/models/hunyuan-video-1.5/outputs")
+    result.add_argument("--comfy-output-root", default="/models/wan2-video/comfy-output")
     result.add_argument("--comfy-input-root", default="/opt/hunyuan-video-1.5/ComfyUI/input")
     result.add_argument("--comfy-root", default="/opt/hunyuan-video-1.5/ComfyUI")
     result.add_argument("--comfy-python", default="/opt/hunyuan-video-venv/bin/python")

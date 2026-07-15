@@ -38,7 +38,8 @@ mkdir -p \
   "$COMFY_ROOT/models/text_encoders" \
   "$COMFY_ROOT/models/vae" \
   "$COMFY_ROOT/models/latent_upscale_models" \
-  "$MODEL_ROOT"/{distilled,text_encoders,vae,latent_upscale_models}
+  "$MODEL_ROOT"/{distilled,text_encoders,vae,latent_upscale_models} \
+  /models/wan2-video/comfy-output
 
 declare -A LINKS=(
   ["$MODEL_ROOT/distilled/ltx-2.3-22b-distilled-Q4_K_M.gguf"]="$COMFY_ROOT/models/diffusion_models/ltx-2.3-22b-distilled-Q4_K_M.gguf"
@@ -54,7 +55,7 @@ for source in "${!LINKS[@]}"; do
   ln -sfn "$source" "${LINKS[$source]}"
 done
 
-chown -R hendo420:hendo420 "$MODEL_ROOT" "$COMFY_ROOT/custom_nodes"
+chown -R hendo420:hendo420 "$MODEL_ROOT" "$COMFY_ROOT/custom_nodes" /models/wan2-video/comfy-output
 rsync -a "$APP_ROOT/services/wan2-video-api/wan_api/" /opt/wan2.2/wan_api/
 systemctl restart wan2-video-api.service
 systemctl --no-pager --full status wan2-video-api.service
