@@ -1,6 +1,6 @@
 from argparse import Namespace
 
-from wan_api.comfy_generate import find_saved_video, ltx23_workflow, t2v_workflow, wan22_a14b_workflow
+from wan_api.comfy_generate import attention_flag_for_frames, find_saved_video, ltx23_workflow, t2v_workflow, wan22_a14b_workflow
 
 
 def test_t2v_workflow_uses_distilled_hunyuan_settings() -> None:
@@ -82,3 +82,8 @@ def test_ltx_video_falls_back_to_expected_output_prefix(tmp_path) -> None:
 
     history = {"outputs": {"20": {"animated": True, "videos": [False]}}}
     assert find_saved_video(history, tmp_path, "job-7") == output
+
+
+def test_long_ltx_clips_use_memory_efficient_attention() -> None:
+    assert attention_flag_for_frames(121) == "--use-pytorch-cross-attention"
+    assert attention_flag_for_frames(361) == "--use-split-cross-attention"

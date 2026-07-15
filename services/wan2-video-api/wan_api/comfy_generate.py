@@ -209,6 +209,11 @@ def comfy_ready(url: str) -> bool:
         return False
 
 
+def attention_flag_for_frames(frames: int) -> str:
+    # Long LTX clips exceed 32 GB with PyTorch's full attention allocation.
+    return "--use-split-cross-attention" if frames > 121 else "--use-pytorch-cross-attention"
+
+
 def start_comfy(args: argparse.Namespace) -> subprocess.Popen[str] | None:
     if comfy_ready(args.comfy_url):
         return None
@@ -218,7 +223,7 @@ def start_comfy(args: argparse.Namespace) -> subprocess.Popen[str] | None:
         "--listen", "127.0.0.1", "--port", "8188", "--disable-auto-launch",
         "--output-directory", args.comfy_output_root,
         "--disable-smart-memory", "--disable-pinned-memory", "--disable-async-offload",
-        "--cache-none", "--reserve-vram", "0.5", "--use-pytorch-cross-attention",
+        "--cache-none", "--reserve-vram", "0.5", attention_flag_for_frames(args.frames),
     ]
     env = {**os.environ, "HSA_OVERRIDE_GFX_VERSION": "10.3.0", "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1"}
     process = subprocess.Popen(command, cwd=args.comfy_root, env=env, stdout=None, stderr=None, text=True)
