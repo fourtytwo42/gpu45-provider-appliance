@@ -19,7 +19,8 @@ No amdgpu reset, timeout, page fault, RAS, ECC, ROCm illegal-memory-access, or O
 ## Production Limits
 
 - Preview exposes text-to-video and image-to-video after both API smoke tests pass.
-- Preview duration is exposed from one through five seconds. Five seconds uses 121 frames at 24 fps and is the appliance stress-test target.
+- Preview duration is hardware-validated from one through five seconds. Five seconds uses 121 frames at 24 fps.
+- The UI permits experimental durations up to twenty seconds. At 24 fps, twenty seconds maps to 481 frames and preserves the required `8n+1` sequence.
 - The five-second production API run completed with 121 H.264 frames and synchronized 48 kHz stereo AAC audio. It returned to about 17 MB VRAM and 7 W idle power after worker cleanup.
 - Balanced exposes text-to-video only because that exact workflow passed the hardware gate.
 - Retake, keyframes, video-to-video, lip-sync, and audio-to-video remain hidden until each workflow is validated on this card.

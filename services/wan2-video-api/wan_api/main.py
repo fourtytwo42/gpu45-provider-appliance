@@ -60,7 +60,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "backend": "ltx-comfy",
         "modes": ["t2v", "i2v"],
         "sizes": ["512*320", "320*512"],
-        "durations": [1, 2, 3, 4, 5],
+        "durations": list(range(1, 21)),
         "step_counts": [8],
         "default_steps": 8,
         "default_fps": 24,
@@ -83,7 +83,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "tested_runtime_seconds": 209,
         "max_tested_duration_seconds": 5,
         "known_limitations": [
-            "One- through five-second clips use the validated 8n+1 frame sequence; runtime grows with duration.",
+            "One- through five-second clips are hardware-validated. Six- through twenty-second clips are experimental and can take substantially longer.",
             "Retake, keyframes, lip-sync, and video-to-video are not yet exposed because they have not passed appliance validation.",
         ],
     },
