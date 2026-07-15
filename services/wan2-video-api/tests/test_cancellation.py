@@ -130,7 +130,7 @@ def test_ltx_model_exposes_one_through_twenty_seconds() -> None:
     profile = main.PROFILES["ltx23-q4"]
 
     assert profile["durations"] == list(range(1, 21))
-    assert profile["max_tested_duration_seconds"] == 2
+    assert profile["max_tested_duration_seconds"] == 5
 
 
 def test_ltx_balanced_is_a_preset_on_the_q4_model() -> None:
