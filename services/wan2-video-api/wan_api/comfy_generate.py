@@ -234,17 +234,22 @@ def start_comfy(args: argparse.Namespace) -> subprocess.Popen[str] | None:
     raise RuntimeError("ComfyUI did not become ready within 180 seconds.")
 
 
-def find_saved_video(history: dict[str, Any], output_root: Path) -> Path:
+def find_saved_video(history: dict[str, Any], output_root: Path, expected_prefix: str | None = None) -> Path:
     outputs = history.get("outputs", {})
     for node in outputs.values():
-        for item in node.get("videos", []):
-            filename = item.get("filename")
-            if not filename:
-                continue
-            subfolder = item.get("subfolder", "")
-            candidate = (output_root / subfolder / filename).resolve()
-            if output_root.resolve() in candidate.parents and candidate.exists():
-                return candidate
+        for collection in ("videos", "animated", "images"):
+            for item in node.get(collection, []):
+                filename = item.get("filename")
+                if not filename:
+                    continue
+                subfolder = item.get("subfolder", "")
+                candidate = (output_root / subfolder / filename).resolve()
+                if output_root.resolve() in candidate.parents and candidate.exists() and candidate.suffix.lower() in {".mp4", ".webm", ".mov"}:
+                    return candidate
+    if expected_prefix:
+        candidates = sorted(output_root.rglob(f"{expected_prefix}_*.mp4"), key=lambda path: path.stat().st_mtime, reverse=True)
+        if candidates:
+            return candidates[0]
     raise RuntimeError("ComfyUI completed without a video output.")
 
 
@@ -277,7 +282,7 @@ def run(args: argparse.Namespace) -> None:
                 if status.get("status_str") == "error" or not status.get("completed", False):
                     messages = status.get("messages", [])
                     raise RuntimeError(f"ComfyUI generation failed: {messages[-1] if messages else status}")
-                source = find_saved_video(history, Path(args.comfy_output_root))
+                source = find_saved_video(history, Path(args.comfy_output_root), args.job_id)
                 destination = Path(args.output)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, destination)

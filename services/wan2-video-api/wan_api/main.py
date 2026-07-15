@@ -378,6 +378,15 @@ def job_progress(job: dict[str, Any]) -> dict[str, Any]:
             "progress_stage": "decoding",
         }
 
+    ltx_decode_tiles = len(re.findall(r"Processing VAE decode tile at row", log_text))
+    if ltx_decode_tiles:
+        tile = min(4, ltx_decode_tiles)
+        return {
+            "progress_percent": min(98, 88 + tile * 2),
+            "progress_label": f"Decoding video tile {tile}/4",
+            "progress_stage": "decoding",
+        }
+
     step_matches = re.findall(r"(\d+)%\|.*?\|\s*(\d+)/(\d+)\s*\[", log_text)
     if step_matches:
         raw_percent, step, total = step_matches[-1]

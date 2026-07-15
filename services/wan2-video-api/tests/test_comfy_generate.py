@@ -1,6 +1,6 @@
 from argparse import Namespace
 
-from wan_api.comfy_generate import ltx23_workflow, t2v_workflow, wan22_a14b_workflow
+from wan_api.comfy_generate import find_saved_video, ltx23_workflow, t2v_workflow, wan22_a14b_workflow
 
 
 def test_t2v_workflow_uses_distilled_hunyuan_settings() -> None:
@@ -73,3 +73,11 @@ def test_ltx_balanced_adds_upscale_and_refinement() -> None:
     assert workflow["27"]["inputs"]["sigmas"] == ["25", 0]
     assert workflow["17"]["inputs"]["latents"] == ["28", 0]
     assert workflow["18"]["inputs"]["samples"] == ["28", 1]
+
+
+def test_ltx_video_falls_back_to_expected_output_prefix(tmp_path) -> None:
+    output = tmp_path / "gpu45" / "job-7_00001_.mp4"
+    output.parent.mkdir()
+    output.write_bytes(b"video")
+
+    assert find_saved_video({"outputs": {}}, tmp_path, "job-7") == output
