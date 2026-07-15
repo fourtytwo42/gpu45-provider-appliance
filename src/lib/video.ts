@@ -24,6 +24,7 @@ export type VideoJob = {
   progress_percent?: number;
   progress_label?: string;
   progress_stage?: string;
+  solver?: string;
 };
 
 export type VideoProfile = {
@@ -43,6 +44,7 @@ export type VideoProfile = {
   default_steps?: number;
   default_fps?: number;
   expected_vram_gb?: number | null;
+  solver?: string;
   recommended_size?: string;
   recommended_steps?: number;
   reference_settings?: string;

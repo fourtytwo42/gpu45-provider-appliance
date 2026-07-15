@@ -205,7 +205,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
           {selectedProfileInfo ? (
             <div className={cn("grid gap-1 border px-3 py-2 text-xs", selectedProfileInfo.ready ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-100" : "border-amber-400/30 bg-amber-400/10 text-amber-100")}>
               <span>{selectedProfileInfo.description}</span>
-              <span className="text-slate-400">{selectedProfileInfo.backend ?? "WAN"} · {selectedProfileInfo.modes?.join(" / ") ?? "T2V"}{selectedProfileInfo.expected_vram_gb ? ` · about ${selectedProfileInfo.expected_vram_gb} GB VRAM` : ""}</span>
+              <span className="text-slate-400">{selectedProfileInfo.backend ?? "WAN"} · {selectedProfileInfo.solver?.toUpperCase() ?? "Euler"} · {selectedProfileInfo.modes?.join(" / ") ?? "T2V"}{selectedProfileInfo.expected_vram_gb ? ` · about ${selectedProfileInfo.expected_vram_gb} GB VRAM` : ""}</span>
               {selectedProfileInfo.reference_settings ? <span className="text-slate-300">Reference quality: {selectedProfileInfo.reference_settings}</span> : null}
             </div>
           ) : null}

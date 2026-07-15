@@ -52,6 +52,13 @@ keeps seed control exposed for reproducible comparisons.
 ## Scheduler Evaluation
 
 The official Wan runner uses Flow UniPC, while DiffSynth defaults to a first-order
-flow Euler scheduler. The appliance runner now exposes `--solver unipc` through a
-small compatibility adapter for isolated hardware comparison. Euler remains the
-default until UniPC passes generation, repeated-run, and output inspection gates.
+flow Euler scheduler. A compatibility adapter completed a 1280x704, 49-frame,
+four-step I2V hardware test in 615 seconds. It produced visible prompted motion,
+completed all nine VAE decode tiles, and wrote a valid 2.04-second MP4 without a
+driver error. New TI2V-5B jobs therefore use UniPC; Euler remains available as an
+internal rollback.
+
+The official runner also offers optional local-Qwen prompt extension. The
+appliance does not silently rewrite user prompts in this release. I2V prompts
+should describe motion and transitions that are plausible from the supplied
+source image; unrelated scene replacement remains unreliable on the 5B model.

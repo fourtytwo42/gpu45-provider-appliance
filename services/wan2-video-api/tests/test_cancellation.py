@@ -53,6 +53,7 @@ def test_i2v_submission_persists_job_and_starts_runner(tmp_path, monkeypatch) ->
 
     assert result["status"] == "queued"
     assert result["mode"] == "i2v"
+    assert result["solver"] == "unipc"
     assert runner_calls == [True]
     assert len(main.load_jobs()) == 1
     assert (upload_dir / f"{result['id']}.png").read_bytes() == b"image-data"
