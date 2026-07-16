@@ -353,6 +353,7 @@ class HarborAdapter:
             "services:\n"
             "  main:\n"
             "    cap_drop: [ALL]\n"
+            "    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]\n"
             "    security_opt: [no-new-privileges:true]\n"
             "    pids_limit: 512\n"
             "    extra_hosts: [host.docker.internal:host-gateway]\n",
@@ -396,6 +397,10 @@ class HarborAdapter:
             return HarnessResult(False, 0.0, duration_ms, "Harbor task failed", text[-4000:], artifacts, "infrastructure_failure")
         payload = json.loads(result_path.read_text(encoding="utf-8"))
         trials = payload.get("trial_results") or []
+        if not trials:
+            trial_paths = sorted(path for path in (jobs / "gpu45").glob("*/result.json") if path != result_path)
+            trials = [json.loads(path.read_text(encoding="utf-8")) for path in trial_paths]
+            artifacts.extend(("verifier", path) for path in trial_paths)
         if not trials:
             return HarnessResult(False, 0.0, duration_ms, "Harbor produced no trial result", text[-4000:], artifacts, "infrastructure_failure")
         trial = trials[0]

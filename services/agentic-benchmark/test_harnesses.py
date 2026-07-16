@@ -57,3 +57,10 @@ class HarnessProcessTests(unittest.TestCase):
                 os.environ.pop("GPU45_AGENTIC_CACHE_ROOT", None)
             else:
                 os.environ["GPU45_AGENTIC_CACHE_ROOT"] = previous
+
+    def test_harbor_overlay_keeps_agent_install_capabilities(self):
+        source = Path(__file__).parent / "agentic_benchmark" / "harnesses.py"
+        text = source.read_text(encoding="utf-8")
+        self.assertIn("cap_drop: [ALL]", text)
+        self.assertIn("cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]", text)
+        self.assertIn('glob("*/result.json")', text)
