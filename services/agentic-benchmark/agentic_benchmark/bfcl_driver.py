@@ -51,14 +51,22 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
 
-    from bfcl_eval import _llm_response_generation as generation
-    from bfcl_eval.eval_checker import eval_runner
-
-    register_model(args.alias)
     result_root = Path(args.result_root).resolve()
     score_root = Path(args.score_root).resolve()
     result_root.mkdir(parents=True, exist_ok=True)
     score_root.mkdir(parents=True, exist_ok=True)
+    lock_root = result_root.parent / "locks"
+    lock_root.mkdir(parents=True, exist_ok=True)
+
+    # BFCL defaults to lock files inside its source checkout. Keep the pinned
+    # harness immutable and place per-run locks alongside the campaign output.
+    from bfcl_eval.constants import eval_config
+
+    eval_config.LOCK_DIR = lock_root
+    from bfcl_eval import _llm_response_generation as generation
+    from bfcl_eval.eval_checker import eval_runner
+
+    register_model(args.alias)
 
     if args.limit > 0:
         original = generation.get_involved_test_entries
