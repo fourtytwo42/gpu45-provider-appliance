@@ -54,14 +54,45 @@ def read_score(score_root: Path, category: str) -> dict[str, object]:
     raise RuntimeError(f"BFCL did not produce a score for {category}")
 
 
+def select_entries(entries: list[dict[str, object]], case_id: str | None, limit: int) -> list[dict[str, object]]:
+    selected = entries
+    if case_id:
+        selected = [entry for entry in selected if entry.get("id") == case_id]
+        if not selected:
+            raise ValueError(f"Unknown BFCL case: {case_id}")
+    if limit > 0:
+        selected = selected[:limit]
+    return selected
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--alias", required=True)
-    parser.add_argument("--category", required=True)
-    parser.add_argument("--result-root", required=True)
-    parser.add_argument("--score-root", required=True)
+    parser.add_argument("--alias")
+    parser.add_argument("--category", action="append", required=True)
+    parser.add_argument("--case-id")
+    parser.add_argument("--list", action="store_true")
+    parser.add_argument("--result-root")
+    parser.add_argument("--score-root")
     parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
+
+    from bfcl_eval import _llm_response_generation as generation
+
+    if args.list:
+        tasks = []
+        for category in args.category:
+            _, entries = generation.get_involved_test_entries([category], False)
+            tasks.extend(f"{category}::{entry['id']}" for entry in entries)
+        if args.limit > 0:
+            tasks = tasks[: args.limit]
+        print("GPU45_TASKS=" + json.dumps(tasks, separators=(",", ":")))
+        return
+
+    if not args.alias or not args.result_root or not args.score_root:
+        parser.error("--alias, --result-root, and --score-root are required unless --list is used")
+    if len(args.category) != 1:
+        parser.error("exactly one --category is required when running a case")
+    category = args.category[0]
 
     result_root = Path(args.result_root).resolve()
     score_root = Path(args.score_root).resolve()
@@ -75,24 +106,23 @@ def main() -> None:
     from bfcl_eval.constants import eval_config
 
     eval_config.LOCK_DIR = lock_root
-    from bfcl_eval import _llm_response_generation as generation
     from bfcl_eval.eval_checker import eval_runner
 
     registry_name = "gpu45-bfcl-model"
     register_model(registry_name, args.alias)
 
-    if args.limit > 0:
+    if args.case_id or args.limit > 0:
         original = generation.get_involved_test_entries
 
         def limited(categories: list[str], run_ids: bool):
             names, entries = original(categories, run_ids)
-            return names, entries[: args.limit]
+            return names, select_entries(entries, args.case_id, args.limit)
 
         generation.get_involved_test_entries = limited
 
     namespace = argparse.Namespace(
         model=[registry_name],
-        test_category=[args.category],
+        test_category=[category],
         temperature=0.0,
         include_input_log=True,
         exclude_state_log=False,
@@ -111,14 +141,14 @@ def main() -> None:
     )
     generation.main(namespace)
     try:
-        eval_runner.main([registry_name], [args.category], str(result_root), str(score_root), partial_eval=args.limit > 0)
+        eval_runner.main([registry_name], [category], str(result_root), str(score_root), partial_eval=bool(args.case_id or args.limit > 0))
     except statistics.StatisticsError:
         if args.limit != 1:
             raise
         # BFCL's aggregate CSV asks for a sample standard deviation. A
         # one-item diagnostic has no standard deviation, but its verifier
         # score file is complete and remains the source of truth.
-    print("GPU45_RESULT=" + json.dumps(read_score(score_root, args.category), separators=(",", ":")))
+    print("GPU45_RESULT=" + json.dumps(read_score(score_root, category), separators=(",", ":")))
 
 
 if __name__ == "__main__":

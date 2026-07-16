@@ -309,13 +309,20 @@ class BenchmarkStore:
 
     def ensure_tasks(self, run_id: str, external_task_ids: list[str]) -> None:
         stamp = now()
+        desired = set(external_task_ids)
         with self.session() as db:
+            existing = db.execute("SELECT id,external_task_id FROM tasks WHERE run_id=?", (run_id,)).fetchall()
+            stale_ids = [row["id"] for row in existing if row["external_task_id"] not in desired]
+            if stale_ids:
+                db.executemany("DELETE FROM artifacts WHERE task_id=?", [(task_id,) for task_id in stale_ids])
+                db.executemany("DELETE FROM tasks WHERE id=?", [(task_id,) for task_id in stale_ids])
             for external_id in external_task_ids:
                 db.execute(
                     "INSERT OR IGNORE INTO tasks(id,run_id,external_task_id,created_at,updated_at) VALUES(?,?,?,?,?)",
                     (str(uuid.uuid4()), run_id, external_id, stamp, stamp),
                 )
             db.execute("UPDATE runs SET expected_tasks=?,updated_at=? WHERE id=?", (len(external_task_ids), stamp, run_id))
+            self._refresh_run(db, run_id)
 
     def next_task(self, run_id: str) -> dict[str, Any] | None:
         with self.session() as db:

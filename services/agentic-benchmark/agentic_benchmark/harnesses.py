@@ -82,16 +82,40 @@ class BfclAdapter:
         self.token = token
         self.source = harness_root / "sources" / "bfcl" / "berkeley-function-call-leaderboard"
         self.python = harness_root / "venvs" / "bfcl" / "bin" / "python"
+        self._tasks: dict[tuple[str, ...], list[str]] = {}
 
     def tasks(self, suite: dict[str, object]) -> list[str]:
-        return [str(category) for category in suite.get("categories", [])]
+        configured = suite.get("taskIds")
+        if isinstance(configured, list):
+            return [str(item) for item in configured]
+        categories = tuple(str(category) for category in suite.get("categories", []))
+        if categories not in self._tasks:
+            command = [str(self.python), "-m", "agentic_benchmark.bfcl_driver", "--list"]
+            for category in categories:
+                command.extend(["--category", category])
+            result = subprocess.run(
+                command,
+                cwd=self.source,
+                env=os.environ.copy(),
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=True,
+            )
+            marker = next((line[len("GPU45_TASKS="):] for line in result.stdout.splitlines() if line.startswith("GPU45_TASKS=")), None)
+            if not marker:
+                raise RuntimeError("BFCL task discovery did not return a task list")
+            self._tasks[categories] = [str(item) for item in json.loads(marker)]
+        tasks = list(self._tasks[categories])
+        validation_limit = int(suite.get("validationLimit") or 0)
+        return tasks[:validation_limit] if validation_limit else tasks
 
     def run(
         self,
         campaign_id: str,
         run_id: str,
         task_id: str,
-        category: str,
+        external_task_id: str,
         alias: str,
         timeout_seconds: int,
         ensure_active: Callable[[], None],
@@ -108,12 +132,15 @@ class BfclAdapter:
             OPENAI_BASE_URL=os.environ.get("GPU45_RESPONSES_URL", "http://127.0.0.1:30001").rstrip("/") + "/v1",
             OPENAI_DEFAULT_HEADERS=json.dumps({"X-GPU45-Benchmark-Token": self.token}),
         )
+        category, separator, case_id = external_task_id.partition("::")
         command = [
             str(self.python), "-m", "agentic_benchmark.bfcl_driver",
             "--alias", alias, "--category", category,
             "--result-root", str(results), "--score-root", str(scores),
         ]
-        if validation_limit:
+        if separator:
+            command.extend(["--case-id", case_id])
+        elif validation_limit:
             command.extend(["--limit", str(validation_limit)])
         started = time.monotonic()
         code = run_interruptible(command, self.source, env, log, timeout_seconds, ensure_active, control_state)

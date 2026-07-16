@@ -124,6 +124,25 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(task["id"], retried["id"])
         self.assertEqual("queued", retried["status"])
 
+    def test_ensure_tasks_replaces_obsolete_task_definitions(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Task migration", "custom", [profile], [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+        self.store.ensure_tasks(run["id"], ["category"])
+        old = self.store.next_task(run["id"])
+        self.store.complete_task(old["id"], False, 1, "infrastructure_failure")
+
+        self.store.ensure_tasks(run["id"], ["category::case-0", "category::case-1"])
+
+        with self.store.session() as db:
+            tasks = db.execute("SELECT external_task_id FROM tasks WHERE run_id=? ORDER BY external_task_id", (run["id"],)).fetchall()
+            run_state = db.execute("SELECT expected_tasks,completed_tasks,failed_tasks FROM runs WHERE id=?", (run["id"],)).fetchone()
+        self.assertEqual(["category::case-0", "category::case-1"], [row[0] for row in tasks])
+        self.assertEqual(2, run_state["expected_tasks"])
+        self.assertEqual(0, run_state["completed_tasks"])
+        self.assertEqual(0, run_state["failed_tasks"])
+
 
 if __name__ == "__main__":
     unittest.main()

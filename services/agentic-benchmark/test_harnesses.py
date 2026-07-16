@@ -4,7 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agentic_benchmark.harnesses import HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter, run_interruptible
+from unittest import mock
+
+from agentic_benchmark.harnesses import BfclAdapter, HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter, run_interruptible
 
 
 class HarnessProcessTests(unittest.TestCase):
@@ -73,3 +75,16 @@ class HarnessProcessTests(unittest.TestCase):
             ["airline:0:trial-1", "airline:0:trial-2", "airline:0:trial-3", "retail:1:trial-1", "retail:1:trial-2", "retail:1:trial-3"],
             adapter.tasks({"trials": 3}),
         )
+
+    @mock.patch("agentic_benchmark.harnesses.subprocess.run")
+    def test_bfcl_discovers_individual_cases_and_honors_validation_limit(self, run):
+        run.return_value = mock.Mock(stdout='GPU45_TASKS=["simple_python::simple_python_0","simple_python::simple_python_1"]\n')
+        adapter = BfclAdapter(self.root / "harnesses", self.root / "artifacts", "token")
+        suite = {"categories": ["simple_python"]}
+
+        self.assertEqual(
+            ["simple_python::simple_python_0", "simple_python::simple_python_1"],
+            adapter.tasks(suite),
+        )
+        self.assertEqual(["simple_python::simple_python_0"], adapter.tasks({**suite, "validationLimit": 1}))
+        run.assert_called_once()
