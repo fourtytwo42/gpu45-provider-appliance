@@ -274,6 +274,7 @@ class SweBenchAdapter:
             HOME="/var/lib/gpu45-benchmark",
             XDG_CACHE_HOME=str(cache_root / "mini-swe-cache"),
             HF_HOME=str(cache_root / "huggingface"),
+            MSWEA_COST_TRACKING="ignore_errors",
         )
         agent_code = run_interruptible(
             agent_command, self.mini_source, agent_env, agent_log,
@@ -297,7 +298,7 @@ class SweBenchAdapter:
             "--timeout", str(min(timeout_seconds, 1800)),
         ]
         verifier_code = run_interruptible(
-            verifier_command, self.swe_source, os.environ.copy(), verifier_log,
+            verifier_command, self.swe_source, agent_env, verifier_log,
             min(timeout_seconds, 2400), ensure_active, control_state,
         )
         duration_ms = int((time.monotonic() - started) * 1000)

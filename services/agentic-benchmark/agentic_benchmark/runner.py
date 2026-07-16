@@ -224,6 +224,7 @@ class BenchmarkRunner:
         threading.Thread(target=self.run_forever, daemon=True, name="agentic-benchmark-runner").start()
 
     def run_forever(self) -> None:
+        self._cleanup_benchmark_containers()
         while not self.stop_event.wait(3):
             try:
                 self._queue_model_smokes()
@@ -292,46 +293,28 @@ class BenchmarkRunner:
                             lambda: self._control_request(run["campaign_id"]),
                             int(suite.get("validationLimit") or 0),
                         )
-                        self.store.complete_task(task["id"], result.passed, result.duration_ms, None if result.passed else "harness_failure", result.message, result.technical_error, result.reward)
-                        for kind, path in result.artifacts:
-                            if path.is_file():
-                                relative = str(path.resolve().relative_to(self.artifact_root.resolve()))
-                                self.store.register_artifact_path(run["campaign_id"], run["id"], task["id"], kind, relative, path)
+                        self._finish_harness_result(run, task, result, "harness_failure")
                     elif suite.get("adapter") == "tau":
                         result = self.tau.run(
                             run["campaign_id"], run["id"], task["id"], task["external_task_id"], alias,
                             int(suite.get("timeoutSeconds") or 1800), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
                         )
-                        self.store.complete_task(task["id"], result.passed, result.duration_ms, None if result.passed else "model_failure", result.message, result.technical_error, result.reward)
-                        for kind, path in result.artifacts:
-                            if path.is_file():
-                                relative = str(path.resolve().relative_to(self.artifact_root.resolve()))
-                                self.store.register_artifact_path(run["campaign_id"], run["id"], task["id"], kind, relative, path)
+                        self._finish_harness_result(run, task, result, "model_failure")
                     elif suite.get("adapter") == "swebench":
                         result = self.swebench.run(
                             run["campaign_id"], run["id"], task["id"], task["external_task_id"], alias,
                             int(suite.get("timeoutSeconds") or 7200), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
                         )
-                        error_class = result.error_class or (None if result.passed else "model_failure")
-                        self.store.complete_task(task["id"], result.passed, result.duration_ms, error_class, result.message, result.technical_error, result.reward)
-                        for kind, path in result.artifacts:
-                            if path.is_file():
-                                relative = str(path.resolve().relative_to(self.artifact_root.resolve()))
-                                self.store.register_artifact_path(run["campaign_id"], run["id"], task["id"], kind, relative, path)
+                        self._finish_harness_result(run, task, result, "model_failure")
                     elif suite.get("adapter") == "harbor":
                         result = self.harbor.run(
                             run["campaign_id"], run["id"], task["id"], task["external_task_id"], alias,
                             int(suite.get("timeoutSeconds") or 7200), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
                         )
-                        error_class = result.error_class or (None if result.passed else "model_failure")
-                        self.store.complete_task(task["id"], result.passed, result.duration_ms, error_class, result.message, result.technical_error, result.reward)
-                        for kind, path in result.artifacts:
-                            if path.is_file():
-                                relative = str(path.resolve().relative_to(self.artifact_root.resolve()))
-                                self.store.register_artifact_path(run["campaign_id"], run["id"], task["id"], kind, relative, path)
+                        self._finish_harness_result(run, task, result, "model_failure")
                     else:
                         passed, message = self.smoke.run(task["external_task_id"], alias, lease)
                         self.store.complete_task(task["id"], passed, int((time.monotonic() - started) * 1000), None if passed else "model_failure", message)
@@ -347,6 +330,7 @@ class BenchmarkRunner:
         except CampaignControlled:
             pass
         except ResourcePreempted as exc:
+            self._cleanup_benchmark_containers(run["campaign_id"])
             self.store.interrupt_run(run["id"], str(exc))
         except Exception as exc:
             self.store.fail_run(run["id"], str(exc))
@@ -365,14 +349,29 @@ class BenchmarkRunner:
                 lease.release()
             time.sleep(60 if lease and lease.lost.is_set() else 1)
 
-    def _cleanup_benchmark_containers(self, campaign_id: str) -> None:
+    def _finish_harness_result(self, run: dict[str, Any], task: dict[str, Any], result: Any, default_error_class: str) -> None:
+        for kind, path in result.artifacts:
+            if path.is_file():
+                relative = str(path.resolve().relative_to(self.artifact_root.resolve()))
+                self.store.register_artifact_path(run["campaign_id"], run["id"], task["id"], kind, relative, path)
+        error_class = result.error_class or (None if result.passed else default_error_class)
+        if error_class == "infrastructure_failure" and self.store.retry_infrastructure_task(
+            task["id"], "Infrastructure failed; retrying once"
+        ):
+            return
+        self.store.complete_task(
+            task["id"], result.passed, result.duration_ms, error_class,
+            result.message, result.technical_error, result.reward,
+        )
+
+    def _cleanup_benchmark_containers(self, campaign_id: str | None = None) -> None:
         try:
             result = subprocess.run(
                 ["docker", "ps", "--format", '{{.ID}}\t{{.Names}}\t{{.Label "com.docker.compose.project.working_dir"}}'],
                 capture_output=True, text=True, timeout=10, check=True,
             )
             owned: list[str] = []
-            artifact_prefix = str((self.artifact_root / campaign_id).resolve())
+            artifact_prefix = str((self.artifact_root / campaign_id).resolve()) if campaign_id else str(self.artifact_root.resolve())
             for line in result.stdout.splitlines():
                 parts = line.split("\t", 2)
                 if len(parts) < 2:
