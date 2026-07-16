@@ -173,11 +173,11 @@ def worker_snapshot(db: sqlite3.Connection, kind: str) -> dict[str, object]:
 
 
 def reap_idle_workers_once(now_epoch: float | None = None) -> None:
+    active_workers = [(kind, service) for kind, service in WORKER_SERVICES.items() if service_active(service)]
+    idle_workers: list[tuple[str, str, float]] = []
     with locked_db(5) as db:
         current_epoch = now_epoch if now_epoch is not None else time.time()
-        for kind, service in WORKER_SERVICES.items():
-            if not service_active(service):
-                continue
+        for kind, service in active_workers:
             lease = db.execute(
                 "SELECT 1 FROM leases WHERE kind=? AND status IN ('active','queued') LIMIT 1", (kind,)
             ).fetchone()
@@ -193,7 +193,10 @@ def reap_idle_workers_once(now_epoch: float | None = None) -> None:
                 idle_for = 0
             if idle_for < WORKER_IDLE_SECONDS:
                 continue
-            service_action("stop", service)
+            idle_workers.append((kind, service, idle_for))
+    for kind, service, idle_for in idle_workers:
+        service_action("stop", service)
+        with locked_db(5) as db:
             event(db, "worker.idle_stopped", None, None, kind=kind, service=service, idleSeconds=round(idle_for))
 
 

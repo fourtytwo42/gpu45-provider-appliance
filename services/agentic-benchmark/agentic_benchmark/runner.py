@@ -57,6 +57,8 @@ class BenchmarkLease:
     def _heartbeat(self) -> None:
         while not self.stopped.wait(15):
             status, _ = self.client.post(f"/v1/leases/{self.lease_id}/heartbeat", {})
+            if status == 503:
+                continue
             if status != 200:
                 self.lost.set()
                 return
@@ -106,9 +108,14 @@ class ResourceClient:
         raise TimeoutError("timed out waiting for benchmark GPU lease")
 
     def activate(self, profile_name: str) -> None:
-        status, result = self.post("/v1/provider/activate", {"profileName": profile_name})
-        if status != 200:
-            raise RuntimeError(result.get("error") or "profile activation failed")
+        deadline = time.time() + 180
+        while True:
+            status, result = self.post("/v1/provider/activate", {"profileName": profile_name})
+            if status == 200:
+                return
+            if status != 503 or time.time() >= deadline:
+                raise RuntimeError(result.get("error") or "profile activation failed")
+            time.sleep(2)
 
     def simulator(self, action: str) -> None:
         if action not in {"start", "stop"}:
