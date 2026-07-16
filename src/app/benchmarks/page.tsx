@@ -1,9 +1,13 @@
-import { BenchmarkConsole } from "@/components/benchmark-console";
+import { BenchmarkWorkspace } from "@/components/benchmark-workspace";
 import { collectDashboardSnapshot } from "@/lib/collectors";
+import { listAgenticCampaigns, listAgenticModels, listAgenticSuites } from "@/lib/agentic-benchmarks";
 
 export const dynamic = "force-dynamic";
 
 export default async function BenchmarksPage() {
   const snapshot = await collectDashboardSnapshot();
-  return <BenchmarkConsole model={snapshot.provider.model} models={snapshot.models} initialRuns={snapshot.benchmarks} />;
+  const [agenticModels, agenticSuites, agenticCampaigns] = await Promise.all([
+    listAgenticModels().catch(() => []), listAgenticSuites().catch(() => []), listAgenticCampaigns().catch(() => []),
+  ]);
+  return <BenchmarkWorkspace model={snapshot.provider.model} models={snapshot.models} initialRuns={snapshot.benchmarks} agenticModels={agenticModels} agenticSuites={agenticSuites} agenticCampaigns={agenticCampaigns} />;
 }

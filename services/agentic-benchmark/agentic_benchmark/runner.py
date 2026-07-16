@@ -132,7 +132,7 @@ class SmokeAdapter:
         elif task_name == "cancellation-vram-release":
             prompt = "Count upward forever, one number per line."
 
-        payload: dict[str, Any] = {"model": model, "input": prompt, "stream": True, "max_output_tokens": 128, "temperature": 0}
+        payload: dict[str, Any] = {"model": model, "input": prompt, "stream": True, "max_output_tokens": 512, "temperature": 0}
         if tools:
             payload["tools"] = tools
             payload["parallel_tool_calls"] = True
