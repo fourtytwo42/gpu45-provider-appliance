@@ -149,6 +149,13 @@ class CreateJobBody(BaseModel):
     seed: int = -1
 
 
+class ExtendJobBody(BaseModel):
+    prompt: str = Field(..., min_length=1)
+    negative_prompt: str | None = None
+    duration_seconds: int = Field(default=2, ge=1, le=20)
+    seed: int = -1
+
+
 def duration_to_frame_num(seconds: int) -> int:
     target_frames = max(5, seconds * OUTPUT_FPS)
     return round((target_frames - 1) / 4) * 4 + 1
@@ -465,6 +472,39 @@ def probe_video(path: Path) -> dict[str, Any]:
     }
 
 
+def extract_last_frame(video_path: Path, image_path: Path) -> None:
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "/usr/bin/ffmpeg", "-y", "-loglevel", "error", "-sseof", "-0.1",
+            "-i", str(video_path), "-frames:v", "1", str(image_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def stitch_extension(parent_path: Path, segment_path: Path, output_path: Path) -> None:
+    concat_path = output_path.with_suffix(".concat.txt")
+    concat_path.write_text(
+        f"file '{parent_path.as_posix()}'\nfile '{segment_path.as_posix()}'\n",
+        encoding="utf-8",
+    )
+    try:
+        subprocess.run(
+            [
+                "/usr/bin/ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
+                "-i", str(concat_path), "-c", "copy", "-movflags", "+faststart", str(output_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        concat_path.unlink(missing_ok=True)
+
+
 def validate_video_output(job: dict[str, Any], metadata: dict[str, Any]) -> str | None:
     expected_duration = float(job.get("duration_seconds") or 0)
     actual_duration = float(metadata.get("duration_seconds") or 0)
@@ -587,10 +627,27 @@ def run_job(job: dict[str, Any]) -> None:
             update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error="No output video found.", process_pid=None)
             return
         metadata = probe_video(output)
-        validation_error = validate_video_output(job, metadata)
+        expected_segment = float(job.get("extension_duration_seconds") or job.get("duration_seconds") or 0)
+        validation_error = validate_video_output({"duration_seconds": expected_segment}, metadata)
         if validation_error:
             update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error=validation_error, process_pid=None)
             return
+        continuation_of = job.get("continuation_of")
+        if continuation_of:
+            parent = next((item for item in load_jobs() if item.get("id") == continuation_of), None)
+            parent_path = Path(str((parent or {}).get("output_path") or ""))
+            if not parent or not parent_path.is_file():
+                update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error="The parent video is no longer available.", process_pid=None)
+                return
+            combined_output = OUTPUT_DIR / f"{job_id}-extended.mp4"
+            stitch_extension(parent_path, output, combined_output)
+            output.unlink(missing_ok=True)
+            output = combined_output
+            metadata = probe_video(output)
+            validation_error = validate_video_output(job, metadata)
+            if validation_error:
+                update_job_unless_cancelled(job_id, status="failed", completed_at=now(), error=f"Stitched extension failed validation: {validation_error}", process_pid=None)
+                return
         update_job_unless_cancelled(
             job_id,
             status="completed",
@@ -724,6 +781,70 @@ def create_job(body: CreateJobBody) -> dict[str, Any]:
     return public_job(job)
 
 
+@app.post("/jobs/{job_id}/extend", status_code=202)
+def extend_job(job_id: str, body: ExtendJobBody) -> dict[str, Any]:
+    parent = next((item for item in load_jobs() if item.get("id") == job_id), None)
+    if not parent:
+        raise HTTPException(status_code=404, detail="Video job not found.")
+    if parent.get("status") != "completed" or not parent.get("output_path"):
+        raise HTTPException(status_code=409, detail="Only completed videos can be extended.")
+    parent_path = Path(str(parent["output_path"]))
+    if not parent_path.is_file():
+        raise HTTPException(status_code=404, detail="The parent video output is missing.")
+    profile = get_profile(str(parent.get("profile") or ""))
+    if profile.get("backend") != "ltx-comfy":
+        raise HTTPException(status_code=400, detail="Clip extension currently requires LTX-2.3.")
+    if body.duration_seconds not in profile.get("durations", []):
+        raise HTTPException(status_code=400, detail=f"Unsupported extension duration: {body.duration_seconds}s.")
+
+    child_id = str(uuid.uuid4())
+    source_path = UPLOAD_DIR / f"{child_id}.png"
+    try:
+        extract_last_frame(parent_path, source_path)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise HTTPException(status_code=500, detail=f"Could not extract the parent video's final frame: {exc}")
+
+    fps = int(parent.get("fps") or profile.get("default_fps", OUTPUT_FPS))
+    multiple = int(profile.get("frame_multiple", 4))
+    frame_num = max(multiple + 1, round((body.duration_seconds * fps - 1) / multiple) * multiple + 1)
+    parent_duration = float(parent.get("output_duration_seconds") or probe_video(parent_path)["duration_seconds"])
+    job = {
+        "id": child_id,
+        "profile": profile["id"],
+        "profile_name": profile["name"],
+        "preset": parent.get("preset", "preview"),
+        "preset_name": parent.get("preset_name", "Preview"),
+        "model_dir": str(profile["model_dir"]),
+        "mode": "extend",
+        "continuation_of": job_id,
+        "root_job_id": parent.get("root_job_id") or job_id,
+        "segment_index": int(parent.get("segment_index") or 0) + 1,
+        "source_image_path": str(source_path),
+        "prompt": body.prompt.strip(),
+        "negative_prompt": (body.negative_prompt or parent.get("negative_prompt") or DEFAULT_NEGATIVE_PROMPT).strip(),
+        "size": parent["size"],
+        "steps": int(parent["steps"]),
+        "duration_seconds": round(parent_duration + body.duration_seconds, 3),
+        "extension_duration_seconds": body.duration_seconds,
+        "frame_num": frame_num,
+        "fps": fps,
+        "seed": body.seed,
+        "solver": parent.get("solver", "euler"),
+        "status": "queued",
+        "created_at": now(),
+        "started_at": None,
+        "completed_at": None,
+        "output_path": None,
+        "error": None,
+    }
+    with lock:
+        jobs = load_jobs()
+        jobs.append(job)
+        save_jobs(jobs)
+    ensure_runner()
+    return public_job(job)
+
+
 @app.post("/jobs/i2v", status_code=202)
 async def create_i2v_job(
     file: UploadFile = File(...),
@@ -840,6 +961,8 @@ def delete_job(job_id: str) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail="Video job not found.")
         if job.get("status") == "running":
             raise HTTPException(status_code=409, detail="Running jobs cannot be deleted until they finish.")
+        if any(item.get("continuation_of") == job_id and item.get("status") in {"queued", "running"} for item in jobs):
+            raise HTTPException(status_code=409, detail="This video is being extended and cannot be deleted yet.")
 
         deleted_files = delete_job_files(job_id, job)
         jobs = [item for item in jobs if item["id"] != job_id]

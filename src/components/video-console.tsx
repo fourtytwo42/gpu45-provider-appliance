@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Download, Film, ImageIcon, Loader2, RefreshCw, Square, Trash2, Type, Wand2 } from "lucide-react";
+import { Download, Film, ImageIcon, Loader2, Plus, RefreshCw, Square, Trash2, Type, Wand2, X } from "lucide-react";
 import { SectionCard } from "./section-card";
 import { cn } from "@/lib/cn";
 import type { VideoJob, VideoProfile, VideoSnapshot } from "@/lib/video";
@@ -38,6 +38,10 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
   const [size, setSize] = useState<string>(VIDEO_PRESETS.balanced.size);
   const [steps, setSteps] = useState<number>(VIDEO_PRESETS.balanced.steps);
   const [duration, setDuration] = useState<number>(VIDEO_PRESETS.balanced.duration);
+  const [extensionFor, setExtensionFor] = useState<string | null>(null);
+  const [extensionPrompt, setExtensionPrompt] = useState("");
+  const [extensionDuration, setExtensionDuration] = useState(2);
+  const [extensionSeed, setExtensionSeed] = useState(-1);
   const activeJob = useMemo(() => snapshot.jobs.find((job) => job.status === "running" || job.status === "queued"), [snapshot.jobs]);
   const selectedProfileInfo = useMemo(() => snapshot.profiles.find((profile) => profile.id === selectedProfile), [selectedProfile, snapshot.profiles]);
   const modeProfiles = useMemo(() => snapshot.profiles.filter((profile) => profile.modes?.includes(mode) ?? mode === "t2v"), [mode, snapshot.profiles]);
@@ -158,6 +162,26 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
       await parseJson(response);
       setMessage("Video job cancelled.");
     }, "Cancelling video job.");
+  }
+
+  async function extendJob(id: string): Promise<void> {
+    await run(async () => {
+      const response = await fetch("/api/video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "extendJob",
+          id,
+          prompt: extensionPrompt,
+          duration_seconds: extensionDuration,
+          seed: extensionSeed,
+        }),
+      });
+      await parseJson(response);
+      setExtensionFor(null);
+      setExtensionPrompt("");
+      setMessage("Continuation queued. The completed output will include the original clip and the new segment.");
+    }, "Queueing clip continuation.");
   }
 
   return (
@@ -378,6 +402,7 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                       </span>
                       <span className="truncate text-xs text-slate-500">{job.profile_name ?? job.profile ?? "Video"}{job.preset_name ? ` · ${job.preset_name}` : ""}</span>
                       {job.mode ? <span className="border border-white/10 px-1.5 py-0.5 text-[10px] uppercase text-slate-400">{job.mode}</span> : null}
+                      {job.segment_index ? <span className="border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400">segment {job.segment_index + 1}</span> : null}
                     </div>
                   </div>
                   <button
@@ -400,6 +425,54 @@ export function VideoConsole({ initialSnapshot }: { initialSnapshot: VideoSnapsh
                     <Square className="h-3.5 w-3.5" />
                     Cancel Generation
                   </button>
+                ) : null}
+                {job.status === "completed" && job.profile === "ltx23-q4" ? (
+                  <button
+                    type="button"
+                    disabled={state === "working" || Boolean(activeJob)}
+                    className="inline-flex items-center justify-center gap-2 border border-fuchsia-400/40 bg-fuchsia-400/10 px-3 py-1.5 text-xs font-medium text-fuchsia-100 hover:bg-fuchsia-400/20 disabled:opacity-50"
+                    onClick={() => {
+                      setExtensionFor(extensionFor === job.id ? null : job.id);
+                      setExtensionPrompt("");
+                      setExtensionDuration(2);
+                      setExtensionSeed(-1);
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Extend clip
+                  </button>
+                ) : null}
+                {extensionFor === job.id ? (
+                  <div className="grid gap-2 border border-fuchsia-400/30 bg-fuchsia-400/[0.07] p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-medium text-fuchsia-100">Continue this scene</div>
+                        <div className="text-[11px] text-slate-400">Uses the same model, preset, and size, then stitches both clips together.</div>
+                      </div>
+                      <button type="button" title="Close extension editor" className="inline-flex h-7 w-7 items-center justify-center text-slate-400 hover:text-white" onClick={() => setExtensionFor(null)}><X className="h-4 w-4" /></button>
+                    </div>
+                    <textarea
+                      value={extensionPrompt}
+                      onChange={(event) => setExtensionPrompt(event.target.value)}
+                      rows={3}
+                      placeholder="Describe what happens immediately after the current clip ends."
+                      className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-fuchsia-400/60"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="grid gap-1 text-[11px] text-slate-400">Add duration
+                        <select value={extensionDuration} onChange={(event) => setExtensionDuration(Number(event.target.value))} className="border border-white/10 bg-black/30 px-2 py-1.5 text-xs text-white outline-none">
+                          {availableDurations.map((value) => <option key={value} value={value}>{value} seconds</option>)}
+                        </select>
+                      </label>
+                      <label className="grid gap-1 text-[11px] text-slate-400">Seed
+                        <input type="number" value={extensionSeed} onChange={(event) => setExtensionSeed(Number(event.target.value))} className="border border-white/10 bg-black/30 px-2 py-1.5 text-xs text-white outline-none" />
+                      </label>
+                    </div>
+                    <button type="button" disabled={state === "working" || !extensionPrompt.trim()} onClick={() => void extendJob(job.id)} className="inline-flex items-center justify-center gap-2 bg-fuchsia-300 px-3 py-2 text-xs font-semibold text-black hover:bg-fuchsia-200 disabled:opacity-50">
+                      <Wand2 className="h-3.5 w-3.5" />
+                      Generate continuation
+                    </button>
+                  </div>
                 ) : null}
                 <p className="line-clamp-2 min-h-10 text-sm text-slate-200">{job.prompt}</p>
                 <div className="grid grid-cols-4 gap-2 text-center text-[11px] text-slate-400">

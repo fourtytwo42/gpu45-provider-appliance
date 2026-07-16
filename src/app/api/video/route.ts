@@ -1,4 +1,4 @@
-import { cancelVideoJob, createVideoJob, deleteVideoJob, getVideoSnapshot, startVideoModelDownload } from "@/lib/video";
+import { cancelVideoJob, createVideoJob, deleteVideoJob, extendVideoJob, getVideoSnapshot, startVideoModelDownload } from "@/lib/video";
 import type { VideoJob, VideoSnapshot } from "@/lib/video";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -72,6 +72,15 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (action === "cancelJob") {
       return Response.json(await cancelVideoJob(String(body.id ?? "")));
+    }
+    if (action === "extendJob") {
+      const job = await extendVideoJob(String(body.id ?? ""), {
+        prompt: body.prompt,
+        negative_prompt: body.negative_prompt,
+        duration_seconds: body.duration_seconds,
+        seed: body.seed,
+      });
+      return Response.json({ ok: true, job }, { status: 202 });
     }
     return Response.json({ error: "Unknown video action." }, { status: 400 });
   } catch (error) {

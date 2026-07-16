@@ -1,5 +1,6 @@
 import asyncio
 from io import BytesIO
+from pathlib import Path
 
 from fastapi import UploadFile
 
@@ -58,6 +59,56 @@ def test_i2v_submission_persists_job_and_starts_runner(tmp_path, monkeypatch) ->
     assert runner_calls == [True]
     assert len(main.load_jobs()) == 1
     assert (upload_dir / f"{result['id']}.png").read_bytes() == b"image-data"
+
+
+def test_extend_job_inherits_parent_settings_and_extracts_last_frame(tmp_path, monkeypatch) -> None:
+    store = JobStore(tmp_path / "jobs.json")
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    parent_output = tmp_path / "parent.mp4"
+    parent_output.write_bytes(b"parent-video")
+    runner_calls: list[bool] = []
+    monkeypatch.setattr(main, "_job_store", store)
+    monkeypatch.setattr(main, "UPLOAD_DIR", upload_dir)
+    monkeypatch.setattr(main, "ensure_runner", lambda: runner_calls.append(True))
+    monkeypatch.setattr(main, "extract_last_frame", lambda _source, target: target.write_bytes(b"last-frame"))
+    main.save_jobs([{
+        "id": "parent-1", "status": "completed", "output_path": str(parent_output),
+        "output_duration_seconds": 2.0, "profile": "ltx23-q4", "profile_name": "LTX-2.3 Q4",
+        "preset": "balanced", "preset_name": "Balanced", "size": "512*288", "steps": 11,
+        "fps": 24, "negative_prompt": "blur", "solver": "euler",
+    }])
+
+    result = main.extend_job("parent-1", main.ExtendJobBody(
+        prompt="The truck continues down the wet road.", duration_seconds=3, seed=9,
+    ))
+
+    assert result["status"] == "queued"
+    assert result["mode"] == "extend"
+    assert result["continuation_of"] == "parent-1"
+    assert result["preset"] == "balanced"
+    assert result["size"] == "512*288"
+    assert result["steps"] == 11
+    assert result["extension_duration_seconds"] == 3
+    assert result["duration_seconds"] == 5.0
+    assert Path(result["source_image_path"]).read_bytes() == b"last-frame"
+    assert runner_calls == [True]
+
+
+def test_parent_with_active_extension_cannot_be_deleted(tmp_path, monkeypatch) -> None:
+    store = JobStore(tmp_path / "jobs.json")
+    monkeypatch.setattr(main, "_job_store", store)
+    main.save_jobs([
+        {"id": "parent-2", "status": "completed"},
+        {"id": "child-2", "status": "running", "continuation_of": "parent-2"},
+    ])
+
+    try:
+        main.delete_job("parent-2")
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 409
+    else:
+        raise AssertionError("Expected parent deletion to be blocked while its extension is active.")
 
 
 def test_startup_requeues_interrupted_jobs(tmp_path, monkeypatch) -> None:

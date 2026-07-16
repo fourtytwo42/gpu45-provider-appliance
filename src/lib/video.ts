@@ -9,7 +9,11 @@ export type VideoJob = {
   profile_name?: string;
   preset?: "preview" | "balanced";
   preset_name?: string;
-  mode?: "t2v" | "i2v";
+  mode?: "t2v" | "i2v" | "extend";
+  continuation_of?: string;
+  root_job_id?: string;
+  segment_index?: number;
+  extension_duration_seconds?: number;
   prompt: string;
   negative_prompt?: string;
   size: string;
@@ -145,6 +149,13 @@ export async function cancelVideoJob(id: string): Promise<Record<string, unknown
 
 export async function deleteVideoJob(id: string): Promise<Record<string, unknown>> {
   return await fetchJson<Record<string, unknown>>(`/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function extendVideoJob(id: string, payload: Record<string, unknown>): Promise<VideoJob> {
+  return await fetchJson<VideoJob>(`/jobs/${encodeURIComponent(id)}/extend`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function fetchVideoOutput(id: string): Promise<Response> {
