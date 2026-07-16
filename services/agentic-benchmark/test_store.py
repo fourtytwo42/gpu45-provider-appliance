@@ -143,6 +143,23 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(0, run_state["completed_tasks"])
         self.assertEqual(0, run_state["failed_tasks"])
 
+    def test_interrupted_run_resumes_before_later_queued_run(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suites = [
+            {"id": "suite-a", "manifestHash": "hash-a", "taskCount": 1},
+            {"id": "suite-b", "manifestHash": "hash-b", "taskCount": 1},
+        ]
+        campaign_id = self.store.create_campaign("Recovery order", "custom", [profile], suites)
+        with self.store.session() as db:
+            runs = db.execute("SELECT id,suite_id FROM runs WHERE campaign_id=? ORDER BY rowid", (campaign_id,)).fetchall()
+            db.execute("UPDATE campaigns SET status='queued' WHERE id=?", (campaign_id,))
+            db.execute("UPDATE runs SET status='queued' WHERE campaign_id=?", (campaign_id,))
+            db.execute("UPDATE runs SET status='interrupted' WHERE id=?", (runs[0]["id"],))
+
+        runnable = self.store.next_runnable()
+
+        self.assertEqual(runs[0]["id"], runnable["id"])
+
 
 if __name__ == "__main__":
     unittest.main()

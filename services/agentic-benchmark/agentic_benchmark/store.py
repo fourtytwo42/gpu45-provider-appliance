@@ -291,7 +291,7 @@ class BenchmarkStore:
                 FROM runs r JOIN campaigns c ON c.id=r.campaign_id
                 WHERE c.status='queued' AND c.pause_requested=0 AND c.cancel_requested=0
                   AND r.status IN ('queued','interrupted')
-                ORDER BY c.created_at,r.created_at LIMIT 1
+                ORDER BY c.created_at,CASE WHEN r.status='interrupted' THEN 0 ELSE 1 END,r.created_at LIMIT 1
                 """
             ).fetchone()
             return dict(row) if row else None
