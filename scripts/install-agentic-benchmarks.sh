@@ -14,7 +14,7 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io git curl ca-certificates sqlite3 jq acl
+DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io docker-compose-v2 git curl ca-certificates sqlite3 jq acl
 
 getent group docker >/dev/null || groupadd --system docker
 if ! id gpu45-benchmark >/dev/null 2>&1; then
@@ -132,6 +132,7 @@ systemctl restart docker.service
 systemctl restart gpu45-agentic-benchmark.service
 
 docker info >/dev/null
+docker compose version >/dev/null
 [[ "$(docker info --format '{{.DockerRootDir}}')" == "$cache_root/docker" ]]
 docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 256m alpine:3.22 sh -c 'test ! -e /dev/dri && echo sandbox-ok'
 
