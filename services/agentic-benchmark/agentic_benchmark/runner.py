@@ -304,6 +304,7 @@ class BenchmarkRunner:
         while not self.stop_event.wait(3):
             try:
                 self._queue_model_smokes()
+                self._queue_top_three_qualifications()
                 runnable = self.store.next_runnable()
                 if runnable:
                     self._run(runnable)
@@ -318,6 +319,13 @@ class BenchmarkRunner:
         smoke = suites["gpu45-smoke-v1"]
         for profile in profiles:
             self.store.ensure_smoke_campaign(profile, smoke)
+
+    def _queue_top_three_qualifications(self) -> None:
+        profiles = discover_profiles(self.appliance_db)
+        suites = load_suite_manifests(self.package_root / "suite-manifests")
+        for campaign in self.store.list_campaigns(200):
+            if campaign["preset"] == "common" and campaign["status"] == "completed":
+                self.store.promote_top_three(campaign["id"], profiles, suites)
 
     def _active_profile(self) -> str | None:
         try:

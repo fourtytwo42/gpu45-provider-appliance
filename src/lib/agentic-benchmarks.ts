@@ -36,6 +36,7 @@ export type AgenticCampaign = {
   status: string;
   phase: string;
   runSummary?: Record<string, number>;
+  progress?: { completed: number; total: number };
   created_at: string;
   updated_at: string;
 };
@@ -45,6 +46,7 @@ export type AgenticCampaignDetail = {
   runs: Array<Record<string, string | number | null>>;
   ranking: Array<Record<string, unknown>>;
   events: Array<Record<string, string | number | null>>;
+  artifacts: Array<{ id: string; kind: string; relative_path: string; size_bytes: number; created_at: string }>;
 };
 
 async function agenticFetch(path: string, init?: RequestInit): Promise<unknown> {
@@ -97,8 +99,8 @@ export async function getAgenticCampaign(id: string): Promise<AgenticCampaignDet
   return (await agenticFetch(`/v1/campaigns/${encodeURIComponent(id)}`)) as AgenticCampaignDetail;
 }
 
-export async function agenticCampaignAction(id: string, action: string): Promise<{ ok: boolean }> {
-  return (await agenticFetch(`/v1/campaigns/${encodeURIComponent(id)}/action`, { method: "POST", body: JSON.stringify({ action }) })) as { ok: boolean };
+export async function agenticCampaignAction(id: string, action: string): Promise<{ ok: boolean; retried?: number; qualificationCampaignId?: string }> {
+  return (await agenticFetch(`/v1/campaigns/${encodeURIComponent(id)}/action`, { method: "POST", body: JSON.stringify({ action }) })) as { ok: boolean; retried?: number; qualificationCampaignId?: string };
 }
 
 export async function agenticModelSmoke(profileName: string): Promise<{ ok: boolean }> {

@@ -148,6 +148,11 @@ class BenchmarkStore:
             for row in rows:
                 counts = db.execute("SELECT status,COUNT(*) count FROM runs WHERE campaign_id=? GROUP BY status", (row["id"],)).fetchall()
                 row["runSummary"] = {count["status"]: count["count"] for count in counts}
+                progress = db.execute(
+                    "SELECT COALESCE(SUM(expected_tasks),0) total,COALESCE(SUM(completed_tasks),0) completed FROM runs WHERE campaign_id=?",
+                    (row["id"],),
+                ).fetchone()
+                row["progress"] = {"completed": int(progress["completed"]), "total": int(progress["total"])}
             return rows
 
     def campaign_detail(self, campaign_id: str) -> dict[str, Any] | None:
@@ -157,7 +162,69 @@ class BenchmarkStore:
                 return None
             runs = [dict(row) for row in db.execute("SELECT * FROM runs WHERE campaign_id=? ORDER BY created_at", (campaign_id,))]
             events = [dict(row) for row in db.execute("SELECT * FROM events WHERE campaign_id=? ORDER BY id DESC LIMIT 100", (campaign_id,))]
-            return {"campaign": dict(campaign), "runs": runs, "ranking": ranking_rows(runs), "events": events}
+            artifacts = [dict(row) for row in db.execute(
+                "SELECT id,run_id,task_id,kind,relative_path,size_bytes,created_at FROM artifacts WHERE campaign_id=? ORDER BY created_at DESC LIMIT 200",
+                (campaign_id,),
+            )]
+            return {"campaign": dict(campaign), "runs": runs, "ranking": ranking_rows(runs), "events": events, "artifacts": artifacts}
+
+    def promote_top_three(self, campaign_id: str, profiles: list[dict[str, Any]], suites: list[dict[str, Any]]) -> str | None:
+        """Create one qualification campaign for the top three complete common-campaign models."""
+        detail = self.campaign_detail(campaign_id)
+        if not detail or detail["campaign"]["status"] != "completed" or detail["campaign"]["preset"] != "common":
+            return None
+        top = [row for row in detail["ranking"] if row.get("compositeScore") is not None][:3]
+        if len(top) < 3:
+            return None
+        profile_names = {row["profileName"] for row in top}
+        selected_profiles = [profile for profile in profiles if profile["name"] in profile_names]
+        required_ids = {
+            "swe-bench-verified-500", "tau-three-trial-reliability",
+            "bfcl-failed-category-rerun", "gpu45-codex-acceptance",
+        }
+        selected_suites = [suite for suite in suites if suite["id"] in required_ids]
+        if len(selected_profiles) != 3 or {suite["id"] for suite in selected_suites} != required_ids:
+            return None
+        state_key = f"qualification:{campaign_id}"
+        with self.session() as db:
+            existing = db.execute("SELECT value FROM coordinator_state WHERE key=?", (state_key,)).fetchone()
+            if existing:
+                return str(existing["value"])
+        qualification_id = self.create_campaign(
+            f"Top-three qualification for {detail['campaign']['name']}",
+            "top-three-qualification", selected_profiles, selected_suites,
+        )
+        with self.session() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO coordinator_state(key,value,updated_at) VALUES(?,?,?)",
+                (state_key, qualification_id, now()),
+            )
+            self._event(db, campaign_id, None, None, "campaign.promoted", "Queued top-three qualification", {"qualificationCampaignId": qualification_id, "profiles": sorted(profile_names)})
+        return qualification_id
+
+    def retry_campaign_infrastructure(self, campaign_id: str) -> int:
+        """Queue failed infrastructure tasks as a fresh user-requested attempt."""
+        stamp = now()
+        with self.session() as db:
+            rows = db.execute(
+                "SELECT t.id,t.run_id FROM tasks t JOIN runs r ON r.id=t.run_id WHERE r.campaign_id=? AND t.error_class='infrastructure_failure' AND t.status='completed'",
+                (campaign_id,),
+            ).fetchall()
+            if not rows:
+                return 0
+            task_ids = [row["id"] for row in rows]
+            run_ids = sorted({row["run_id"] for row in rows})
+            db.executemany(
+                "UPDATE tasks SET status='queued',attempt=1,passed=NULL,reward=NULL,duration_ms=0,error_class=NULL,user_message=NULL,technical_error=NULL,started_at=NULL,completed_at=NULL,updated_at=? WHERE id=?",
+                [(stamp, task_id) for task_id in task_ids],
+            )
+            db.executemany(
+                "UPDATE runs SET status='queued',completed_tasks=0,passed_tasks=0,failed_tasks=0,score=NULL,error=NULL,completed_at=NULL,updated_at=? WHERE id=?",
+                [(stamp, run_id) for run_id in run_ids],
+            )
+            db.execute("UPDATE campaigns SET status='queued',completed_at=NULL,updated_at=? WHERE id=?", (stamp, campaign_id))
+            self._event(db, campaign_id, None, None, "campaign.infrastructure_retry", f"Queued {len(task_ids)} infrastructure failures", {})
+            return len(task_ids)
 
     def list_tasks(self, campaign_id: str, cursor: int = 0, limit: int = 50) -> dict[str, Any]:
         safe_limit = max(1, min(limit, 200))

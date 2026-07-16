@@ -186,8 +186,18 @@ class Handler(BaseHTTPRequestHandler):
                 found = STORE.retry_qualification(segments[2])
                 self._json(HTTPStatus.ACCEPTED if found else HTTPStatus.NOT_FOUND, {"ok": found})
             elif len(segments) == 4 and segments[:2] == ["v1", "campaigns"] and segments[3] == "action":
-                found = STORE.set_campaign_action(segments[2], str(body.get("action") or ""))
-                self._json(HTTPStatus.OK if found else HTTPStatus.NOT_FOUND, {"ok": found})
+                action = str(body.get("action") or "")
+                if action == "retry-infrastructure":
+                    count = STORE.retry_campaign_infrastructure(segments[2])
+                    self._json(HTTPStatus.OK if count else HTTPStatus.NOT_FOUND, {"ok": bool(count), "retried": count})
+                elif action == "promote":
+                    profiles = discover_profiles(APPLIANCE_DATABASE_PATH)
+                    suites = load_suite_manifests(PACKAGE_ROOT / "suite-manifests")
+                    qualification_id = STORE.promote_top_three(segments[2], profiles, suites)
+                    self._json(HTTPStatus.OK if qualification_id else HTTPStatus.CONFLICT, {"ok": bool(qualification_id), "qualificationCampaignId": qualification_id})
+                else:
+                    found = STORE.set_campaign_action(segments[2], action)
+                    self._json(HTTPStatus.OK if found else HTTPStatus.NOT_FOUND, {"ok": found})
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
         except (ValueError, KeyError, OSError) as exc:

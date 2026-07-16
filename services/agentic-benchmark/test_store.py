@@ -90,6 +90,40 @@ class StoreTests(unittest.TestCase):
             status = db.execute("SELECT status FROM tasks WHERE id=?", (task["id"],)).fetchone()[0]
         self.assertEqual("cancelled", status)
 
+    def test_completed_common_campaign_promotes_top_three_once(self):
+        profiles = [{"name": f"model-{i}", "profileHash": f"hash-{i}", "modelPath": f"/models/{i}.gguf"} for i in range(4)]
+        common_ids = ["bfcl-v4-local", "tau-text-base", "swe-verified-mini50", "terminal-bench-2"]
+        common_suites = [{"id": item, "manifestHash": f"hash-{item}", "taskCount": 1} for item in common_ids]
+        campaign_id = self.store.create_campaign("Common", "common", profiles, common_suites)
+        with self.store.session() as db:
+            db.execute("UPDATE campaigns SET status='completed' WHERE id=?", (campaign_id,))
+            for index, profile in enumerate(profiles):
+                db.execute("UPDATE runs SET status='completed',score=? WHERE campaign_id=? AND profile_name=?", (1.0 - index * 0.1, campaign_id, profile["name"]))
+        qualification_ids = ["swe-bench-verified-500", "tau-three-trial-reliability", "bfcl-failed-category-rerun", "gpu45-codex-acceptance"]
+        qualification_suites = [{"id": item, "manifestHash": f"hash-{item}", "taskCount": 1} for item in qualification_ids]
+        first = self.store.promote_top_three(campaign_id, profiles, qualification_suites)
+        second = self.store.promote_top_three(campaign_id, profiles, qualification_suites)
+        self.assertIsNotNone(first)
+        self.assertEqual(first, second)
+        promoted = self.store.campaign_detail(str(first))
+        self.assertEqual("top-three-qualification", promoted["campaign"]["preset"])
+        self.assertEqual(12, len(promoted["runs"]))
+
+    def test_manual_infrastructure_retry_requeues_failed_task(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Retry", "custom", [profile], [suite])
+        runnable = self.store.next_runnable()
+        run = self.store.begin_run(runnable["id"], None)
+        self.store.ensure_tasks(run["id"], ["task-one"])
+        task = self.store.next_task(run["id"])
+        self.store.begin_task(task["id"])
+        self.store.complete_task(task["id"], False, 10, "infrastructure_failure", "Docker failed")
+        self.assertEqual(1, self.store.retry_campaign_infrastructure(campaign_id))
+        retried = self.store.next_task(run["id"])
+        self.assertEqual(task["id"], retried["id"])
+        self.assertEqual("queued", retried["status"])
+
 
 if __name__ == "__main__":
     unittest.main()
