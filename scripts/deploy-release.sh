@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cmp -s scripts/gpu45-responses-proxy.py deploy/usr/local/bin/gpu45-responses-proxy || {
+  echo "Responses proxy source and release artifact differ" >&2
+  exit 1
+}
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 commit="$(git -C "$repo_root" rev-parse HEAD)"
 short_commit="${commit:0:12}"
