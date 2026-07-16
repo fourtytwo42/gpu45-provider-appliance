@@ -37,7 +37,7 @@ def main() -> None:
     previous_cwd = Path.cwd()
     try:
         os.chdir(report_dir)
-        report = run_evaluation(
+        raw_report = run_evaluation(
             dataset_name="princeton-nlp/SWE-bench_Verified",
             split="test",
             instance_ids=[args.instance_id],
@@ -54,6 +54,13 @@ def main() -> None:
             modal=False,
             report_dir=str(report_dir),
         ) or {}
+        if isinstance(raw_report, (str, Path)):
+            report_path = Path(raw_report)
+            if not report_path.is_absolute():
+                report_path = Path.cwd() / report_path
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        else:
+            report = raw_report
     finally:
         os.chdir(previous_cwd)
     resolved = set(report.get("resolved_ids") or report.get("resolved") or [])
