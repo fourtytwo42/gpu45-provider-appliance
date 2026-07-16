@@ -88,3 +88,16 @@ class HarnessProcessTests(unittest.TestCase):
         )
         self.assertEqual(["simple_python::simple_python_0"], adapter.tasks({**suite, "validationLimit": 1}))
         run.assert_called_once()
+
+    @mock.patch("agentic_benchmark.harnesses.subprocess.run")
+    def test_bfcl_discovers_categories_in_separate_processes(self, run):
+        run.side_effect = [
+            mock.Mock(stdout='GPU45_TASKS=["simple_python::simple_python_0"]\n'),
+            mock.Mock(stdout='GPU45_TASKS=["simple_java::simple_java_0"]\n'),
+        ]
+        adapter = BfclAdapter(self.root / "harnesses", self.root / "artifacts", "token")
+
+        tasks = adapter.tasks({"categories": ["simple_python", "simple_java"]})
+
+        self.assertEqual(["simple_python::simple_python_0", "simple_java::simple_java_0"], tasks)
+        self.assertEqual(2, run.call_count)

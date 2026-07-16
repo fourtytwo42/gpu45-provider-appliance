@@ -340,8 +340,6 @@ class BenchmarkRunner:
         if suite.get("adapter") not in {"gpu45-smoke", "bfcl", "tau", "swebench", "harbor"}:
             self.store.fail_run(runnable["id"], f"Suite adapter {suite.get('adapter')} is installed but not yet enabled")
             return
-        previous = self._active_profile()
-        run = self.store.begin_run(runnable["id"], previous)
         if suite.get("adapter") == "bfcl":
             tasks = self.bfcl.tasks(suite)
         elif suite.get("adapter") == "tau":
@@ -352,6 +350,8 @@ class BenchmarkRunner:
             tasks = self.harbor.tasks(suite)
         else:
             tasks = [str(item) for item in suite.get("tasks", [])]
+        previous = self._active_profile()
+        run = self.store.begin_run(runnable["id"], previous)
         self.store.ensure_tasks(run["id"], tasks)
         lease: BenchmarkLease | None = None
         try:
