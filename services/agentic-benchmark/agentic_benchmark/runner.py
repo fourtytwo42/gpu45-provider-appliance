@@ -424,7 +424,8 @@ class BenchmarkRunner:
             self._cleanup_benchmark_containers(run["campaign_id"])
             self.store.interrupt_run(run["id"], str(exc))
         except Exception as exc:
-            self.store.fail_run(run["id"], str(exc))
+            if not self.store.retry_run_infrastructure(run["id"], str(exc)):
+                self.store.fail_run(run["id"], str(exc))
         finally:
             if lease:
                 if suite.get("adapter") == "tau":

@@ -210,7 +210,11 @@ class BenchmarkStore:
                 "SELECT t.id,t.run_id FROM tasks t JOIN runs r ON r.id=t.run_id WHERE r.campaign_id=? AND t.error_class='infrastructure_failure' AND t.status='completed'",
                 (campaign_id,),
             ).fetchall()
-            if not rows:
+            failed_runs = db.execute(
+                "SELECT id FROM runs WHERE campaign_id=? AND status='failed' AND completed_tasks=0 AND error IS NOT NULL",
+                (campaign_id,),
+            ).fetchall()
+            if not rows and not failed_runs:
                 return 0
             task_ids = [row["id"] for row in rows]
             run_ids = sorted({row["run_id"] for row in rows})
@@ -222,9 +226,31 @@ class BenchmarkStore:
                 "UPDATE runs SET status='queued',completed_tasks=0,passed_tasks=0,failed_tasks=0,score=NULL,error=NULL,completed_at=NULL,updated_at=? WHERE id=?",
                 [(stamp, run_id) for run_id in run_ids],
             )
+            db.executemany(
+                "UPDATE runs SET status='interrupted',error=NULL,completed_at=NULL,updated_at=? WHERE id=?",
+                [(stamp, row["id"]) for row in failed_runs],
+            )
             db.execute("UPDATE campaigns SET status='queued',completed_at=NULL,updated_at=? WHERE id=?", (stamp, campaign_id))
-            self._event(db, campaign_id, None, None, "campaign.infrastructure_retry", f"Queued {len(task_ids)} infrastructure failures", {})
-            return len(task_ids)
+            retried = len(task_ids) + len(failed_runs)
+            self._event(db, campaign_id, None, None, "campaign.infrastructure_retry", f"Queued {retried} infrastructure failures", {})
+            return retried
+
+    def retry_run_infrastructure(self, run_id: str, error: str, max_attempts: int = 2) -> bool:
+        stamp = now()
+        with self.session() as db:
+            run = db.execute("SELECT campaign_id,infrastructure_failures FROM runs WHERE id=?", (run_id,)).fetchone()
+            if not run:
+                return False
+            attempts = int(run["infrastructure_failures"] or 0) + 1
+            if attempts > max_attempts:
+                return False
+            db.execute(
+                "UPDATE runs SET status='interrupted',infrastructure_failures=?,error=?,lease_id=NULL,updated_at=? WHERE id=?",
+                (attempts, error, stamp, run_id),
+            )
+            db.execute("UPDATE campaigns SET status='queued',current_run_id=NULL,updated_at=? WHERE id=?", (stamp, run["campaign_id"]))
+            self._event(db, run["campaign_id"], run_id, None, "run.infrastructure_retry", f"Infrastructure retry {attempts}/{max_attempts}", {"error": error})
+            return True
 
     def list_tasks(self, campaign_id: str, cursor: int = 0, limit: int = 50) -> dict[str, Any]:
         safe_limit = max(1, min(limit, 200))
@@ -311,6 +337,9 @@ class BenchmarkStore:
         stamp = now()
         desired = set(external_task_ids)
         with self.session() as db:
+            run = db.execute("SELECT campaign_id,suite_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            if not run:
+                raise ValueError("run not found")
             existing = db.execute("SELECT id,external_task_id FROM tasks WHERE run_id=?", (run_id,)).fetchall()
             stale_ids = [row["id"] for row in existing if row["external_task_id"] not in desired]
             if stale_ids:
@@ -321,7 +350,10 @@ class BenchmarkStore:
                     "INSERT OR IGNORE INTO tasks(id,run_id,external_task_id,created_at,updated_at) VALUES(?,?,?,?,?)",
                     (str(uuid.uuid4()), run_id, external_id, stamp, stamp),
                 )
-            db.execute("UPDATE runs SET expected_tasks=?,updated_at=? WHERE id=?", (len(external_task_ids), stamp, run_id))
+            db.execute(
+                "UPDATE runs SET expected_tasks=?,updated_at=? WHERE campaign_id=? AND suite_id=?",
+                (len(external_task_ids), stamp, run["campaign_id"], run["suite_id"]),
+            )
             self._refresh_run(db, run_id)
 
     def next_task(self, run_id: str) -> dict[str, Any] | None:

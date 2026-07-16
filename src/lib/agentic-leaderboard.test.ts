@@ -14,7 +14,8 @@ describe("buildAgenticLeaderboard", () => {
       passedTasks: 11, failedTasks: 4, compositeScore: 0.72, invalidOutputRate: 0.1,
     });
     expect(rows[0].suites.tau.score).toBe(0.6);
-    expect(rows[1]).toMatchObject({ profileName: "model-b", rank: null, expectedTasks: 10, completedTasks: 0 });
+    expect(rows[1]).toMatchObject({ profileName: "model-b", rank: null, expectedTasks: 30, completedTasks: 0 });
+    expect(rows[1].suiteExpectedTasks).toEqual({ bfcl: 10, tau: 20 });
   });
 
   it("does not assign a final rank until a composite score exists", () => {

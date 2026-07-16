@@ -124,6 +124,27 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(task["id"], retried["id"])
         self.assertEqual("queued", retried["status"])
 
+    def test_run_infrastructure_failure_retries_before_failing(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Retry run", "custom", [profile], [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+
+        self.assertTrue(self.store.retry_run_infrastructure(run["id"], "resource transition"))
+        self.assertEqual("interrupted", self.store.campaign_detail(campaign_id)["runs"][0]["status"])
+        self.assertTrue(self.store.retry_run_infrastructure(run["id"], "resource transition"))
+        self.assertFalse(self.store.retry_run_infrastructure(run["id"], "resource transition"))
+
+    def test_manual_retry_requeues_failed_run_before_any_task_completes(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Retry failed run", "custom", [profile], [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+        self.store.fail_run(run["id"], "resource manager transition")
+
+        self.assertEqual(1, self.store.retry_campaign_infrastructure(campaign_id))
+        self.assertEqual("interrupted", self.store.campaign_detail(campaign_id)["runs"][0]["status"])
+
     def test_ensure_tasks_replaces_obsolete_task_definitions(self):
         profile = {"name": "model-a", "profileHash": "hash-a"}
         suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
@@ -142,6 +163,20 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(2, run_state["expected_tasks"])
         self.assertEqual(0, run_state["completed_tasks"])
         self.assertEqual(0, run_state["failed_tasks"])
+
+    def test_discovered_suite_total_applies_to_every_campaign_model(self):
+        profiles = [
+            {"name": "model-a", "profileHash": "hash-a"},
+            {"name": "model-b", "profileHash": "hash-b"},
+        ]
+        suite = {"id": "dynamic-suite", "manifestHash": "suite-hash", "taskCount": 0}
+        campaign_id = self.store.create_campaign("Fair totals", "common", profiles, [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+
+        self.store.ensure_tasks(run["id"], ["task-1", "task-2", "task-3"])
+
+        detail = self.store.campaign_detail(campaign_id)
+        self.assertEqual([3, 3], [item["expected_tasks"] for item in detail["runs"]])
 
     def test_interrupted_run_resumes_before_later_queued_run(self):
         profile = {"name": "model-a", "profileHash": "hash-a"}

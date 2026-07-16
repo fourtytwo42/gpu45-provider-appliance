@@ -27,6 +27,7 @@ export type AgenticLeaderboardRow = {
   invalidOutputRate: number;
   compositeScore: number | null;
   suites: Record<string, AgenticRunSummary>;
+  suiteExpectedTasks: Record<string, number>;
 };
 
 export function buildAgenticLeaderboard(
@@ -34,6 +35,10 @@ export function buildAgenticLeaderboard(
   ranking: AgenticRankingSummary[],
 ): AgenticLeaderboardRow[] {
   const rankingByProfile = new Map(ranking.map((row, index) => [row.profileName, { ...row, rank: index + 1 }]));
+  const canonicalExpectedBySuite = runs.reduce<Record<string, number>>((totals, run) => {
+    totals[run.suite_id] = Math.max(totals[run.suite_id] || 0, Number(run.expected_tasks || 0));
+    return totals;
+  }, {});
   const rows = new Map<string, AgenticLeaderboardRow>();
 
   for (const run of runs) {
@@ -48,6 +53,7 @@ export function buildAgenticLeaderboard(
       invalidOutputRate: Number(rankingRow?.invalidOutputRate || 0),
       compositeScore: rankingRow?.compositeScore ?? null,
       suites: {},
+      suiteExpectedTasks: canonicalExpectedBySuite,
     };
     row.completedTasks += Number(run.completed_tasks || 0);
     row.expectedTasks += Number(run.expected_tasks || 0);
@@ -55,6 +61,10 @@ export function buildAgenticLeaderboard(
     row.failedTasks += Number(run.failed_tasks || 0);
     row.suites[run.suite_id] = run;
     rows.set(run.profile_name, row);
+  }
+
+  for (const row of rows.values()) {
+    row.expectedTasks = Object.values(canonicalExpectedBySuite).reduce((total, value) => total + value, 0);
   }
 
   return [...rows.values()].sort((left, right) => {
