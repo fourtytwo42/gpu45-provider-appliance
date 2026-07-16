@@ -55,15 +55,16 @@ with sqlite3.connect(db_path) as db:
           (id, name, description, modelPath, host, port, ctxSize, gpuLayers,
            batchSize, uBatchSize, cacheRamMiB, cacheTypeK, cacheTypeV, cacheReuse,
            specType, specDraftNMax, flashAttention, imageMinTokens, metrics, jinja,
-           active, backend, fanBoostOnBusy, createdAt, updatedAt)
+           active, backend, serverBinary, runtimeLibraryPath, fanBoostOnBusy, createdAt, updatedAt)
         VALUES (?, ?, ?, ?, '127.0.0.1', 30000, 262144, 'all',
                 4096, 1024, 8192, 'q4_0', 'q4_0', 1024,
-                'none', 2, 'on', 1024, 1, 1, 0, 'rocm', 0,
+                'none', 2, 'on', 1024, 1, 1, 0, 'rocm', '/usr/local/bin/llama-server', '', 0,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(name) DO UPDATE SET
           description=excluded.description, modelPath=excluded.modelPath, ctxSize=262144,
           gpuLayers='all', batchSize=4096, uBatchSize=1024, cacheTypeK='q4_0',
           cacheTypeV='q4_0', specType='none', flashAttention='on', backend='rocm',
+          serverBinary='/usr/local/bin/llama-server', runtimeLibraryPath='',
           updatedAt=CURRENT_TIMESTAMP
         """,
         (uuid.uuid4().hex, profile_name, description, model_path),
