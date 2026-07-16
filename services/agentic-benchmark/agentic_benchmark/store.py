@@ -258,7 +258,7 @@ class BenchmarkStore:
     def begin_task(self, task_id: str) -> None:
         stamp = now()
         with self.session() as db:
-            db.execute("UPDATE tasks SET status='running',started_at=?,updated_at=? WHERE id=?", (stamp, stamp, task_id))
+            db.execute("UPDATE tasks SET status='running',error_class=NULL,user_message=NULL,technical_error=NULL,started_at=?,completed_at=NULL,updated_at=? WHERE id=?", (stamp, stamp, task_id))
 
     def complete_task(self, task_id: str, passed: bool, duration_ms: int, error_class: str | None = None, user_message: str | None = None, technical_error: str | None = None, reward: float | None = None) -> None:
         stamp = now()

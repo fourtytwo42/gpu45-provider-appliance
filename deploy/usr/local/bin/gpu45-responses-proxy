@@ -920,7 +920,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
     def proxy(self):
         path = urlparse(self.path).path
-        benchmark_request = bool(AGENTIC_BENCHMARK_TOKEN) and self.headers.get("X-GPU45-Benchmark-Token", "") == AGENTIC_BENCHMARK_TOKEN
+        authorization = self.headers.get("Authorization", "")
+        benchmark_request = bool(AGENTIC_BENCHMARK_TOKEN) and (
+            self.headers.get("X-GPU45-Benchmark-Token", "") == AGENTIC_BENCHMARK_TOKEN
+            or authorization == f"Bearer {AGENTIC_BENCHMARK_TOKEN}"
+        )
         api_key, auth_error = authenticate(self.headers)
         if auth_error:
             self.send_json(401, {"error": {"message": auth_error, "type": "authentication_error"}})
