@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import time
 from pathlib import Path
 
@@ -109,7 +110,14 @@ def main() -> None:
         max_lora_rank=None,
     )
     generation.main(namespace)
-    eval_runner.main([registry_name], [args.category], str(result_root), str(score_root), partial_eval=args.limit > 0)
+    try:
+        eval_runner.main([registry_name], [args.category], str(result_root), str(score_root), partial_eval=args.limit > 0)
+    except statistics.StatisticsError:
+        if args.limit != 1:
+            raise
+        # BFCL's aggregate CSV asks for a sample standard deviation. A
+        # one-item diagnostic has no standard deviation, but its verifier
+        # score file is complete and remains the source of truth.
     print("GPU45_RESULT=" + json.dumps(read_score(score_root, args.category), separators=(",", ":")))
 
 

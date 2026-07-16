@@ -262,6 +262,8 @@ def activate_profile(profile_name: str) -> dict[str, object]:
 
 def restore_after_release(db: sqlite3.Connection, row: sqlite3.Row) -> None:
     metadata = json.loads(row["metadata_json"] or "{}")
+    if row["kind"] == "benchmark" and service_active("gpu45-tau-simulator.service"):
+        service_action("stop", "gpu45-tau-simulator.service")
     for service in metadata.get("stoppedServices", []):
         if service == "llama-openai.service":
             set_transition(db, "restoring")
@@ -290,6 +292,8 @@ def preempt_active(db: sqlite3.Connection, active: sqlite3.Row, incoming_priorit
         if service_active("qwen3-tts-api.service"):
             service_action("stop", "qwen3-tts-api.service")
         db.execute("INSERT OR REPLACE INTO state(key,value) VALUES('resume_tts','1')")
+    if active["kind"] == "benchmark" and service_active("gpu45-tau-simulator.service"):
+        service_action("stop", "gpu45-tau-simulator.service")
     db.execute("UPDATE leases SET status='interrupted', released_at=? WHERE lease_id=?", (now(), active["lease_id"]))
     event(db, "lease.preempted", active["lease_id"], active["job_id"], incomingPriority=incoming_priority)
     return True
@@ -473,6 +477,14 @@ class Handler(BaseHTTPRequestHandler):
                     event(db, "provider.profile_activated", active["lease_id"], active["job_id"], profileName=result["profileName"])
                     set_transition(db, None)
                     self.send_json(HTTPStatus.OK, result); return
+                if path in {"/v1/benchmark/simulator/start", "/v1/benchmark/simulator/stop"}:
+                    active = db.execute("SELECT * FROM leases WHERE status='active'").fetchone()
+                    if not active or active["kind"] != "benchmark":
+                        self.send_json(HTTPStatus.CONFLICT, {"error": "an active benchmark lease is required"}); return
+                    action = "start" if path.endswith("/start") else "stop"
+                    service_action(action, "gpu45-tau-simulator.service")
+                    event(db, f"benchmark.simulator_{action}", active["lease_id"], active["job_id"])
+                    self.send_json(HTTPStatus.OK, {"ok": True, "action": action}); return
                 parts = path.strip("/").split("/")
                 if len(parts) == 4 and parts[:2] == ["v1", "workers"] and parts[3] == "touch":
                     kind = parts[2]

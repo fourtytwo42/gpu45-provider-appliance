@@ -1,0 +1,23 @@
+[Unit]
+Description=GPU45 tau benchmark CPU user simulator
+After=network-online.target
+
+[Service]
+Type=simple
+User=gpu45-benchmark
+Group=gpu45-benchmark
+Environment=LLAMA_CACHE=/models/benchmark-cache/llama
+ExecStart=/usr/local/bin/llama-server --model /models/huggingface/staging/wepiqx--Qwythos-9B-Claude-Mythos-5-1M-MTP-SHQ8-GGUF/main/M-SHQ8-MTP-OptA-Q5_K_M.gguf --host 127.0.0.1 --port 30002 --alias gpu45-tau-user --ctx-size 16384 --parallel 1 --threads 8 --threads-batch 16 --batch-size 512 --ubatch-size 128 --n-gpu-layers 0 --device none --no-warmup --no-webui
+Restart=no
+TimeoutStartSec=300
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/models/benchmark-cache
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryHigh=9G
+MemoryMax=12G
+TasksMax=256
+

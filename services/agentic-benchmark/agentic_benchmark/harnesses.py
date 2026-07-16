@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import time
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -127,3 +128,80 @@ class BfclAdapter:
         if score_file.is_file():
             artifacts.append(("verifier", score_file))
         return HarnessResult(True, reward, duration_ms, f"{payload['correct']}/{payload['total']} correct", artifacts=artifacts)
+
+
+class TauAdapter:
+    def __init__(self, harness_root: Path, artifact_root: Path) -> None:
+        self.harness_root = harness_root
+        self.artifact_root = artifact_root
+        self.source = harness_root / "sources" / "tau"
+        self.python = harness_root / "venvs" / "tau" / "bin" / "python"
+        self._tasks: list[str] | None = None
+
+    def tasks(self, suite: dict[str, object]) -> list[str]:
+        configured = suite.get("taskIds")
+        if isinstance(configured, list):
+            return [str(item) for item in configured]
+        if self._tasks is None:
+            result = subprocess.run(
+                [str(self.python), "-m", "agentic_benchmark.tau_driver", "--list"],
+                cwd=self.source,
+                env=os.environ.copy(),
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=True,
+            )
+            marker = next((line[len("GPU45_TASKS="):] for line in result.stdout.splitlines() if line.startswith("GPU45_TASKS=")), None)
+            if not marker:
+                raise RuntimeError("tau task discovery did not return a task list")
+            self._tasks = [str(item) for item in json.loads(marker)]
+        return list(self._tasks)
+
+    @staticmethod
+    def wait_ready(timeout: int = 300) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:30002/health", timeout=2) as response:
+                    if response.status == 200:
+                        return
+            except OSError:
+                pass
+            time.sleep(2)
+        raise TimeoutError("Qwythos CPU user simulator did not become ready")
+
+    def run(
+        self,
+        campaign_id: str,
+        run_id: str,
+        task_id: str,
+        external_task_id: str,
+        alias: str,
+        timeout_seconds: int,
+        ensure_active: Callable[[], None],
+        control_state: Callable[[], str | None],
+    ) -> HarnessResult:
+        domain, upstream_id = external_task_id.split(":", 1)
+        root = self.artifact_root / campaign_id / run_id / task_id
+        output = root / "tau-result.json"
+        log = root / "tau.log"
+        command = [
+            str(self.python), "-m", "agentic_benchmark.tau_driver",
+            "--domain", domain, "--task-id", upstream_id,
+            "--target-alias", alias, "--output", str(output),
+            "--timeout", str(timeout_seconds),
+        ]
+        started = time.monotonic()
+        code = run_interruptible(command, self.source, os.environ.copy(), log, timeout_seconds + 60, ensure_active, control_state)
+        duration_ms = int((time.monotonic() - started) * 1000)
+        text = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
+        marker = next((line[len("GPU45_RESULT="):] for line in reversed(text.splitlines()) if line.startswith("GPU45_RESULT=")), None)
+        artifacts = [("log", log)]
+        if output.is_file():
+            artifacts.append(("trajectory", output))
+        if code or not marker:
+            return HarnessResult(False, 0.0, duration_ms, "tau harness failed", text[-4000:], artifacts)
+        payload = json.loads(marker)
+        reward = float(payload["reward"])
+        return HarnessResult(reward >= 1.0, reward, duration_ms, f"reward {reward:.3f}; {payload['terminationReason']}", artifacts=artifacts)

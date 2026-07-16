@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .domain import load_suite_manifests
-from .harnesses import BfclAdapter, HarnessInterrupted
+from .harnesses import BfclAdapter, HarnessInterrupted, TauAdapter
 from .model_catalog import discover_profiles
 from .store import BenchmarkStore
 
@@ -107,6 +107,13 @@ class ResourceClient:
         status, result = self.post("/v1/provider/activate", {"profileName": profile_name})
         if status != 200:
             raise RuntimeError(result.get("error") or "profile activation failed")
+
+    def simulator(self, action: str) -> None:
+        if action not in {"start", "stop"}:
+            raise ValueError("invalid simulator action")
+        status, result = self.post(f"/v1/benchmark/simulator/{action}", {})
+        if status != 200:
+            raise RuntimeError(result.get("error") or f"simulator {action} failed")
 
 
 class SmokeAdapter:
@@ -207,6 +214,7 @@ class BenchmarkRunner:
         self.smoke = SmokeAdapter(os.environ.get("GPU45_AGENTIC_TOKEN", ""))
         self.artifact_root = Path(os.environ.get("GPU45_AGENTIC_ARTIFACT_ROOT", "/var/lib/gpu45/benchmarks/artifacts"))
         self.bfcl = BfclAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root, os.environ.get("GPU45_AGENTIC_TOKEN", ""))
+        self.tau = TauAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root)
         self.stop_event = threading.Event()
 
     def start(self) -> None:
@@ -241,12 +249,17 @@ class BenchmarkRunner:
 
     def _run(self, runnable: dict[str, Any]) -> None:
         suite = json.loads(runnable["suite_snapshot_json"])
-        if suite.get("adapter") not in {"gpu45-smoke", "bfcl"}:
+        if suite.get("adapter") not in {"gpu45-smoke", "bfcl", "tau"}:
             self.store.fail_run(runnable["id"], f"Suite adapter {suite.get('adapter')} is installed but not yet enabled")
             return
         previous = self._active_profile()
         run = self.store.begin_run(runnable["id"], previous)
-        tasks = self.bfcl.tasks(suite) if suite.get("adapter") == "bfcl" else [str(item) for item in suite.get("tasks", [])]
+        if suite.get("adapter") == "bfcl":
+            tasks = self.bfcl.tasks(suite)
+        elif suite.get("adapter") == "tau":
+            tasks = self.tau.tasks(suite)
+        else:
+            tasks = [str(item) for item in suite.get("tasks", [])]
         self.store.ensure_tasks(run["id"], tasks)
         lease: BenchmarkLease | None = None
         try:
@@ -254,6 +267,9 @@ class BenchmarkRunner:
             self.resources.activate(str(run["profile_name"]))
             profile = json.loads(run["profile_snapshot_json"])
             alias = str(profile.get("servedAlias") or profile["name"])
+            if suite.get("adapter") == "tau":
+                self.resources.simulator("start")
+                self.tau.wait_ready()
             while task := self.store.next_task(run["id"]):
                 control = self.store.apply_pending_control(run["campaign_id"], run["id"])
                 if control:
@@ -270,6 +286,17 @@ class BenchmarkRunner:
                             int(suite.get("validationLimit") or 0),
                         )
                         self.store.complete_task(task["id"], result.passed, result.duration_ms, None if result.passed else "harness_failure", result.message, result.technical_error, result.reward)
+                        for kind, path in result.artifacts:
+                            if path.is_file():
+                                relative = str(path.resolve().relative_to(self.artifact_root.resolve()))
+                                self.store.register_artifact_path(run["campaign_id"], run["id"], task["id"], kind, relative, path)
+                    elif suite.get("adapter") == "tau":
+                        result = self.tau.run(
+                            run["campaign_id"], run["id"], task["id"], task["external_task_id"], alias,
+                            int(suite.get("timeoutSeconds") or 1800), lease.ensure_active,
+                            lambda: self._control_request(run["campaign_id"]),
+                        )
+                        self.store.complete_task(task["id"], result.passed, result.duration_ms, None if result.passed else "model_failure", result.message, result.technical_error, result.reward)
                         for kind, path in result.artifacts:
                             if path.is_file():
                                 relative = str(path.resolve().relative_to(self.artifact_root.resolve()))
@@ -293,6 +320,11 @@ class BenchmarkRunner:
             self.store.fail_run(run["id"], str(exc))
         finally:
             if lease:
+                if suite.get("adapter") == "tau":
+                    try:
+                        self.resources.simulator("stop")
+                    except Exception as exc:
+                        print(f"agentic-runner: tau simulator stop failed: {exc!r}", flush=True)
                 if previous and not lease.lost.is_set():
                     try:
                         self.resources.activate(previous)

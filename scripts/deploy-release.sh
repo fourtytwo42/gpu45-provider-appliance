@@ -187,6 +187,7 @@ install -m 0644 deploy/systemd/gpu45-provider-appliance@.service /etc/systemd/sy
 install -m 0644 deploy/systemd/gpu45-provider-appliance-worker.service /etc/systemd/system/gpu45-provider-appliance-worker.service
 install -m 0644 deploy/systemd/gpu45-resource-manager.service /etc/systemd/system/gpu45-resource-manager.service
 install -m 0644 deploy/systemd/gpu45-agentic-benchmark.service /etc/systemd/system/gpu45-agentic-benchmark.service
+install -m 0644 deploy/systemd/gpu45-tau-simulator.service /etc/systemd/system/gpu45-tau-simulator.service
 install -m 0644 deploy/systemd/gpu45-responses-proxy.service /etc/systemd/system/gpu45-responses-proxy.service
 install -m 0644 deploy/systemd/llama-openai.service /etc/systemd/system/llama-openai.service
 install -m 0644 deploy/systemd/qwen3-tts-api.service /etc/systemd/system/qwen3-tts-api.service
