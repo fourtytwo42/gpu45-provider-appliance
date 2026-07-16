@@ -65,9 +65,11 @@ GPU45_APPLIANCE_DB=/var/lib/gpu45/appliance.db
 GPU45_RESOURCE_MANAGER_URL=http://127.0.0.1:8040
 GPU45_RESPONSES_URL=http://127.0.0.1:30001
 GPU45_HARNESS_ROOT=/opt/gpu45/benchmark-harnesses
+UV_CACHE_DIR=/models/benchmark-cache/uv
 EOF
   chmod 0600 /etc/gpu45/agentic-benchmark.env
 fi
+grep -q '^UV_CACHE_DIR=' /etc/gpu45/agentic-benchmark.env || echo 'UV_CACHE_DIR=/models/benchmark-cache/uv' >> /etc/gpu45/agentic-benchmark.env
 
 uv_version="$(jq -r '.uv' "$lock_file")"
 uv_bin="$harness_root/bin/uv"
@@ -94,6 +96,22 @@ for name, source in lock['repositories'].items():
     subprocess.run(['git', '-C', str(target), 'checkout', '--detach', source['commit']], check=True)
 PY
 chown -R gpu45-benchmark:gpu45-benchmark "$harness_root"
+
+install -d -o gpu45-benchmark -g gpu45-benchmark -m 0770 "$cache_root/uv" "$harness_root/venvs"
+runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" venv --python 3.12 "$harness_root/venvs/bfcl"
+runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/bfcl/bin/python" -e "$harness_root/sources/bfcl/berkeley-function-call-leaderboard"
+runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" UV_PROJECT_ENVIRONMENT="$harness_root/venvs/tau" "$uv_bin" sync --frozen --python 3.13 --project "$harness_root/sources/tau"
+runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" venv --python 3.12 "$harness_root/venvs/swebench"
+runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/swebench/bin/python" -e "$harness_root/sources/swebench"
+runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" venv --python 3.12 "$harness_root/venvs/mini-swe-agent"
+runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/mini-swe-agent/bin/python" -e "$harness_root/sources/miniSweAgent"
+runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" UV_PROJECT_ENVIRONMENT="$harness_root/venvs/harbor" "$uv_bin" sync --frozen --python 3.12 --project "$harness_root/sources/harbor"
+
+"$harness_root/venvs/bfcl/bin/bfcl" --help >/dev/null
+"$harness_root/venvs/tau/bin/python" -c 'import tau2'
+"$harness_root/venvs/swebench/bin/python" -c 'import swebench'
+"$harness_root/venvs/mini-swe-agent/bin/mini" --help >/dev/null
+"$harness_root/venvs/harbor/bin/harbor" --help >/dev/null
 
 install -m 0644 "$repo_root/deploy/systemd/gpu45-agentic-benchmark.service" /etc/systemd/system/gpu45-agentic-benchmark.service
 systemctl daemon-reload
