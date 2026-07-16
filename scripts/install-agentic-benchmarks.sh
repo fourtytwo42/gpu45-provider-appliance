@@ -14,7 +14,7 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io git curl ca-certificates sqlite3 jq
+DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io git curl ca-certificates sqlite3 jq acl
 
 getent group docker >/dev/null || groupadd --system docker
 if ! id gpu45-benchmark >/dev/null 2>&1; then
@@ -24,6 +24,7 @@ usermod -aG docker gpu45-benchmark
 
 install -d -o gpu45-benchmark -g gpu45-benchmark -m 0750 "$service_root" "$harness_root" "$state_root" "$state_root/artifacts"
 install -d -o root -g docker -m 0770 "$cache_root" "$cache_root/docker"
+setfacl -m u:gpu45-benchmark:--x /var/lib/gpu45
 rm -rf "$service_root/agentic_benchmark" "$service_root/suite-manifests"
 cp -a "$repo_root/services/agentic-benchmark/agentic_benchmark" "$service_root/"
 cp -a "$repo_root/services/agentic-benchmark/suite-manifests" "$service_root/"
