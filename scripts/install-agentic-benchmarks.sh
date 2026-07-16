@@ -98,14 +98,14 @@ PY
 chown -R gpu45-benchmark:gpu45-benchmark "$harness_root"
 
 install -d -o gpu45-benchmark -g gpu45-benchmark -m 0770 "$cache_root/uv" "$harness_root/venvs"
-runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" venv --python 3.12 "$harness_root/venvs/bfcl"
-runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/bfcl/bin/python" -e "$harness_root/sources/bfcl/berkeley-function-call-leaderboard"
-runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" UV_PROJECT_ENVIRONMENT="$harness_root/venvs/tau" "$uv_bin" sync --frozen --python 3.13 --project "$harness_root/sources/tau"
-runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" venv --python 3.12 "$harness_root/venvs/swebench"
-runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/swebench/bin/python" -e "$harness_root/sources/swebench"
-runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" venv --python 3.12 "$harness_root/venvs/mini-swe-agent"
-runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/mini-swe-agent/bin/python" -e "$harness_root/sources/miniSweAgent"
-runuser -u gpu45-benchmark -- env UV_CACHE_DIR="$cache_root/uv" UV_PROJECT_ENVIRONMENT="$harness_root/venvs/harbor" "$uv_bin" sync --frozen --python 3.12 --project "$harness_root/sources/harbor"
+runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark UV_CACHE_DIR="$cache_root/uv" "$uv_bin" venv --python 3.12 "$harness_root/venvs/bfcl"
+runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/bfcl/bin/python" -e "$harness_root/sources/bfcl/berkeley-function-call-leaderboard"
+runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark UV_CACHE_DIR="$cache_root/uv" UV_PROJECT_ENVIRONMENT="$harness_root/venvs/tau" "$uv_bin" sync --frozen --python 3.13 --project "$harness_root/sources/tau"
+runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark UV_CACHE_DIR="$cache_root/uv" "$uv_bin" venv --python 3.12 "$harness_root/venvs/swebench"
+runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/swebench/bin/python" -e "$harness_root/sources/swebench"
+runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark UV_CACHE_DIR="$cache_root/uv" "$uv_bin" venv --python 3.12 "$harness_root/venvs/mini-swe-agent"
+runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/mini-swe-agent/bin/python" -e "$harness_root/sources/miniSweAgent"
+runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark UV_CACHE_DIR="$cache_root/uv" UV_PROJECT_ENVIRONMENT="$harness_root/venvs/harbor" "$uv_bin" sync --frozen --python 3.12 --project "$harness_root/sources/harbor"
 
 "$harness_root/venvs/bfcl/bin/bfcl" --help >/dev/null
 "$harness_root/venvs/tau/bin/python" -c 'import tau2'
