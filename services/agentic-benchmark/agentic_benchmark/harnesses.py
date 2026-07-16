@@ -23,6 +23,7 @@ class HarnessResult:
     message: str | None = None
     technical_error: str | None = None
     artifacts: list[tuple[str, Path]] = field(default_factory=list)
+    error_class: str | None = None
 
 
 def run_interruptible(
@@ -267,8 +268,15 @@ class SweBenchAdapter:
             "--model", f"openai/{alias}", "-c", str(self.mini_config), "-c", str(generated_config),
         ]
         started = time.monotonic()
+        agent_env = os.environ.copy()
+        cache_root = Path(os.environ.get("GPU45_AGENTIC_CACHE_ROOT", "/models/benchmark-cache"))
+        agent_env.update(
+            HOME="/var/lib/gpu45-benchmark",
+            XDG_CACHE_HOME=str(cache_root / "mini-swe-cache"),
+            HF_HOME=str(cache_root / "huggingface"),
+        )
         agent_code = run_interruptible(
-            agent_command, self.mini_source, os.environ.copy(), agent_log,
+            agent_command, self.mini_source, agent_env, agent_log,
             timeout_seconds, ensure_active, control_state,
         )
         predictions = agent_output / "preds.json"
@@ -280,7 +288,7 @@ class SweBenchAdapter:
             artifacts.append(("patch", predictions))
         if agent_code or not predictions.is_file():
             text = agent_log.read_text(encoding="utf-8", errors="replace") if agent_log.exists() else ""
-            return HarnessResult(False, 0.0, int((time.monotonic() - started) * 1000), "mini-SWE-agent failed", text[-4000:], artifacts)
+            return HarnessResult(False, 0.0, int((time.monotonic() - started) * 1000), "mini-SWE-agent failed", text[-4000:], artifacts, "infrastructure_failure")
 
         verifier_command = [
             str(self.swe_python), "-m", "agentic_benchmark.swe_eval_driver",
@@ -299,7 +307,102 @@ class SweBenchAdapter:
         for report in verifier_output.rglob("*.json") if verifier_output.exists() else []:
             artifacts.append(("verifier", report))
         if verifier_code or not marker:
-            return HarnessResult(False, 0.0, duration_ms, "SWE-bench verifier failed", text[-4000:], artifacts)
+            return HarnessResult(False, 0.0, duration_ms, "SWE-bench verifier failed", text[-4000:], artifacts, "infrastructure_failure")
         payload = json.loads(marker)
         passed = bool(payload["resolved"])
         return HarnessResult(passed, 1.0 if passed else 0.0, duration_ms, "resolved" if passed else "patch did not resolve the task", artifacts=artifacts)
+
+
+class HarborAdapter:
+    def __init__(self, harness_root: Path, artifact_root: Path, token: str) -> None:
+        self.harness_root = harness_root
+        self.artifact_root = artifact_root
+        self.token = token
+        self.source = harness_root / "sources" / "harbor"
+        self.harbor = harness_root / "venvs" / "harbor" / "bin" / "harbor"
+        cache_root = Path(os.environ.get("GPU45_AGENTIC_CACHE_ROOT", "/models/benchmark-cache"))
+        preferred = cache_root / "datasets" / "terminal-bench"
+        self.dataset = preferred if preferred.is_dir() else cache_root / "datasets" / "terminal-bench-2"
+
+    def tasks(self, suite: dict[str, object]) -> list[str]:
+        configured = suite.get("taskIds")
+        if isinstance(configured, list):
+            return [str(item) for item in configured]
+        if not self.dataset.is_dir():
+            raise FileNotFoundError(f"Terminal-Bench dataset is missing: {self.dataset}")
+        return sorted(path.name for path in self.dataset.iterdir() if (path / "task.toml").is_file())
+
+    def run(
+        self,
+        campaign_id: str,
+        run_id: str,
+        task_id: str,
+        external_task_id: str,
+        alias: str,
+        timeout_seconds: int,
+        ensure_active: Callable[[], None],
+        control_state: Callable[[], str | None],
+    ) -> HarnessResult:
+        root = self.artifact_root / campaign_id / run_id / task_id
+        jobs = root / "jobs"
+        log = root / "harbor.log"
+        overlay = root / "gpu45-sandbox.yaml"
+        root.mkdir(parents=True, exist_ok=True)
+        overlay.write_text(
+            "services:\n"
+            "  main:\n"
+            "    cap_drop: [ALL]\n"
+            "    security_opt: [no-new-privileges:true]\n"
+            "    pids_limit: 512\n"
+            "    extra_hosts: [host.docker.internal:host-gateway]\n",
+            encoding="utf-8",
+        )
+        default_headers = json.dumps({"X-GPU45-Benchmark-Token": self.token}, separators=(",", ":"))
+        command = [
+            str(self.harbor), "run", "--path", str(self.dataset / external_task_id),
+            "--agent", "mini-swe-agent", "--model", f"openai/{alias}",
+            "--n-concurrent", "1", "--n-attempts", "1", "--max-retries", "0",
+            "--jobs-dir", str(jobs), "--job-name", "gpu45", "--yes",
+            "--cpus", "limit", "--memory", "limit", "--override-cpus", "4",
+            "--override-memory-mb", "8192", "--override-gpus", "0",
+            "--extra-docker-compose", str(overlay),
+            "--allow-agent-host", "host.docker.internal",
+            "--agent-env", "MSWEA_API_KEY=gpu45-benchmark",
+            "--agent-env", "OPENAI_API_KEY=gpu45-benchmark",
+            "--agent-env", "OPENAI_API_BASE=http://host.docker.internal:30001/v1",
+            "--agent-env", "OPENAI_BASE_URL=http://host.docker.internal:30001/v1",
+            "--agent-env", f"OPENAI_DEFAULT_HEADERS={default_headers}",
+            "--agent-kwarg", "max_tokens=4096",
+        ]
+        env = os.environ.copy()
+        env.update(
+            HOME="/var/lib/gpu45-benchmark",
+            XDG_CACHE_HOME=str(Path(os.environ.get("GPU45_AGENTIC_CACHE_ROOT", "/models/benchmark-cache")) / "harbor-cache"),
+            HF_HOME=str(Path(os.environ.get("GPU45_AGENTIC_CACHE_ROOT", "/models/benchmark-cache")) / "huggingface"),
+            DO_NOT_TRACK="1",
+        )
+        started = time.monotonic()
+        code = run_interruptible(command, self.source, env, log, timeout_seconds, ensure_active, control_state)
+        duration_ms = int((time.monotonic() - started) * 1000)
+        result_path = jobs / "gpu45" / "result.json"
+        artifacts: list[tuple[str, Path]] = [("log", log), ("configuration", overlay)]
+        if result_path.is_file():
+            artifacts.append(("verifier", result_path))
+        for trajectory in jobs.rglob("trajectory.json") if jobs.exists() else []:
+            artifacts.append(("trajectory", trajectory))
+        text = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
+        if code or not result_path.is_file():
+            return HarnessResult(False, 0.0, duration_ms, "Harbor task failed", text[-4000:], artifacts, "infrastructure_failure")
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        trials = payload.get("trial_results") or []
+        if not trials:
+            return HarnessResult(False, 0.0, duration_ms, "Harbor produced no trial result", text[-4000:], artifacts, "infrastructure_failure")
+        trial = trials[0]
+        exception = trial.get("exception_info")
+        rewards = ((trial.get("verifier_result") or {}).get("rewards") or {})
+        numeric = [float(value) for value in rewards.values() if isinstance(value, (int, float))]
+        reward = float(rewards.get("reward", max(numeric, default=0.0)))
+        if exception:
+            technical = str(exception.get("exception_message") or exception)
+            return HarnessResult(False, 0.0, duration_ms, "Harbor infrastructure failed", technical, artifacts, "infrastructure_failure")
+        return HarnessResult(reward > 0.0, reward, duration_ms, f"verifier reward {reward:.3f}", artifacts=artifacts)

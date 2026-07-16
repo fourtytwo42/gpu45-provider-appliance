@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .domain import load_suite_manifests
-from .harnesses import BfclAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter
+from .harnesses import BfclAdapter, HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter
 from .model_catalog import discover_profiles
 from .store import BenchmarkStore
 
@@ -216,6 +216,7 @@ class BenchmarkRunner:
         self.bfcl = BfclAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root, os.environ.get("GPU45_AGENTIC_TOKEN", ""))
         self.tau = TauAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root)
         self.swebench = SweBenchAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root)
+        self.harbor = HarborAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root, os.environ.get("GPU45_AGENTIC_TOKEN", ""))
         self.stop_event = threading.Event()
 
     def start(self) -> None:
@@ -250,7 +251,7 @@ class BenchmarkRunner:
 
     def _run(self, runnable: dict[str, Any]) -> None:
         suite = json.loads(runnable["suite_snapshot_json"])
-        if suite.get("adapter") not in {"gpu45-smoke", "bfcl", "tau", "swebench"}:
+        if suite.get("adapter") not in {"gpu45-smoke", "bfcl", "tau", "swebench", "harbor"}:
             self.store.fail_run(runnable["id"], f"Suite adapter {suite.get('adapter')} is installed but not yet enabled")
             return
         previous = self._active_profile()
@@ -261,6 +262,8 @@ class BenchmarkRunner:
             tasks = self.tau.tasks(suite)
         elif suite.get("adapter") == "swebench":
             tasks = self.swebench.tasks(suite)
+        elif suite.get("adapter") == "harbor":
+            tasks = self.harbor.tasks(suite)
         else:
             tasks = [str(item) for item in suite.get("tasks", [])]
         self.store.ensure_tasks(run["id"], tasks)
@@ -310,7 +313,20 @@ class BenchmarkRunner:
                             int(suite.get("timeoutSeconds") or 7200), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
                         )
-                        self.store.complete_task(task["id"], result.passed, result.duration_ms, None if result.passed else "model_failure", result.message, result.technical_error, result.reward)
+                        error_class = result.error_class or (None if result.passed else "model_failure")
+                        self.store.complete_task(task["id"], result.passed, result.duration_ms, error_class, result.message, result.technical_error, result.reward)
+                        for kind, path in result.artifacts:
+                            if path.is_file():
+                                relative = str(path.resolve().relative_to(self.artifact_root.resolve()))
+                                self.store.register_artifact_path(run["campaign_id"], run["id"], task["id"], kind, relative, path)
+                    elif suite.get("adapter") == "harbor":
+                        result = self.harbor.run(
+                            run["campaign_id"], run["id"], task["id"], task["external_task_id"], alias,
+                            int(suite.get("timeoutSeconds") or 7200), lease.ensure_active,
+                            lambda: self._control_request(run["campaign_id"]),
+                        )
+                        error_class = result.error_class or (None if result.passed else "model_failure")
+                        self.store.complete_task(task["id"], result.passed, result.duration_ms, error_class, result.message, result.technical_error, result.reward)
                         for kind, path in result.artifacts:
                             if path.is_file():
                                 relative = str(path.resolve().relative_to(self.artifact_root.resolve()))

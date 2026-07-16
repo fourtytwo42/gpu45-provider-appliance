@@ -23,7 +23,7 @@ fi
 usermod -aG docker gpu45-benchmark
 
 install -d -o gpu45-benchmark -g gpu45-benchmark -m 0750 "$service_root" "$harness_root" "$state_root" "$state_root/artifacts"
-install -d -o root -g docker -m 0770 "$cache_root" "$cache_root/docker"
+install -d -o root -g docker -m 0770 "$cache_root" "$cache_root/docker" "$cache_root/huggingface" "$cache_root/mini-swe-cache" "$cache_root/harbor-cache"
 setfacl -m u:gpu45-benchmark:--x /var/lib/gpu45
 rm -rf "$service_root/agentic_benchmark" "$service_root/suite-manifests"
 cp -a "$repo_root/services/agentic-benchmark/agentic_benchmark" "$service_root/"
@@ -45,6 +45,7 @@ except json.JSONDecodeError as exc:
 data.update({
     'data-root': '/models/benchmark-cache/docker',
     'userland-proxy': False,
+    'no-new-privileges': True,
     'log-driver': 'local',
     'log-opts': {'max-size': '20m', 'max-file': '3'},
 })
@@ -112,6 +113,16 @@ runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark XDG_CONFIG_HOME=
 "$harness_root/venvs/swebench/bin/python" -c 'import swebench'
 "$harness_root/venvs/mini-swe-agent/bin/mini" --help >/dev/null
 "$harness_root/venvs/harbor/bin/harbor" --help >/dev/null
+
+terminal_dataset="$cache_root/datasets/terminal-bench"
+if [[ ! -f "$terminal_dataset/adaptive-rejection-sampler/task.toml" ]]; then
+  install -d -o gpu45-benchmark -g gpu45-benchmark -m 0770 "$cache_root/datasets"
+  runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark XDG_CACHE_HOME="$cache_root/harbor-cache" \
+    "$harness_root/venvs/harbor/bin/harbor" datasets download terminal-bench@2.0 \
+    --registry-path "$harness_root/sources/harbor/registry.json" \
+    --output-dir "$cache_root/datasets" --export
+fi
+[[ "$(find "$terminal_dataset" -mindepth 2 -maxdepth 2 -name task.toml | wc -l)" -eq 89 ]]
 
 install -m 0644 "$repo_root/deploy/systemd/gpu45-agentic-benchmark.service" /etc/systemd/system/gpu45-agentic-benchmark.service
 systemctl daemon-reload
