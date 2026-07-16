@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +33,17 @@ WORKER_SERVICES = {
     "video": "wan2-video-api.service",
     "whisper": "gpu45-whisper-api.service",
 }
+
+
+@contextmanager
+def locked_db(timeout: float):
+    if not LOCK.acquire(timeout=timeout):
+        raise TimeoutError("resource manager is completing another GPU transition")
+    try:
+        with connect() as db:
+            yield db
+    finally:
+        LOCK.release()
 
 
 def now() -> str:
@@ -161,7 +173,7 @@ def worker_snapshot(db: sqlite3.Connection, kind: str) -> dict[str, object]:
 
 
 def reap_idle_workers_once(now_epoch: float | None = None) -> None:
-    with LOCK, connect() as db:
+    with locked_db(5) as db:
         current_epoch = now_epoch if now_epoch is not None else time.time()
         for kind, service in WORKER_SERVICES.items():
             if not service_active(service):
@@ -188,7 +200,10 @@ def reap_idle_workers_once(now_epoch: float | None = None) -> None:
 def worker_reaper() -> None:
     while True:
         time.sleep(10)
-        reap_idle_workers_once()
+        try:
+            reap_idle_workers_once()
+        except TimeoutError:
+            continue
 
 
 def service_action(action: str, service: str) -> None:
@@ -369,7 +384,7 @@ def read_vram() -> dict[str, int | None]:
 
 
 def state() -> dict[str, object]:
-    with LOCK, connect() as db:
+    with locked_db(1) as db:
         reclaim_expired(db)
         owner = grant_next(db)
         transition_row = db.execute("SELECT value FROM state WHERE key='transition'").fetchone()
@@ -437,7 +452,10 @@ class Handler(BaseHTTPRequestHandler):
         if not self.require_auth():
             return
         if urlparse(self.path).path == "/v1/state":
-            self.send_json(HTTPStatus.OK, state())
+            try:
+                self.send_json(HTTPStatus.OK, state())
+            except TimeoutError as exc:
+                self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"status": "transitioning", "error": str(exc)})
         else:
             self.send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
@@ -447,7 +465,7 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         try:
             payload = self.body()
-            with LOCK, connect() as db:
+            with locked_db(30) as db:
                 reclaim_expired(db)
                 if path == "/v1/leases/acquire":
                     lease_id = str(uuid.uuid4())
@@ -506,7 +524,9 @@ class Handler(BaseHTTPRequestHandler):
                         grant_next(db)
                         self.send_json(HTTPStatus.OK, {"ok": True}); return
                 self.send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
-        except (KeyError, ValueError, TimeoutError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        except TimeoutError as exc:
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(exc)})
+        except (KeyError, ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
             self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
 
 

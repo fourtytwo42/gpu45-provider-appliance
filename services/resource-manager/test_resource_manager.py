@@ -1,6 +1,7 @@
 import importlib.util
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -38,6 +39,19 @@ class ResourceManagerTests(unittest.TestCase):
             )
             self.assertEqual(rm.reclaim_expired(db), 1)
             self.assertEqual(db.execute("SELECT status FROM leases WHERE lease_id='stale'").fetchone()[0], "interrupted")
+
+    def test_locked_db_fails_fast_when_transition_lock_is_busy(self):
+        busy_lock = mock.Mock()
+        busy_lock.acquire.return_value = False
+        original_lock = rm.LOCK
+        rm.LOCK = busy_lock
+        try:
+            with self.assertRaisesRegex(TimeoutError, "another GPU transition"):
+                with rm.locked_db(0.01):
+                    self.fail("busy lock must not enter the database context")
+        finally:
+            rm.LOCK = original_lock
+        busy_lock.release.assert_not_called()
 
     def test_higher_priority_preempts_only_preemptible_owner(self):
         with rm.connect() as db:
