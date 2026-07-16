@@ -17,6 +17,18 @@ class NamespaceToolTranslationTests(unittest.TestCase):
     def tearDown(self):
         PROXY.cancel_llm_idle_unload()
 
+    def test_recognizes_benchmark_authorization_and_header(self):
+        token = "benchmark-token"
+
+        self.assertTrue(PROXY.is_benchmark_request({"Authorization": f"Bearer {token}"}, token))
+        self.assertTrue(PROXY.is_benchmark_request({"X-GPU45-Benchmark-Token": token}, token))
+        self.assertFalse(PROXY.is_benchmark_request({"Authorization": "Bearer another-token"}, token))
+
+    def test_benchmark_chat_request_does_not_acquire_interactive_lease(self):
+        self.assertFalse(PROXY.should_acquire_eager_interactive_lease("/v1/chat/completions", True))
+        self.assertTrue(PROXY.should_acquire_eager_interactive_lease("/v1/chat/completions", False))
+        self.assertFalse(PROXY.should_acquire_eager_interactive_lease("/v1/responses", False))
+
     @mock.patch.object(PROXY.subprocess, "run")
     def test_idle_unload_stops_provider_for_current_generation(self, run):
         PROXY.cancel_llm_idle_unload()
