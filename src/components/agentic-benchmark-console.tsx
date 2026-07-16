@@ -41,7 +41,9 @@ export function AgenticBenchmarkConsole({ initialModels, initialSuites, initialC
     detail.ranking as unknown as AgenticRankingSummary[],
   ) : [], [detail]);
   const eligible = models.filter((model) => model.qualification?.status === "eligible").length;
-  const active = campaigns.find((campaign) => ["running", "queued", "paused"].includes(campaign.status));
+  const active = campaigns.find((campaign) => campaign.status === "running")
+    || campaigns.find((campaign) => campaign.preset === "common" && ["queued", "paused"].includes(campaign.status))
+    || campaigns.find((campaign) => ["queued", "paused"].includes(campaign.status));
 
   const refresh = useCallback(async () => {
     const [modelResponse, suiteResponse, campaignResponse] = await Promise.all([
