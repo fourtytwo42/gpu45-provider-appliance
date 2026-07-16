@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,7 +18,7 @@ class HarnessProcessTests(unittest.TestCase):
     def test_process_captures_output(self):
         log = self.root / "run.log"
         code = run_interruptible(
-            ["python", "-c", "print('ok')"], self.root, os.environ.copy(), log, 10,
+            [sys.executable, "-c", "print('ok')"], self.root, os.environ.copy(), log, 10,
             lambda: None, lambda: None,
         )
         self.assertEqual(0, code)
@@ -27,7 +28,7 @@ class HarnessProcessTests(unittest.TestCase):
         log = self.root / "run.log"
         with self.assertRaises(HarnessInterrupted):
             run_interruptible(
-                ["python", "-c", "import time; time.sleep(30)"], self.root, os.environ.copy(), log, 10,
+                [sys.executable, "-c", "import time; time.sleep(30)"], self.root, os.environ.copy(), log, 10,
                 lambda: None, lambda: "paused",
             )
 
