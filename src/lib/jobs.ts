@@ -6,9 +6,10 @@ import { cancelVideoJob, deleteVideoJob } from "./video";
 import { deleteWhisperJob } from "./whisper";
 import { deletePocketTtsJob } from "./pocket-tts";
 import { readStoredJobHistory } from "./job-history";
+import { agenticCampaignAction, listAgenticCampaigns } from "./agentic-benchmarks";
 
-export type UnifiedJobStatus = "queued" | "running" | "paused" | "unknown" | "completed" | "failed" | "cancelled" | "stopped" | "needs_review";
-export type UnifiedJobKind = "download" | "benchmark" | "tts" | "pocket-tts" | "audiobook" | "whisper" | "image" | "video" | "model-training" | "voice" | "presentation";
+export type UnifiedJobStatus = "queued" | "waiting" | "running" | "paused" | "restoring" | "unknown" | "completed" | "failed" | "cancelled" | "stopped" | "needs_review";
+export type UnifiedJobKind = "download" | "benchmark" | "agentic-benchmark" | "tts" | "pocket-tts" | "audiobook" | "whisper" | "image" | "video" | "model-training" | "voice" | "presentation";
 export type UnifiedJobAction = "cancel" | "delete" | "retry" | "download";
 
 export type UnifiedJob = {
@@ -49,11 +50,11 @@ export type JobsSummary = { total: number; active: number; queued: number; faile
 export function normalizeStatus(status: string): UnifiedJobStatus {
   if (status === "complete" || status === "ready") return "completed";
   if (status === "training") return "running";
-  if (["queued", "running", "paused", "completed", "failed", "cancelled", "stopped", "needs_review"].includes(status)) return status as UnifiedJobStatus;
+  if (["queued", "waiting", "running", "paused", "restoring", "completed", "failed", "cancelled", "stopped", "needs_review"].includes(status)) return status as UnifiedJobStatus;
   return "unknown";
 }
 
-function isActive(status: UnifiedJobStatus): boolean { return status === "queued" || status === "running" || status === "paused"; }
+function isActive(status: UnifiedJobStatus): boolean { return ["queued", "waiting", "running", "paused", "restoring"].includes(status); }
 function sortDate(job: UnifiedJob): string { return job.updatedAt ?? job.finishedAt ?? job.startedAt ?? job.createdAt ?? ""; }
 
 function actionsFor(kind: UnifiedJobKind, status: UnifiedJobStatus, hasOutput = false): UnifiedJobAction[] {
@@ -62,6 +63,7 @@ function actionsFor(kind: UnifiedJobKind, status: UnifiedJobStatus, hasOutput = 
   if (kind === "audiobook" && (status === "running" || status === "queued")) actions.push("cancel");
   if (kind === "presentation" && (status === "running" || status === "queued")) actions.push("cancel");
   if (kind === "video" && (status === "running" || status === "queued")) actions.push("cancel");
+  if (kind === "agentic-benchmark" && ["queued", "waiting", "running", "paused", "restoring"].includes(status)) actions.push("cancel");
   if (["download", "tts", "pocket-tts", "audiobook", "presentation", "whisper", "image", "video", "model-training", "voice"].includes(kind) && !["running", "unknown"].includes(status)) actions.push("delete");
   return actions;
 }
@@ -77,9 +79,10 @@ function withActions(job: UnifiedJob): UnifiedJob {
 
 export async function getUnifiedJobs(): Promise<{ jobs: UnifiedJob[]; summary: JobsSummary }> {
   const jobs: UnifiedJob[] = [];
-  const [downloads, benchmarks] = await Promise.all([
+  const [downloads, benchmarks, agenticCampaigns] = await Promise.all([
     prisma.downloadJob.findMany({ orderBy: { updatedAt: "desc" }, take: 50 }).catch(() => []),
     prisma.benchmarkRun.findMany({ orderBy: { createdAt: "desc" }, take: 30 }).catch(() => []),
+    listAgenticCampaigns().catch(() => []),
   ]);
   const stored = readStoredJobHistory();
   const tts = stored.tts;
@@ -93,6 +96,18 @@ export async function getUnifiedJobs(): Promise<{ jobs: UnifiedJob[]; summary: J
   }
   for (const run of benchmarks) {
     jobs.push({ id: `benchmark:${run.id}`, sourceId: run.id, kind: "benchmark", title: `Benchmark: ${run.modelName}`, subtitle: `${run.promptTokensPerSecond.toFixed(1)} prompt tok/s, ${run.generationTokensPerSecond.toFixed(1)} decode tok/s`, status: "completed", progressPercent: 100, createdAt: run.createdAt.toISOString(), finishedAt: run.createdAt.toISOString(), model: run.modelName });
+  }
+  for (const campaign of agenticCampaigns) {
+    const status = normalizeStatus(campaign.status);
+    const summary = Object.entries(campaign.runSummary ?? {}).map(([key, value]) => `${value} ${key}`).join(", ");
+    jobs.push({
+      id: `agentic-benchmark:${campaign.id}`, sourceId: campaign.id, kind: "agentic-benchmark",
+      title: campaign.name, subtitle: summary || `${campaign.preset} campaign`, status,
+      progressLabel: summary || null, createdAt: campaign.created_at, updatedAt: campaign.updated_at,
+      outputUrl: status === "completed" ? `/api/agentic-benchmarks/${encodeURIComponent(campaign.id)}/export?format=markdown` : null,
+      resourceImpact: "Low-priority appliance benchmark; interactive Codex requests preempt it at a task boundary.",
+      preemptible: true, resumePolicy: "Interrupted tasks restart in a clean sandbox.",
+    });
   }
   if (tts) {
     for (const job of tts.voiceJobs) jobs.push({ id: `voice:${job.id}`, sourceId: job.id, kind: "voice", title: job.name ? `Voice: ${job.name}` : "Voice generation", subtitle: job.kind === "voice_import" ? "Imported reference voice" : "Prompt-designed reference voice", status: normalizeStatus(job.status), progressPercent: job.progress_percent, progressLabel: job.progress_label, etaSeconds: job.eta_seconds, createdAt: job.created_at, updatedAt: job.updated_at, startedAt: job.started_at, finishedAt: job.finished_at, error: job.error });
@@ -173,6 +188,10 @@ export async function performUnifiedJobAction(id: string, action: UnifiedJobActi
   if (kind === "image" && action === "delete") { await deleteImageJob(sourceId); return { ok: true, message: "Image job deleted." }; }
   if (kind === "video" && action === "cancel") { await cancelVideoJob(sourceId); return { ok: true, message: "Video cancellation requested." }; }
   if (kind === "video" && action === "delete") { await deleteVideoJob(sourceId); return { ok: true, message: "Video job deleted." }; }
+  if (kind === "agentic-benchmark" && action === "cancel") {
+    const result = await agenticCampaignAction(sourceId, "cancel");
+    return { ok: result.ok, message: result.ok ? "Benchmark cancellation requested." : "Benchmark campaign was not found." };
+  }
 
   return { ok: false, message: `${action} is not supported for ${kind} jobs.` };
 }

@@ -24,6 +24,7 @@ function outputKind(kind: UnifiedJobKind): OutputKind | null {
   if (kind === "image") return "image";
   if (kind === "video") return "video";
   if (kind === "benchmark") return "benchmark";
+  if (kind === "agentic-benchmark") return "benchmark";
   if (kind === "download") return "download";
   return null;
 }
