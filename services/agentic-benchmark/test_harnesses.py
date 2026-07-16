@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agentic_benchmark.harnesses import HarborAdapter, HarnessInterrupted, SweBenchAdapter, run_interruptible
+from agentic_benchmark.harnesses import HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter, run_interruptible
 
 
 class HarnessProcessTests(unittest.TestCase):
@@ -64,3 +64,11 @@ class HarnessProcessTests(unittest.TestCase):
         self.assertIn("cap_drop: [ALL]", text)
         self.assertIn("cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]", text)
         self.assertIn('glob("*/result.json")', text)
+
+    def test_tau_reliability_expands_trials_without_changing_upstream_ids(self):
+        adapter = TauAdapter(self.root / "harnesses", self.root / "artifacts")
+        adapter._tasks = ["airline:0", "retail:1"]
+        self.assertEqual(
+            ["airline:0:trial-1", "airline:0:trial-2", "airline:0:trial-3", "retail:1:trial-1", "retail:1:trial-2", "retail:1:trial-3"],
+            adapter.tasks({"trials": 3}),
+        )

@@ -1,0 +1,16 @@
+{
+  "id": "tau-three-trial-reliability",
+  "name": "tau text three-trial reliability",
+  "version": "f022888b1ad3c8cc8a90aac3804cfae021068a6a",
+  "track": "qualification",
+  "adapter": "tau",
+  "taskSource": "upstream-base-split",
+  "taskCount": null,
+  "weight": 0,
+  "timeoutSeconds": 1800,
+  "requiresDocker": false,
+  "requiresUserSimulator": true,
+  "domains": ["airline", "retail", "telecom"],
+  "userSimulatorProfile": "gpu45-m-shq8-mtp-opta-q5-k-m-69f462b8",
+  "trials": 3
+}

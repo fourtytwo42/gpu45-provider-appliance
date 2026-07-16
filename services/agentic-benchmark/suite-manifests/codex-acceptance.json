@@ -1,0 +1,14 @@
+{
+  "id": "gpu45-codex-acceptance",
+  "name": "GPU45 Codex acceptance",
+  "version": "1.0.0",
+  "track": "gpu45-diagnostic",
+  "adapter": "gpu45-smoke",
+  "taskSource": "builtin-codex",
+  "taskCount": 7,
+  "weight": 0,
+  "timeoutSeconds": 1800,
+  "requiresDocker": false,
+  "requiresUserSimulator": false,
+  "tasks": ["repository-inspection", "file-edit", "shell-use", "web-search-tool", "failed-tool-recovery", "context-continuation", "repetition-resistance"]
+}

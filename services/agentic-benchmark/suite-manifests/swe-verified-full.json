@@ -1,0 +1,13 @@
+{
+  "id": "swe-bench-verified-500",
+  "name": "SWE-bench Verified 500",
+  "version": "f7bbbb2+c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
+  "track": "qualification",
+  "adapter": "swebench",
+  "taskSource": "swe-verified-full",
+  "taskCount": 500,
+  "weight": 0,
+  "timeoutSeconds": 7200,
+  "requiresDocker": true,
+  "requiresUserSimulator": false
+}

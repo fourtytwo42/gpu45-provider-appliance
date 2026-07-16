@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -132,6 +133,9 @@ class SmokeAdapter:
             aliases = {str(item.get("id")) for item in payload.get("data", [])}
             return status == 200 and model in aliases, None if model in aliases else f"Alias {model} was not advertised"
 
+        if task_name in {"failed-tool-recovery", "context-continuation", "repetition-resistance"}:
+            return self._run_codex_diagnostic(task_name, model, lease)
+
         tools = None
         prompt = "Reply with exactly the word READY."
         if task_name == "json-output":
@@ -144,6 +148,15 @@ class SmokeAdapter:
             tools = [{"type": "function", "name": "lookup_weather", "description": "Look up weather", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"], "additionalProperties": False}}]
         elif task_name == "cancellation-vram-release":
             prompt = "Count upward forever, one number per line."
+        diagnostic_tools = {
+            "repository-inspection": ("read_repository_file", "Read /workspace/AGENTS.md before answering. Do not answer in text."),
+            "file-edit": ("apply_patch", "Use apply_patch to change old_value to new_value in /workspace/example.txt. Do not answer in text."),
+            "shell-use": ("run_shell_command", "Use the shell tool to run git status --short. Do not answer in text."),
+            "web-search-tool": ("gpu45_web_search", "Search the web for the official Python documentation. Do not answer in text."),
+        }
+        if task_name in diagnostic_tools:
+            name, prompt = diagnostic_tools[task_name]
+            tools = [self._tool(name)]
 
         output_budget = 4096 if task_name in {"json-output", "single-tool-call", "parallel-tool-call"} else 512
         payload: dict[str, Any] = {"model": model, "input": prompt, "stream": True, "max_output_tokens": output_budget, "temperature": 0}
@@ -172,8 +185,70 @@ class SmokeAdapter:
             except json.JSONDecodeError:
                 return False, f"Invalid JSON: {text[:200]}"
         calls = [item for item in outputs if item.get("type") == "function_call"]
-        expected = 1 if task_name == "single-tool-call" else 2
-        return len(calls) == expected, None if len(calls) == expected else f"Expected {expected} tool calls, received {len(calls)}"
+        expected = 2 if task_name == "parallel-tool-call" else 1
+        valid = len(calls) == expected
+        if task_name in diagnostic_tools and calls:
+            valid = valid and calls[0].get("name") == diagnostic_tools[task_name][0]
+        return valid, None if valid else f"Expected {expected} matching tool calls, received {len(calls)}"
+
+    @staticmethod
+    def _tool(name: str) -> dict[str, Any]:
+        return {
+            "type": "function", "name": name, "description": f"GPU45 diagnostic tool {name}",
+            "parameters": {"type": "object", "properties": {"input": {"type": "string"}}, "required": ["input"], "additionalProperties": False},
+        }
+
+    @staticmethod
+    def _completed(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+        event = next((item for item in events if item.get("type") == "response.completed"), None)
+        return (event or {}).get("response") if event else None
+
+    @staticmethod
+    def _response_text(response: dict[str, Any]) -> str:
+        return "".join(
+            str(part.get("text") or "")
+            for item in response.get("output") or [] if item.get("type") == "message"
+            for part in item.get("content") or [] if part.get("type") in {"output_text", "text"}
+        ).strip()
+
+    def _run_codex_diagnostic(self, task_name: str, model: str, lease: BenchmarkLease) -> tuple[bool, str | None]:
+        if task_name == "context-continuation":
+            first = self._completed(self._stream({
+                "model": model, "input": "Remember the exact code GPU45-CONTEXT-7429 and reply ACK.",
+                "stream": True, "max_output_tokens": 1024, "temperature": 0,
+            }, lease))
+            if not first or not first.get("id"):
+                return False, "First context response did not complete"
+            second = self._completed(self._stream({
+                "model": model, "previous_response_id": first["id"], "input": "Return only the exact code I asked you to remember.",
+                "stream": True, "max_output_tokens": 1024, "temperature": 0,
+            }, lease))
+            text = self._response_text(second or {})
+            return text == "GPU45-CONTEXT-7429", None if text == "GPU45-CONTEXT-7429" else f"Context recall returned: {text[:160]}"
+        if task_name == "repetition-resistance":
+            response = self._completed(self._stream({
+                "model": model, "input": "Write exactly 40 lines numbered ITEM 1 through ITEM 40, once each, with no other text.",
+                "stream": True, "max_output_tokens": 2048, "temperature": 0,
+            }, lease))
+            numbers = [int(value) for value in re.findall(r"(?m)^ITEM\s+(\d+)\s*$", self._response_text(response or {}))]
+            valid = numbers == list(range(1, 41))
+            return valid, None if valid else f"Expected 40 unique ordered items, received {len(numbers)}"
+
+        tools = [self._tool("unstable_tool"), self._tool("fallback_tool")]
+        first = self._completed(self._stream({
+            "model": model, "input": "Call unstable_tool once. If its result is an error, call fallback_tool with the same input.",
+            "tools": tools, "stream": True, "max_output_tokens": 2048, "temperature": 0,
+        }, lease))
+        calls = [item for item in (first or {}).get("output") or [] if item.get("type") == "function_call"]
+        if not first or not first.get("id") or len(calls) != 1 or calls[0].get("name") != "unstable_tool":
+            return False, "Model did not make the initial unstable_tool call"
+        second = self._completed(self._stream({
+            "model": model, "previous_response_id": first["id"],
+            "input": [{"type": "function_call_output", "call_id": calls[0].get("call_id"), "output": "ERROR: simulated tool failure"}],
+            "tools": tools, "stream": True, "max_output_tokens": 2048, "temperature": 0,
+        }, lease))
+        recovered = [item for item in (second or {}).get("output") or [] if item.get("type") == "function_call" and item.get("name") == "fallback_tool"]
+        return len(recovered) == 1, None if len(recovered) == 1 else "Model did not recover with fallback_tool"
 
     def _stream(self, payload: dict[str, Any], lease: BenchmarkLease, stop_early: bool = False) -> list[dict[str, Any]]:
         request = urllib.request.Request(

@@ -157,7 +157,11 @@ class TauAdapter:
             if not marker:
                 raise RuntimeError("tau task discovery did not return a task list")
             self._tasks = [str(item) for item in json.loads(marker)]
-        return list(self._tasks)
+        tasks = list(self._tasks)
+        trials = max(1, int(suite.get("trials") or 1))
+        if trials > 1:
+            return [f"{task}:trial-{trial}" for task in tasks for trial in range(1, trials + 1)]
+        return tasks
 
     @staticmethod
     def wait_ready(timeout: int = 300) -> None:
@@ -183,7 +187,8 @@ class TauAdapter:
         ensure_active: Callable[[], None],
         control_state: Callable[[], str | None],
     ) -> HarnessResult:
-        domain, upstream_id = external_task_id.split(":", 1)
+        parts = external_task_id.split(":", 2)
+        domain, upstream_id = parts[:2]
         root = self.artifact_root / campaign_id / run_id / task_id
         output = root / "tau-result.json"
         log = root / "tau.log"
@@ -214,6 +219,7 @@ class SweBenchAdapter:
         self.artifact_root = artifact_root
         self.mini_source = harness_root / "sources" / "miniSweAgent"
         self.mini = harness_root / "venvs" / "mini-swe-agent" / "bin" / "mini-extra"
+        self.mini_python = harness_root / "venvs" / "mini-swe-agent" / "bin" / "python"
         self.mini_config = self.mini_source / "src" / "minisweagent" / "config" / "benchmarks" / "swebench.yaml"
         self.swe_source = harness_root / "sources" / "swebench"
         self.swe_python = harness_root / "venvs" / "swebench" / "bin" / "python"
@@ -223,6 +229,20 @@ class SweBenchAdapter:
         configured = suite.get("taskIds")
         if isinstance(configured, list):
             return [str(item) for item in configured]
+        if suite.get("taskSource") == "swe-verified-full":
+            cache_root = Path(os.environ.get("GPU45_AGENTIC_CACHE_ROOT", "/models/benchmark-cache"))
+            env = os.environ.copy()
+            env.update(HF_HOME=str(cache_root / "huggingface"), XDG_CACHE_HOME=str(cache_root / "mini-swe-cache"))
+            command = [
+                str(self.mini_python), "-c",
+                "import json; from datasets import load_dataset; "
+                "print('GPU45_TASKS='+json.dumps([str(x['instance_id']) for x in load_dataset('princeton-nlp/SWE-bench_Verified', split='test')],separators=(',',':')))",
+            ]
+            result = subprocess.run(command, cwd=self.mini_source, env=env, capture_output=True, text=True, timeout=300, check=True)
+            marker = next((line[len("GPU45_TASKS="):] for line in result.stdout.splitlines() if line.startswith("GPU45_TASKS=")), None)
+            if not marker:
+                raise RuntimeError("SWE-bench full task discovery did not return a task list")
+            return [str(item) for item in json.loads(marker)]
         return [str(item) for item in json.loads(self.ids_path.read_text(encoding="utf-8"))]
 
     def run(
