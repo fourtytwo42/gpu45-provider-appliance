@@ -1,0 +1,11 @@
+{
+  "uv": "0.11.29",
+  "repositories": {
+    "bfcl": {"url": "https://github.com/ShishirPatil/gorilla.git", "commit": "6ea57973c7a6097fd7c5915698c54c17c5b1b6c8"},
+    "tau": {"url": "https://github.com/sierra-research/tau2-bench.git", "commit": "a1e85084a3960281cb06997594133e8f39ea42a7"},
+    "swebench": {"url": "https://github.com/SWE-bench/SWE-bench.git", "commit": "f7bbbb2ccdf479001d6467c9e34af59e44a840f9"},
+    "sweMini50": {"url": "https://github.com/mariushobbhahn/SWEBench-verified-mini.git", "commit": "1ce432065d9ed226017ef1ac88b5f91818383c64"},
+    "miniSweAgent": {"url": "https://github.com/SWE-agent/mini-swe-agent.git", "commit": "388da74aad620a384ab47669b17c52133e30e7c3"},
+    "harbor": {"url": "https://github.com/harbor-framework/harbor.git", "commit": "d3e606d9f7d1e111bb22d3d820ebed03ec300eb3"}
+  }
+}

@@ -1,0 +1,34 @@
+[Unit]
+Description=GPU45 appliance-native agentic benchmark coordinator
+After=network-online.target docker.service gpu45-resource-manager.service gpu45-responses-proxy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gpu45-benchmark
+Group=gpu45-benchmark
+SupplementaryGroups=docker
+EnvironmentFile=/etc/gpu45/agentic-benchmark.env
+Environment=PYTHONPATH=/opt/gpu45-agentic-benchmark
+ExecStart=/usr/bin/python3 -m agentic_benchmark
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/gpu45/benchmarks /models/benchmark-cache /run/docker.sock
+MemoryHigh=2G
+MemoryMax=4G
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

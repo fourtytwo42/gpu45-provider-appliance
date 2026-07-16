@@ -42,6 +42,23 @@ if [[ ! -f /etc/gpu45/resource-manager.env ]]; then
   umask 077
   printf 'GPU45_RESOURCE_MANAGER_TOKEN=%s\n' "$(openssl rand -hex 32)" > /etc/gpu45/resource-manager.env
 fi
+if [[ ! -f /etc/gpu45/agentic-benchmark.env ]]; then
+  umask 077
+  cat > /etc/gpu45/agentic-benchmark.env <<EOF
+GPU45_AGENTIC_TOKEN=$(openssl rand -hex 32)
+GPU45_AGENTIC_DB=/var/lib/gpu45/benchmarks/agentic.db
+GPU45_AGENTIC_ARTIFACT_ROOT=/var/lib/gpu45/benchmarks/artifacts
+GPU45_AGENTIC_CACHE_ROOT=/models/benchmark-cache
+GPU45_AGENTIC_HOST=127.0.0.1
+GPU45_AGENTIC_PORT=8055
+GPU45_AGENTIC_MIN_FREE_GB=100
+GPU45_APPLIANCE_DB=/var/lib/gpu45/appliance.db
+GPU45_RESOURCE_MANAGER_URL=http://127.0.0.1:8040
+GPU45_RESPONSES_URL=http://127.0.0.1:30001
+GPU45_HARNESS_ROOT=/opt/gpu45/benchmark-harnesses
+EOF
+  chmod 600 /etc/gpu45/agentic-benchmark.env
+fi
 if [[ ! -f /etc/gpu45/backup-password ]]; then
   umask 077
   openssl rand -base64 48 > /etc/gpu45/backup-password
@@ -99,6 +116,9 @@ sed -i '/^DATABASE_URL=/d' /etc/gpu45/appliance.env
 printf 'DATABASE_URL=file:%s\n' "$database_path" >> /etc/gpu45/appliance.env
 sed -i '/^GPU45_RESOURCE_MANAGER_TOKEN=/d' /etc/gpu45/appliance.env
 grep '^GPU45_RESOURCE_MANAGER_TOKEN=' /etc/gpu45/resource-manager.env >> /etc/gpu45/appliance.env
+sed -i '/^GPU45_AGENTIC_/d' /etc/gpu45/appliance.env
+grep '^GPU45_AGENTIC_TOKEN=' /etc/gpu45/agentic-benchmark.env >> /etc/gpu45/appliance.env
+printf 'GPU45_AGENTIC_URL=http://127.0.0.1:8055\n' >> /etc/gpu45/appliance.env
 chmod 600 /etc/gpu45/appliance.env
 
 if [[ -f "$active_port_file" ]]; then
@@ -161,6 +181,7 @@ chmod 644 /etc/gpu45/release.env
 install -m 0644 deploy/systemd/gpu45-provider-appliance@.service /etc/systemd/system/gpu45-provider-appliance@.service
 install -m 0644 deploy/systemd/gpu45-provider-appliance-worker.service /etc/systemd/system/gpu45-provider-appliance-worker.service
 install -m 0644 deploy/systemd/gpu45-resource-manager.service /etc/systemd/system/gpu45-resource-manager.service
+install -m 0644 deploy/systemd/gpu45-agentic-benchmark.service /etc/systemd/system/gpu45-agentic-benchmark.service
 install -m 0644 deploy/systemd/gpu45-responses-proxy.service /etc/systemd/system/gpu45-responses-proxy.service
 install -m 0644 deploy/systemd/llama-openai.service /etc/systemd/system/llama-openai.service
 install -m 0644 deploy/systemd/qwen3-tts-api.service /etc/systemd/system/qwen3-tts-api.service
@@ -179,6 +200,13 @@ mkdir -p /opt/pocket-tts/pocket_tts_api
 cp -a services/pocket-tts-api/pocket_tts_api/. /opt/pocket-tts/pocket_tts_api/
 cp -a services/image-api/image_api/. /opt/gpu45-image-api/image_api/
 cp -a services/whisper-api/whisper_api/. /opt/gpu45-whisper-api/whisper_api/
+mkdir -p /opt/gpu45-agentic-benchmark /var/lib/gpu45/benchmarks/artifacts /models/benchmark-cache
+rm -rf /opt/gpu45-agentic-benchmark/agentic_benchmark /opt/gpu45-agentic-benchmark/suite-manifests
+cp -a services/agentic-benchmark/agentic_benchmark /opt/gpu45-agentic-benchmark/
+cp -a services/agentic-benchmark/suite-manifests /opt/gpu45-agentic-benchmark/
+install -m 0644 services/agentic-benchmark/schema.sql /opt/gpu45-agentic-benchmark/schema.sql
+install -m 0644 services/agentic-benchmark/harness-lock.json /opt/gpu45-agentic-benchmark/harness-lock.json
+chown -R gpu45-benchmark:gpu45-benchmark /opt/gpu45-agentic-benchmark /var/lib/gpu45/benchmarks
 if [[ ! -x /opt/gpu45-video-api-venv/bin/python ]]; then
   python3 -m venv /opt/gpu45-video-api-venv
 fi
@@ -217,6 +245,7 @@ systemctl daemon-reload
 systemctl enable gpu45-pocket-tts-api.service
 systemctl restart gpu45-pocket-tts-api.service
 systemctl enable gpu45-resource-manager.service
+systemctl enable gpu45-agentic-benchmark.service
 systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer gpu45-storage-retention.timer
 systemctl enable "gpu45-provider-appliance@$target_port.service"
 systemctl restart "gpu45-provider-appliance@$target_port.service"
@@ -253,7 +282,7 @@ fi
 ln -sfn "$release_dir" "$current_link"
 printf '%s\n' "$target_port" > "$active_port_file"
 chmod 0644 "$active_port_file"
-systemctl restart gpu45-resource-manager.service gpu45-responses-proxy.service gpu45-provider-appliance-worker.service
+systemctl restart gpu45-resource-manager.service gpu45-responses-proxy.service gpu45-provider-appliance-worker.service gpu45-agentic-benchmark.service
 systemctl try-restart qwen3-tts-api.service gpu45-image-api.service gpu45-whisper-api.service wan2-video-api.service || true
 
 final_healthy=false
