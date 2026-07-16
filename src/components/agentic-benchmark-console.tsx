@@ -13,6 +13,13 @@ function statusClass(status?: string) {
   return "border-amber-400/30 bg-amber-400/10 text-amber-300";
 }
 
+function formatApplianceTime(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago", year: "numeric", month: "numeric", day: "numeric",
+    hour: "numeric", minute: "2-digit", second: "2-digit",
+  }).format(new Date(value));
+}
+
 export function AgenticBenchmarkConsole({ initialModels, initialSuites, initialCampaigns }: Props) {
   const [models, setModels] = useState(initialModels);
   const [suites, setSuites] = useState(initialSuites);
@@ -61,6 +68,15 @@ export function AgenticBenchmarkConsole({ initialModels, initialSuites, initialC
 
   const eligible = models.filter((model) => model.qualification?.status === "eligible").length;
   const active = campaigns.find((campaign) => ["running", "queued", "paused"].includes(campaign.status));
+  const visibleCampaigns = useMemo(() => {
+    const automaticSeen = new Set<string>();
+    return campaigns.filter((campaign) => {
+      if (campaign.preset !== "automatic-model-smoke") return true;
+      if (automaticSeen.has(campaign.name)) return false;
+      automaticSeen.add(campaign.name);
+      return true;
+    });
+  }, [campaigns]);
 
   return <div className="space-y-5">
     <section className="grid gap-3 md:grid-cols-4">
@@ -93,7 +109,7 @@ export function AgenticBenchmarkConsole({ initialModels, initialSuites, initialC
     </div>
 
     <section className="bg-[#0d131c] p-5"><div className="flex items-center justify-between"><div><h2 className="font-semibold text-white">Campaigns</h2><p className="mt-1 text-sm text-slate-500">Persistent across browser closure, service restart, and reboot.</p></div></div>
-      <div className="mt-4 divide-y divide-white/8 border-y border-white/8">{campaigns.length === 0 ? <div className="py-10 text-center text-sm text-slate-500">No campaigns yet.</div> : campaigns.map((campaign) => <div key={campaign.id} className="grid gap-3 py-3 lg:grid-cols-[1fr_auto_auto] lg:items-center"><button className="min-w-0 text-left" onClick={async () => { const response = await fetch(`/api/agentic-benchmarks/${campaign.id}`); if (response.ok) setDetail(await response.json()); }}><span className="block truncate text-sm font-medium text-white">{campaign.name}</span><span className="mt-1 block font-mono text-[11px] text-slate-500">{new Date(campaign.created_at).toLocaleString()} · {Object.entries(campaign.runSummary || {}).map(([key, value]) => `${value} ${key}`).join(" · ") || "not started"}</span></button><span className={`w-fit border px-2 py-1 text-[10px] uppercase ${statusClass(campaign.status)}`}>{campaign.status}</span><div className="flex gap-1">{campaign.status === "running" && <button title="Pause after current task" onClick={() => void runAction(`/api/agentic-benchmarks/${campaign.id}/action`, { action: "pause" })} className="p-2 text-amber-300 hover:bg-white/5"><Pause className="h-4 w-4" /></button>}{["paused", "queued"].includes(campaign.status) && <button title="Start or resume campaign" onClick={() => void runAction(`/api/agentic-benchmarks/${campaign.id}/action`, { action: campaign.status === "paused" ? "resume" : "start" })} className="p-2 text-emerald-300 hover:bg-white/5"><Play className="h-4 w-4" /></button>}{!["completed", "failed", "cancelled"].includes(campaign.status) && <button title="Cancel campaign" onClick={() => void runAction(`/api/agentic-benchmarks/${campaign.id}/action`, { action: "cancel" })} className="p-2 text-rose-300 hover:bg-white/5"><Square className="h-4 w-4" /></button>}</div></div>)}</div>
+      <div className="mt-4 divide-y divide-white/8 border-y border-white/8">{visibleCampaigns.length === 0 ? <div className="py-10 text-center text-sm text-slate-500">No campaigns yet.</div> : visibleCampaigns.map((campaign) => <div key={campaign.id} className="grid gap-3 py-3 lg:grid-cols-[1fr_auto_auto] lg:items-center"><button className="min-w-0 text-left" onClick={async () => { const response = await fetch(`/api/agentic-benchmarks/${campaign.id}`); if (response.ok) setDetail(await response.json()); }}><span className="block truncate text-sm font-medium text-white">{campaign.name}</span><span className="mt-1 block font-mono text-[11px] text-slate-500">{formatApplianceTime(campaign.created_at)} · {Object.entries(campaign.runSummary || {}).map(([key, value]) => `${value} ${key}`).join(" · ") || "not started"}</span></button><span className={`w-fit border px-2 py-1 text-[10px] uppercase ${statusClass(campaign.status)}`}>{campaign.status}</span><div className="flex gap-1">{campaign.status === "running" && <button title="Pause after current task" onClick={() => void runAction(`/api/agentic-benchmarks/${campaign.id}/action`, { action: "pause" })} className="p-2 text-amber-300 hover:bg-white/5"><Pause className="h-4 w-4" /></button>}{["paused", "queued"].includes(campaign.status) && <button title="Start or resume campaign" onClick={() => void runAction(`/api/agentic-benchmarks/${campaign.id}/action`, { action: campaign.status === "paused" ? "resume" : "start" })} className="p-2 text-emerald-300 hover:bg-white/5"><Play className="h-4 w-4" /></button>}{!["completed", "failed", "cancelled"].includes(campaign.status) && <button title="Cancel campaign" onClick={() => void runAction(`/api/agentic-benchmarks/${campaign.id}/action`, { action: "cancel" })} className="p-2 text-rose-300 hover:bg-white/5"><Square className="h-4 w-4" /></button>}</div></div>)}</div>
     </section>
 
     {detail && <section className="bg-[#0d131c] p-5"><div className="flex items-center justify-between"><div><h2 className="font-semibold text-white">{detail.campaign.name}</h2><p className="mt-1 text-sm text-slate-500">Run detail and rolling scores</p></div><button onClick={() => setDetail(null)} className="text-sm text-slate-400 hover:text-white">Close</button></div><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{detail.runs.map((run) => <div key={String(run.id)} className="bg-[#121a26] p-3"><div className="truncate text-sm text-slate-100">{String(run.profile_name)}</div><div className="mt-1 text-xs text-slate-500">{String(run.suite_id)}</div><div className="mt-3 flex items-center justify-between"><span className={`border px-2 py-1 text-[10px] uppercase ${statusClass(String(run.status))}`}>{String(run.status)}</span><span className="font-mono text-sm text-white">{run.score == null ? "-" : `${(Number(run.score) * 100).toFixed(1)}%`}</span></div></div>)}</div></section>}
