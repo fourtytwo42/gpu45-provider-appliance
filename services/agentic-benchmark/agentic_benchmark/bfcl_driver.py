@@ -3,20 +3,31 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from pathlib import Path
 
 
-def register_model(alias: str) -> None:
+def register_model(registry_name: str, alias: str) -> None:
     from bfcl_eval.constants.model_config import MODEL_CONFIG_MAPPING, ModelConfig
     from bfcl_eval.model_handler.api_inference.openai_response import OpenAIResponsesHandler
 
-    MODEL_CONFIG_MAPPING[alias] = ModelConfig(
+    class GPU45ResponsesHandler(OpenAIResponsesHandler):
+        def generate_with_backoff(self, **kwargs):
+            started = time.monotonic()
+            kwargs["stream"] = True
+            stream = self.client.responses.create(**kwargs)
+            for event in stream:
+                if getattr(event, "type", None) == "response.completed":
+                    return event.response, time.monotonic() - started
+            raise RuntimeError("GPU45 stream ended without response.completed")
+
+    MODEL_CONFIG_MAPPING[registry_name] = ModelConfig(
         model_name=alias,
         display_name=f"GPU45 {alias}",
         url="http://127.0.0.1:30001",
         org="GPU45",
         license="local-profile",
-        model_handler=OpenAIResponsesHandler,
+        model_handler=GPU45ResponsesHandler,
         input_price=None,
         output_price=None,
         is_fc_model=True,
@@ -66,7 +77,8 @@ def main() -> None:
     from bfcl_eval import _llm_response_generation as generation
     from bfcl_eval.eval_checker import eval_runner
 
-    register_model(args.alias)
+    registry_name = "gpu45-bfcl-model"
+    register_model(registry_name, args.alias)
 
     if args.limit > 0:
         original = generation.get_involved_test_entries
@@ -78,7 +90,7 @@ def main() -> None:
         generation.get_involved_test_entries = limited
 
     namespace = argparse.Namespace(
-        model=[args.alias],
+        model=[registry_name],
         test_category=[args.category],
         temperature=0.0,
         include_input_log=True,
@@ -97,7 +109,7 @@ def main() -> None:
         max_lora_rank=None,
     )
     generation.main(namespace)
-    eval_runner.main([args.alias], [args.category], str(result_root), str(score_root), partial_eval=args.limit > 0)
+    eval_runner.main([registry_name], [args.category], str(result_root), str(score_root), partial_eval=args.limit > 0)
     print("GPU45_RESULT=" + json.dumps(read_score(score_root, args.category), separators=(",", ":")))
 
 
