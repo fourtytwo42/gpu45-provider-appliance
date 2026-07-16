@@ -29,6 +29,11 @@ class NamespaceToolTranslationTests(unittest.TestCase):
         self.assertTrue(PROXY.should_acquire_eager_interactive_lease("/v1/chat/completions", False))
         self.assertFalse(PROXY.should_acquire_eager_interactive_lease("/v1/responses", False))
 
+    def test_benchmark_requests_do_not_schedule_idle_unload(self):
+        self.assertFalse(PROXY.should_schedule_idle_unload(True, True))
+        self.assertTrue(PROXY.should_schedule_idle_unload(True, False))
+        self.assertFalse(PROXY.should_schedule_idle_unload(False, False))
+
     @mock.patch.object(PROXY.subprocess, "run")
     def test_idle_unload_stops_provider_for_current_generation(self, run):
         PROXY.cancel_llm_idle_unload()

@@ -904,6 +904,10 @@ def should_acquire_eager_interactive_lease(path, benchmark_request):
     return path != "/v1/responses" and not benchmark_request
 
 
+def should_schedule_idle_unload(inference_request, benchmark_request):
+    return inference_request and not benchmark_request
+
+
 class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -1090,7 +1094,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 MODEL_REQUEST_LOCK.release()
             if resource_lease is not None:
                 resource_lease.release()
-            if inference_request:
+            if should_schedule_idle_unload(inference_request, benchmark_request):
                 schedule_llm_idle_unload()
 
     def proxy_upstream_response(self, req, path, request_body, namespace_map, api_key_id, model, requested_model, inference_request):
