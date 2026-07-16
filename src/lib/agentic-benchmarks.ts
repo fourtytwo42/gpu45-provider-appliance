@@ -61,6 +61,22 @@ async function agenticFetch(path: string, init?: RequestInit): Promise<unknown> 
   return payload;
 }
 
+export async function agenticDownload(path: string): Promise<Response> {
+  const cfg = getConfig();
+  if (!cfg.agenticToken) return Response.json({ error: "Agentic benchmark coordinator token is not configured" }, { status: 503 });
+  const upstream = await fetch(`${cfg.agenticUrl}${path}`, {
+    headers: { Authorization: `Bearer ${cfg.agenticToken}` },
+    cache: "no-store",
+    signal: AbortSignal.timeout(30_000),
+  });
+  const headers = new Headers();
+  for (const name of ["content-type", "content-disposition", "content-length"]) {
+    const value = upstream.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  return new Response(upstream.body, { status: upstream.status, headers });
+}
+
 export async function listAgenticModels(): Promise<AgenticModel[]> {
   return ((await agenticFetch("/v1/models")) as { models: AgenticModel[] }).models;
 }

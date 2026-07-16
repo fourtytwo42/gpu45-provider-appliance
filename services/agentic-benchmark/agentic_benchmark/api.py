@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import csv
+import io
 import os
 import shutil
 import sqlite3
@@ -82,6 +84,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _download(self, content_type: str, filename: str, body: bytes) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _body(self) -> dict[str, object]:
         size = int(self.headers.get("Content-Length", "0"))
         if size > 1_000_000:
@@ -118,6 +129,38 @@ class Handler(BaseHTTPRequestHandler):
             elif len(segments) == 4 and segments[:2] == ["v1", "campaigns"] and segments[3] == "tasks":
                 query = parse_qs(urlparse(self.path).query)
                 self._json(HTTPStatus.OK, STORE.list_tasks(segments[2], int(query.get("cursor", ["0"])[0]), int(query.get("limit", ["50"])[0])))
+            elif len(segments) == 4 and segments[:2] == ["v1", "campaigns"] and segments[3] == "export":
+                export = STORE.export_rows(segments[2])
+                if not export:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "Campaign not found"})
+                    return
+                query = parse_qs(urlparse(self.path).query)
+                export_format = query.get("format", ["json"])[0].lower()
+                if export_format == "csv":
+                    buffer = io.StringIO()
+                    fields = ["profile_name", "suite_id", "external_task_id", "status", "passed", "reward", "duration_ms", "error_class", "user_message"]
+                    writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction="ignore")
+                    writer.writeheader()
+                    writer.writerows(export["tasks"])
+                    self._download("text/csv; charset=utf-8", f"agentic-{segments[2]}.csv", buffer.getvalue().encode())
+                elif export_format == "markdown":
+                    campaign = export["campaign"]
+                    lines = [f"# {campaign['name']}", "", f"Status: {campaign['status']}", "", "## Results", "", "| Model | Suite | Task | Status | Reward |", "|---|---|---|---|---:|"]
+                    lines.extend(f"| {row['profile_name']} | {row['suite_id']} | {row['external_task_id']} | {row['status']} | {row.get('reward') if row.get('reward') is not None else ''} |" for row in export["tasks"])
+                    self._download("text/markdown; charset=utf-8", f"agentic-{segments[2]}.md", ("\n".join(lines) + "\n").encode())
+                else:
+                    self._download("application/json", f"agentic-{segments[2]}.json", json.dumps(export, indent=2, default=str).encode())
+            elif len(segments) == 5 and segments[:2] == ["v1", "campaigns"] and segments[3] == "artifacts":
+                artifact = STORE.artifact(segments[2], segments[4])
+                if not artifact:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "Artifact not found"})
+                    return
+                root = ARTIFACT_ROOT.resolve()
+                target = (root / artifact["relative_path"]).resolve()
+                if not target.is_relative_to(root) or not target.is_file():
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "Artifact file is missing"})
+                    return
+                self._download("application/octet-stream", target.name, target.read_bytes())
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
         except (ValueError, OSError, sqlite3.Error) as exc:  # type: ignore[name-defined]

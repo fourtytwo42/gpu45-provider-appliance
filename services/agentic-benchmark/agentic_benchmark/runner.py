@@ -20,6 +20,10 @@ class ResourcePreempted(RuntimeError):
     pass
 
 
+class CampaignControlled(RuntimeError):
+    pass
+
+
 def request_json(url: str, payload: dict[str, Any] | None = None, headers: dict[str, str] | None = None, timeout: int = 30) -> tuple[int, dict[str, Any]]:
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = urllib.request.Request(
@@ -248,6 +252,9 @@ class BenchmarkRunner:
             profile = json.loads(run["profile_snapshot_json"])
             alias = str(profile.get("servedAlias") or profile["name"])
             while task := self.store.next_task(run["id"]):
+                control = self.store.apply_pending_control(run["campaign_id"], run["id"])
+                if control:
+                    raise CampaignControlled(control)
                 lease.ensure_active()
                 self.store.begin_task(task["id"])
                 started = time.monotonic()
@@ -257,7 +264,10 @@ class BenchmarkRunner:
                 except ResourcePreempted:
                     raise
                 except Exception as exc:
-                    self.store.complete_task(task["id"], False, int((time.monotonic() - started) * 1000), "infrastructure_failure", "Smoke check could not complete", repr(exc))
+                    if not self.store.retry_infrastructure_task(task["id"], "Infrastructure failed; retrying once"):
+                        self.store.complete_task(task["id"], False, int((time.monotonic() - started) * 1000), "infrastructure_failure", "Smoke check could not complete", repr(exc))
+        except CampaignControlled:
+            pass
         except ResourcePreempted as exc:
             self.store.interrupt_run(run["id"], str(exc))
         except Exception as exc:

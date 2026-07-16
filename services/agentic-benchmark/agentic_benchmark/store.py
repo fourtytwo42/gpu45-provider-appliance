@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -178,6 +179,37 @@ class BenchmarkStore:
                 self._event(db, campaign_id, None, None, event_type, action.capitalize(), {})
             return bool(result.rowcount)
 
+    def campaign_control(self, campaign_id: str) -> dict[str, Any] | None:
+        with self.session() as db:
+            row = db.execute(
+                "SELECT status,pause_requested,cancel_requested FROM campaigns WHERE id=?",
+                (campaign_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def apply_pending_control(self, campaign_id: str, run_id: str) -> str | None:
+        """Apply a requested pause or cancellation at a clean task boundary."""
+        stamp = now()
+        with self.session() as db:
+            control = db.execute(
+                "SELECT pause_requested,cancel_requested FROM campaigns WHERE id=?",
+                (campaign_id,),
+            ).fetchone()
+            if not control:
+                return "cancelled"
+            if control["cancel_requested"]:
+                db.execute("UPDATE tasks SET status='cancelled',updated_at=? WHERE run_id=? AND status IN ('queued','interrupted')", (stamp, run_id))
+                db.execute("UPDATE runs SET status='cancelled',completed_at=?,updated_at=? WHERE id=?", (stamp, stamp, run_id))
+                db.execute("UPDATE campaigns SET status='cancelled',current_run_id=NULL,completed_at=?,updated_at=? WHERE id=?", (stamp, stamp, campaign_id))
+                self._event(db, campaign_id, run_id, None, "campaign.cancelled", "Campaign cancelled at a task boundary", {})
+                return "cancelled"
+            if control["pause_requested"]:
+                db.execute("UPDATE runs SET status='interrupted',updated_at=? WHERE id=?", (stamp, run_id))
+                db.execute("UPDATE campaigns SET status='paused',current_run_id=NULL,updated_at=? WHERE id=?", (stamp, campaign_id))
+                self._event(db, campaign_id, run_id, None, "campaign.paused", "Campaign paused at a task boundary", {})
+                return "paused"
+        return None
+
     def next_runnable(self) -> dict[str, Any] | None:
         with self.session() as db:
             row = db.execute(
@@ -234,6 +266,46 @@ class BenchmarkStore:
                 (status, int(passed), 1.0 if passed else 0.0, duration_ms, error_class, user_message, technical_error, stamp, stamp, task_id),
             )
             self._refresh_run(db, task["run_id"])
+
+    def retry_infrastructure_task(self, task_id: str, message: str) -> bool:
+        """Retry one infrastructure failure without changing the model score."""
+        stamp = now()
+        with self.session() as db:
+            task = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if not task or int(task["attempt"]) >= 2:
+                return False
+            db.execute(
+                "UPDATE tasks SET status='queued',attempt=attempt+1,error_class='infrastructure_retry',user_message=?,technical_error=NULL,started_at=NULL,updated_at=? WHERE id=?",
+                (message, stamp, task_id),
+            )
+            return True
+
+    def add_artifact(self, campaign_id: str, run_id: str | None, task_id: str | None, kind: str, relative_path: str, content: bytes) -> dict[str, Any]:
+        artifact_id = str(uuid.uuid4())
+        digest = hashlib.sha256(content).hexdigest()
+        with self.session() as db:
+            db.execute(
+                "INSERT INTO artifacts(id,campaign_id,run_id,task_id,kind,relative_path,size_bytes,sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (artifact_id, campaign_id, run_id, task_id, kind, relative_path, len(content), digest, now()),
+            )
+        return {"id": artifact_id, "kind": kind, "relativePath": relative_path, "sizeBytes": len(content), "sha256": digest}
+
+    def artifact(self, campaign_id: str, artifact_id: str) -> dict[str, Any] | None:
+        with self.session() as db:
+            row = db.execute("SELECT * FROM artifacts WHERE id=? AND campaign_id=?", (artifact_id, campaign_id)).fetchone()
+            return dict(row) if row else None
+
+    def export_rows(self, campaign_id: str) -> dict[str, Any] | None:
+        detail = self.campaign_detail(campaign_id)
+        if not detail:
+            return None
+        with self.session() as db:
+            tasks = [dict(row) for row in db.execute(
+                "SELECT t.*,r.profile_name,r.suite_id FROM tasks t JOIN runs r ON r.id=t.run_id WHERE r.campaign_id=? ORDER BY r.profile_name,r.suite_id,t.external_task_id",
+                (campaign_id,),
+            )]
+            artifacts = [dict(row) for row in db.execute("SELECT * FROM artifacts WHERE campaign_id=? ORDER BY created_at", (campaign_id,))]
+        return {**detail, "tasks": tasks, "artifacts": artifacts}
 
     def interrupt_run(self, run_id: str, reason: str) -> None:
         stamp = now()

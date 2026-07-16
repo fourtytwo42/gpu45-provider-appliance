@@ -50,6 +50,29 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(len(profiles[0]["profileHash"]), 64)
         self.assertTrue(profiles[0]["modelAvailable"])
 
+    def test_pause_cancel_retry_and_exports(self):
+        profile = {"name": "model-a", "profileHash": "hash-a", "modelPath": "/models/a.gguf"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Control", "custom", [profile], [suite])
+        runnable = self.store.next_runnable()
+        assert runnable is not None
+        run = self.store.begin_run(runnable["id"], None)
+        self.store.ensure_tasks(run["id"], ["task-one"])
+        task = self.store.next_task(run["id"])
+        assert task is not None
+        self.store.begin_task(task["id"])
+        self.assertTrue(self.store.retry_infrastructure_task(task["id"], "retry"))
+        self.assertFalse(self.store.retry_infrastructure_task(task["id"], "retry again"))
+        artifact = self.store.add_artifact(campaign_id, run["id"], task["id"], "log", "campaign/run/log.txt", b"hello")
+        self.assertIsNotNone(self.store.artifact(campaign_id, artifact["id"]))
+        self.assertIsNone(self.store.artifact("wrong-campaign", artifact["id"]))
+        self.assertEqual(1, len(self.store.export_rows(campaign_id)["artifacts"]))
+        self.assertTrue(self.store.set_campaign_action(campaign_id, "pause"))
+        self.assertEqual("paused", self.store.apply_pending_control(campaign_id, run["id"]))
+        self.assertTrue(self.store.set_campaign_action(campaign_id, "resume"))
+        self.assertTrue(self.store.set_campaign_action(campaign_id, "cancel"))
+        self.assertEqual("cancelled", self.store.apply_pending_control(campaign_id, run["id"]))
+
 
 if __name__ == "__main__":
     unittest.main()
