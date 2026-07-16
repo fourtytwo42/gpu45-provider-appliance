@@ -9,6 +9,7 @@ User=gpu45-benchmark
 Group=gpu45-benchmark
 SupplementaryGroups=docker
 EnvironmentFile=/etc/gpu45/agentic-benchmark.env
+EnvironmentFile=/etc/gpu45/resource-manager.env
 Environment=PYTHONPATH=/opt/gpu45-agentic-benchmark
 ExecStart=/usr/bin/python3 -m agentic_benchmark
 Restart=always

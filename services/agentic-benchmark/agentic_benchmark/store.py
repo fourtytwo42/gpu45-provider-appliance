@@ -78,6 +78,14 @@ class BenchmarkStore:
         with self.session() as db:
             return [row[0] for row in db.execute("SELECT profile_name FROM model_qualifications WHERE status IN ('pending','interrupted') ORDER BY updated_at")]
 
+    def retry_qualification(self, profile_name: str) -> bool:
+        with self.session() as db:
+            result = db.execute(
+                "UPDATE model_qualifications SET status='pending',remediation=NULL,last_smoke_campaign_id=NULL,updated_at=? WHERE profile_name=?",
+                (now(), profile_name),
+            )
+            return bool(result.rowcount)
+
     def ensure_smoke_campaign(self, profile: dict[str, Any], suite: dict[str, Any]) -> str | None:
         with self.session() as db:
             qualification = db.execute(
