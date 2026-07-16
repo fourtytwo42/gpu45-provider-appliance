@@ -65,6 +65,16 @@ def select_entries(entries: list[dict[str, object]], case_id: str | None, limit:
     return selected
 
 
+def configure_lock_root(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    from bfcl_eval import utils
+    from bfcl_eval.constants import eval_config
+
+    # BFCL imports LOCK_DIR into utils by value, so update both references.
+    eval_config.LOCK_DIR = path
+    utils.LOCK_DIR = path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--alias")
@@ -79,6 +89,7 @@ def main() -> None:
     from bfcl_eval import _llm_response_generation as generation
 
     if args.list:
+        configure_lock_root(Path(os.environ.get("GPU45_BFCL_LOCK_ROOT", "/var/lib/gpu45/benchmarks/bfcl-locks")))
         tasks = []
         for category in args.category:
             _, entries = generation.get_involved_test_entries([category], False)
@@ -99,13 +110,10 @@ def main() -> None:
     result_root.mkdir(parents=True, exist_ok=True)
     score_root.mkdir(parents=True, exist_ok=True)
     lock_root = result_root.parent / "locks"
-    lock_root.mkdir(parents=True, exist_ok=True)
 
     # BFCL defaults to lock files inside its source checkout. Keep the pinned
     # harness immutable and place per-run locks alongside the campaign output.
-    from bfcl_eval.constants import eval_config
-
-    eval_config.LOCK_DIR = lock_root
+    configure_lock_root(lock_root)
     from bfcl_eval.eval_checker import eval_runner
 
     registry_name = "gpu45-bfcl-model"
