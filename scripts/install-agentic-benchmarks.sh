@@ -43,7 +43,6 @@ except json.JSONDecodeError as exc:
     raise SystemExit(f"Refusing to overwrite invalid {path}: {exc}")
 data.update({
     'data-root': '/models/benchmark-cache/docker',
-    'hosts': ['unix:///run/docker.sock'],
     'userland-proxy': False,
     'log-driver': 'local',
     'log-opts': {'max-size': '20m', 'max-file': '3'},
