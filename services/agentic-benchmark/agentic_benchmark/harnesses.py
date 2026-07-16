@@ -93,15 +93,19 @@ class BfclAdapter:
             tasks: list[str] = []
             for category in categories:
                 command = [str(self.python), "-m", "agentic_benchmark.bfcl_driver", "--list", "--category", category]
-                result = subprocess.run(
-                    command,
-                    cwd=self.source,
-                    env=os.environ.copy(),
-                    capture_output=True,
-                    text=True,
-                    timeout=180,
-                    check=True,
-                )
+                try:
+                    result = subprocess.run(
+                        command,
+                        cwd=self.source,
+                        env=os.environ.copy(),
+                        capture_output=True,
+                        text=True,
+                        timeout=180,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError as exc:
+                    diagnostic = (exc.stderr or exc.stdout or "no subprocess output").strip()[-4000:]
+                    raise RuntimeError(f"BFCL task discovery failed for {category}: {diagnostic}") from exc
                 marker = next((line[len("GPU45_TASKS="):] for line in result.stdout.splitlines() if line.startswith("GPU45_TASKS=")), None)
                 if not marker:
                     raise RuntimeError(f"BFCL task discovery did not return tasks for {category}")

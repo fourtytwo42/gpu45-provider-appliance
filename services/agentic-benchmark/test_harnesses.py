@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -101,3 +102,11 @@ class HarnessProcessTests(unittest.TestCase):
 
         self.assertEqual(["simple_python::simple_python_0", "simple_java::simple_java_0"], tasks)
         self.assertEqual(2, run.call_count)
+
+    @mock.patch("agentic_benchmark.harnesses.subprocess.run")
+    def test_bfcl_discovery_reports_subprocess_stderr(self, run):
+        run.side_effect = subprocess.CalledProcessError(1, ["python"], stderr="permission denied: fixture")
+        adapter = BfclAdapter(self.root / "harnesses", self.root / "artifacts", "token")
+
+        with self.assertRaisesRegex(RuntimeError, "permission denied: fixture"):
+            adapter.tasks({"categories": ["simple_python"]})
