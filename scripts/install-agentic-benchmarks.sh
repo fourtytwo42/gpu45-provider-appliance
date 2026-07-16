@@ -77,7 +77,7 @@ if [[ ! -x "$uv_bin" ]] || [[ "$($uv_bin --version 2>/dev/null | awk '{print $2}
   chown -R gpu45-benchmark:gpu45-benchmark "$harness_root/bin"
 fi
 
-python3 - "$lock_file" "$harness_root" <<'PY'
+runuser -u gpu45-benchmark -- python3 - "$lock_file" "$harness_root" <<'PY'
 import json
 import subprocess
 import sys
