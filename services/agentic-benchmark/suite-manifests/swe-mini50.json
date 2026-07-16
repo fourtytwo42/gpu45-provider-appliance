@@ -1,7 +1,7 @@
 {
   "id": "swe-verified-mini50",
   "name": "SWE-bench Verified Mini-50",
-  "version": "pinned-at-install",
+  "version": "f7bbbb2",
   "track": "standardized-nonofficial-subset",
   "adapter": "swebench",
   "taskSource": "published-fixed-50",

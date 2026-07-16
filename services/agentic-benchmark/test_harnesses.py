@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agentic_benchmark.harnesses import HarnessInterrupted, run_interruptible
+from agentic_benchmark.harnesses import HarnessInterrupted, SweBenchAdapter, run_interruptible
 
 
 class HarnessProcessTests(unittest.TestCase):
@@ -30,3 +30,12 @@ class HarnessProcessTests(unittest.TestCase):
                 ["python", "-c", "import time; time.sleep(30)"], self.root, os.environ.copy(), log, 10,
                 lambda: None, lambda: "paused",
             )
+
+    def test_swebench_uses_published_fixed_ids(self):
+        harness = self.root / "harnesses"
+        ids = harness / "sources" / "sweMini50" / "data" / "subsets" / "size_optimized_sample_ids.json"
+        ids.parent.mkdir(parents=True)
+        ids.write_text('["django__django-11790", "sympy__sympy-123"]')
+        adapter = SweBenchAdapter(harness, self.root / "artifacts")
+        self.assertEqual(["django__django-11790", "sympy__sympy-123"], adapter.tasks({}))
+        self.assertEqual(["one"], adapter.tasks({"taskIds": ["one"]}))

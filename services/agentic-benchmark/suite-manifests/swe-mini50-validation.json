@@ -1,0 +1,15 @@
+{
+  "id": "swe-verified-mini50-validation",
+  "name": "SWE-bench Verified one-task validation",
+  "version": "f7bbbb2",
+  "track": "gpu45-diagnostic",
+  "adapter": "swebench",
+  "taskSource": "published-fixed-50-first-task",
+  "taskIds": ["django__django-11790"],
+  "taskCount": 1,
+  "weight": 0,
+  "timeoutSeconds": 7200,
+  "requiresDocker": true,
+  "requiresUserSimulator": false,
+  "maxConcurrency": 1
+}

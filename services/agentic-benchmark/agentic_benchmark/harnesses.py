@@ -205,3 +205,101 @@ class TauAdapter:
         payload = json.loads(marker)
         reward = float(payload["reward"])
         return HarnessResult(reward >= 1.0, reward, duration_ms, f"reward {reward:.3f}; {payload['terminationReason']}", artifacts=artifacts)
+
+
+class SweBenchAdapter:
+    def __init__(self, harness_root: Path, artifact_root: Path) -> None:
+        self.harness_root = harness_root
+        self.artifact_root = artifact_root
+        self.mini_source = harness_root / "sources" / "miniSweAgent"
+        self.mini = harness_root / "venvs" / "mini-swe-agent" / "bin" / "mini-extra"
+        self.mini_config = self.mini_source / "src" / "minisweagent" / "config" / "benchmarks" / "swebench.yaml"
+        self.swe_source = harness_root / "sources" / "swebench"
+        self.swe_python = harness_root / "venvs" / "swebench" / "bin" / "python"
+        self.ids_path = harness_root / "sources" / "sweMini50" / "data" / "subsets" / "size_optimized_sample_ids.json"
+
+    def tasks(self, suite: dict[str, object]) -> list[str]:
+        configured = suite.get("taskIds")
+        if isinstance(configured, list):
+            return [str(item) for item in configured]
+        return [str(item) for item in json.loads(self.ids_path.read_text(encoding="utf-8"))]
+
+    def run(
+        self,
+        campaign_id: str,
+        run_id: str,
+        task_id: str,
+        external_task_id: str,
+        alias: str,
+        timeout_seconds: int,
+        ensure_active: Callable[[], None],
+        control_state: Callable[[], str | None],
+    ) -> HarnessResult:
+        root = self.artifact_root / campaign_id / run_id / task_id
+        agent_output = root / "agent"
+        agent_log = root / "mini-swe-agent.log"
+        verifier_log = root / "swebench-verifier.log"
+        verifier_output = root / "verifier"
+        generated_config = root / "gpu45-swebench.yaml"
+        root.mkdir(parents=True, exist_ok=True)
+        generated_config.write_text(
+            "environment:\n"
+            "  run_args:\n"
+            "    - --rm\n"
+            "    - --network=none\n"
+            "    - --cap-drop=ALL\n"
+            "    - --security-opt=no-new-privileges\n"
+            "    - --pids-limit=512\n"
+            "    - --memory=8g\n"
+            "model:\n"
+            "  model_kwargs:\n"
+            "    api_base: http://127.0.0.1:30000/v1\n"
+            "    api_key: gpu45-benchmark\n"
+            "    temperature: 0\n"
+            "    seed: 42\n"
+            "    drop_params: true\n",
+            encoding="utf-8",
+        )
+        escaped_id = external_task_id.replace("-", "\\-").replace(".", "\\.")
+        agent_command = [
+            str(self.mini), "swebench", "--subset", "verified", "--split", "test",
+            "--filter", f"^{escaped_id}$", "--output", str(agent_output), "--workers", "1",
+            "--model", f"openai/{alias}", "-c", str(self.mini_config), "-c", str(generated_config),
+        ]
+        started = time.monotonic()
+        agent_code = run_interruptible(
+            agent_command, self.mini_source, os.environ.copy(), agent_log,
+            timeout_seconds, ensure_active, control_state,
+        )
+        predictions = agent_output / "preds.json"
+        artifacts: list[tuple[str, Path]] = [("agent-log", agent_log), ("configuration", generated_config)]
+        trajectory = agent_output / external_task_id / f"{external_task_id}.traj.json"
+        if trajectory.is_file():
+            artifacts.append(("trajectory", trajectory))
+        if predictions.is_file():
+            artifacts.append(("patch", predictions))
+        if agent_code or not predictions.is_file():
+            text = agent_log.read_text(encoding="utf-8", errors="replace") if agent_log.exists() else ""
+            return HarnessResult(False, 0.0, int((time.monotonic() - started) * 1000), "mini-SWE-agent failed", text[-4000:], artifacts)
+
+        verifier_command = [
+            str(self.swe_python), "-m", "agentic_benchmark.swe_eval_driver",
+            "--instance-id", external_task_id, "--predictions", str(predictions),
+            "--run-id", f"gpu45-{task_id}", "--report-dir", str(verifier_output),
+            "--timeout", str(min(timeout_seconds, 1800)),
+        ]
+        verifier_code = run_interruptible(
+            verifier_command, self.swe_source, os.environ.copy(), verifier_log,
+            min(timeout_seconds, 2400), ensure_active, control_state,
+        )
+        duration_ms = int((time.monotonic() - started) * 1000)
+        text = verifier_log.read_text(encoding="utf-8", errors="replace") if verifier_log.exists() else ""
+        marker = next((line[len("GPU45_RESULT="):] for line in reversed(text.splitlines()) if line.startswith("GPU45_RESULT=")), None)
+        artifacts.append(("verifier-log", verifier_log))
+        for report in verifier_output.rglob("*.json") if verifier_output.exists() else []:
+            artifacts.append(("verifier", report))
+        if verifier_code or not marker:
+            return HarnessResult(False, 0.0, duration_ms, "SWE-bench verifier failed", text[-4000:], artifacts)
+        payload = json.loads(marker)
+        passed = bool(payload["resolved"])
+        return HarnessResult(passed, 1.0 if passed else 0.0, duration_ms, "resolved" if passed else "patch did not resolve the task", artifacts=artifacts)
