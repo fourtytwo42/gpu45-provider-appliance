@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from docker.models.containers import ContainerCollection
@@ -33,23 +34,28 @@ def main() -> None:
     report_dir = Path(args.report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
     secure_containers()
-    report = run_evaluation(
-        dataset_name="princeton-nlp/SWE-bench_Verified",
-        split="test",
-        instance_ids=[args.instance_id],
-        predictions_path=args.predictions,
-        max_workers=1,
-        force_rebuild=False,
-        cache_level="env",
-        clean=False,
-        open_file_limit=4096,
-        run_id=args.run_id,
-        timeout=args.timeout,
-        namespace="swebench",
-        rewrite_reports=False,
-        modal=False,
-        report_dir=str(report_dir),
-    ) or {}
+    previous_cwd = Path.cwd()
+    try:
+        os.chdir(report_dir)
+        report = run_evaluation(
+            dataset_name="princeton-nlp/SWE-bench_Verified",
+            split="test",
+            instance_ids=[args.instance_id],
+            predictions_path=args.predictions,
+            max_workers=1,
+            force_rebuild=False,
+            cache_level="env",
+            clean=False,
+            open_file_limit=4096,
+            run_id=args.run_id,
+            timeout=args.timeout,
+            namespace="swebench",
+            rewrite_reports=False,
+            modal=False,
+            report_dir=str(report_dir),
+        ) or {}
+    finally:
+        os.chdir(previous_cwd)
     resolved = set(report.get("resolved_ids") or report.get("resolved") or [])
     print("GPU45_RESULT=" + json.dumps({"instanceId": args.instance_id, "resolved": args.instance_id in resolved, "report": report}, default=str))
 
