@@ -1,0 +1,14 @@
+{
+  "id": "swe-verified-mini50",
+  "name": "SWE-bench Verified Mini-50",
+  "version": "pinned-at-install",
+  "track": "standardized-nonofficial-subset",
+  "adapter": "swebench",
+  "taskSource": "published-fixed-50",
+  "taskCount": 50,
+  "weight": 0.35,
+  "timeoutSeconds": 7200,
+  "requiresDocker": true,
+  "requiresUserSimulator": false,
+  "maxConcurrency": 1
+}

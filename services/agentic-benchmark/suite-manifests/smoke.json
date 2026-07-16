@@ -1,0 +1,21 @@
+{
+  "id": "gpu45-smoke-v1",
+  "name": "GPU45 model compatibility smoke",
+  "version": "1.0.0",
+  "track": "diagnostic",
+  "adapter": "gpu45-smoke",
+  "taskSource": "builtin",
+  "taskCount": 6,
+  "weight": 0,
+  "timeoutSeconds": 900,
+  "requiresDocker": false,
+  "requiresUserSimulator": false,
+  "tasks": [
+    "provider-readiness",
+    "stream-completion",
+    "json-output",
+    "single-tool-call",
+    "parallel-tool-call",
+    "cancellation-vram-release"
+  ]
+}

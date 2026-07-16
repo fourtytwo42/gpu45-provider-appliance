@@ -1,0 +1,19 @@
+{
+  "id": "top-three-qualification-v1",
+  "name": "Top-three qualification",
+  "version": "1.0.0",
+  "track": "qualification",
+  "adapter": "composite",
+  "taskSource": "qualified-suite-expansion",
+  "taskCount": null,
+  "weight": 0,
+  "timeoutSeconds": 7200,
+  "requiresDocker": true,
+  "requiresUserSimulator": true,
+  "components": [
+    "swe-bench-verified-500",
+    "tau-three-trial-reliability",
+    "bfcl-failed-category-rerun",
+    "gpu45-codex-acceptance"
+  ]
+}

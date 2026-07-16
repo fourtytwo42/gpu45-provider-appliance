@@ -1,0 +1,26 @@
+{
+  "id": "bfcl-v4-local",
+  "name": "BFCL V4 local deterministic",
+  "version": "pinned-at-install",
+  "track": "standardized",
+  "adapter": "bfcl",
+  "taskSource": "upstream-local-categories",
+  "taskCount": null,
+  "weight": 0.2,
+  "timeoutSeconds": 900,
+  "requiresDocker": false,
+  "requiresUserSimulator": false,
+  "categories": [
+    "simple",
+    "multiple",
+    "parallel",
+    "parallel-multiple",
+    "irrelevance",
+    "multi-turn-base",
+    "multi-turn-missing-function",
+    "multi-turn-missing-parameter",
+    "multi-turn-long-context",
+    "format-sensitivity"
+  ],
+  "excludedCategories": ["live", "web-search", "memory"]
+}

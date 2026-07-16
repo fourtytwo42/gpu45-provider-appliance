@@ -1,0 +1,16 @@
+{
+  "id": "tau-text-base",
+  "name": "Tau text base",
+  "version": "pinned-at-install",
+  "track": "standardized",
+  "adapter": "tau",
+  "taskSource": "upstream-base-split",
+  "taskCount": null,
+  "weight": 0.15,
+  "timeoutSeconds": 1800,
+  "requiresDocker": false,
+  "requiresUserSimulator": true,
+  "domains": ["airline", "retail", "telecom"],
+  "userSimulatorProfile": "gpu45-m-shq8-mtp-opta-q5-k-m-69f462b8",
+  "trials": 1
+}
