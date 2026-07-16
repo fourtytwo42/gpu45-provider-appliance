@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .domain import load_suite_manifests
+from .harnesses import BfclAdapter, HarnessInterrupted
 from .model_catalog import discover_profiles
 from .store import BenchmarkStore
 
@@ -204,6 +205,8 @@ class BenchmarkRunner:
         self.min_free_bytes = min_free_bytes
         self.resources = ResourceClient()
         self.smoke = SmokeAdapter(os.environ.get("GPU45_AGENTIC_TOKEN", ""))
+        self.artifact_root = Path(os.environ.get("GPU45_AGENTIC_ARTIFACT_ROOT", "/var/lib/gpu45/benchmarks/artifacts"))
+        self.bfcl = BfclAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root, os.environ.get("GPU45_AGENTIC_TOKEN", ""))
         self.stop_event = threading.Event()
 
     def start(self) -> None:
@@ -238,12 +241,12 @@ class BenchmarkRunner:
 
     def _run(self, runnable: dict[str, Any]) -> None:
         suite = json.loads(runnable["suite_snapshot_json"])
-        if suite.get("adapter") != "gpu45-smoke":
+        if suite.get("adapter") not in {"gpu45-smoke", "bfcl"}:
             self.store.fail_run(runnable["id"], f"Suite adapter {suite.get('adapter')} is installed but not yet enabled")
             return
         previous = self._active_profile()
         run = self.store.begin_run(runnable["id"], previous)
-        tasks = [str(item) for item in suite.get("tasks", [])]
+        tasks = self.bfcl.tasks(suite) if suite.get("adapter") == "bfcl" else [str(item) for item in suite.get("tasks", [])]
         self.store.ensure_tasks(run["id"], tasks)
         lease: BenchmarkLease | None = None
         try:
@@ -259,8 +262,24 @@ class BenchmarkRunner:
                 self.store.begin_task(task["id"])
                 started = time.monotonic()
                 try:
-                    passed, message = self.smoke.run(task["external_task_id"], alias, lease)
-                    self.store.complete_task(task["id"], passed, int((time.monotonic() - started) * 1000), None if passed else "model_failure", message)
+                    if suite.get("adapter") == "bfcl":
+                        result = self.bfcl.run(
+                            run["campaign_id"], run["id"], task["id"], task["external_task_id"], alias,
+                            int(suite.get("timeoutSeconds") or 900), lease.ensure_active,
+                            lambda: self._control_request(run["campaign_id"]),
+                            int(suite.get("validationLimit") or 0),
+                        )
+                        self.store.complete_task(task["id"], result.passed, result.duration_ms, None if result.passed else "harness_failure", result.message, result.technical_error, result.reward)
+                        for kind, path in result.artifacts:
+                            if path.is_file():
+                                relative = str(path.resolve().relative_to(self.artifact_root.resolve()))
+                                self.store.register_artifact_path(run["campaign_id"], run["id"], task["id"], kind, relative, path)
+                    else:
+                        passed, message = self.smoke.run(task["external_task_id"], alias, lease)
+                        self.store.complete_task(task["id"], passed, int((time.monotonic() - started) * 1000), None if passed else "model_failure", message)
+                except HarnessInterrupted:
+                    self.store.apply_pending_control(run["campaign_id"], run["id"])
+                    raise CampaignControlled("campaign control requested")
                 except ResourcePreempted:
                     raise
                 except Exception as exc:
@@ -281,3 +300,13 @@ class BenchmarkRunner:
                         print(f"agentic-runner: previous profile restore failed: {exc!r}", flush=True)
                 lease.release()
             time.sleep(60 if lease and lease.lost.is_set() else 1)
+
+    def _control_request(self, campaign_id: str) -> str | None:
+        control = self.store.campaign_control(campaign_id)
+        if not control:
+            return "cancelled"
+        if control["cancel_requested"]:
+            return "cancelled"
+        if control["pause_requested"]:
+            return "paused"
+        return None

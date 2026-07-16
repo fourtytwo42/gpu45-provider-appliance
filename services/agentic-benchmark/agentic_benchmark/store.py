@@ -254,16 +254,15 @@ class BenchmarkStore:
         with self.session() as db:
             db.execute("UPDATE tasks SET status='running',started_at=?,updated_at=? WHERE id=?", (stamp, stamp, task_id))
 
-    def complete_task(self, task_id: str, passed: bool, duration_ms: int, error_class: str | None = None, user_message: str | None = None, technical_error: str | None = None) -> None:
+    def complete_task(self, task_id: str, passed: bool, duration_ms: int, error_class: str | None = None, user_message: str | None = None, technical_error: str | None = None, reward: float | None = None) -> None:
         stamp = now()
-        status = "completed" if passed else "failed"
         with self.session() as db:
             task = db.execute("SELECT run_id FROM tasks WHERE id=?", (task_id,)).fetchone()
             if not task:
                 return
             db.execute(
                 "UPDATE tasks SET status=?,passed=?,reward=?,duration_ms=?,error_class=?,user_message=?,technical_error=?,completed_at=?,updated_at=? WHERE id=?",
-                (status, int(passed), 1.0 if passed else 0.0, duration_ms, error_class, user_message, technical_error, stamp, stamp, task_id),
+                ("completed", int(passed), float(reward if reward is not None else (1.0 if passed else 0.0)), duration_ms, error_class, user_message, technical_error, stamp, stamp, task_id),
             )
             self._refresh_run(db, task["run_id"])
 
@@ -289,6 +288,20 @@ class BenchmarkStore:
                 (artifact_id, campaign_id, run_id, task_id, kind, relative_path, len(content), digest, now()),
             )
         return {"id": artifact_id, "kind": kind, "relativePath": relative_path, "sizeBytes": len(content), "sha256": digest}
+
+    def register_artifact_path(self, campaign_id: str, run_id: str | None, task_id: str | None, kind: str, relative_path: str, path: Path) -> dict[str, Any]:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(block)
+        artifact_id = str(uuid.uuid4())
+        size = path.stat().st_size
+        with self.session() as db:
+            db.execute(
+                "INSERT INTO artifacts(id,campaign_id,run_id,task_id,kind,relative_path,size_bytes,sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (artifact_id, campaign_id, run_id, task_id, kind, relative_path, size, digest.hexdigest(), now()),
+            )
+        return {"id": artifact_id, "kind": kind, "relativePath": relative_path, "sizeBytes": size, "sha256": digest.hexdigest()}
 
     def artifact(self, campaign_id: str, artifact_id: str) -> dict[str, Any] | None:
         with self.session() as db:
@@ -331,11 +344,11 @@ class BenchmarkStore:
 
     def _refresh_run(self, db: sqlite3.Connection, run_id: str) -> None:
         stamp = now()
-        counts = db.execute("SELECT COUNT(*) total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) passed,SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) failed FROM tasks WHERE run_id=?", (run_id,)).fetchone()
+        counts = db.execute("SELECT COUNT(*) total,SUM(CASE WHEN status IN ('completed','failed') THEN 1 ELSE 0 END) done,SUM(CASE WHEN status='completed' AND passed=1 THEN 1 ELSE 0 END) passed,SUM(CASE WHEN status IN ('completed','failed') AND COALESCE(passed,0)=0 THEN 1 ELSE 0 END) failed,AVG(CASE WHEN status IN ('completed','failed') THEN reward END) score FROM tasks WHERE run_id=?", (run_id,)).fetchone()
         expected = int(db.execute("SELECT expected_tasks FROM runs WHERE id=?", (run_id,)).fetchone()[0])
-        done = int(counts["passed"] or 0) + int(counts["failed"] or 0)
+        done = int(counts["done"] or 0)
         status = "completed" if expected > 0 and done >= expected else "running"
-        score = (float(counts["passed"] or 0) / expected) if expected else None
+        score = float(counts["score"]) if counts["score"] is not None else None
         db.execute("UPDATE runs SET status=?,completed_tasks=?,passed_tasks=?,failed_tasks=?,score=?,completed_at=CASE WHEN ?='completed' THEN ? ELSE completed_at END,updated_at=? WHERE id=?", (status, done, int(counts["passed"] or 0), int(counts["failed"] or 0), score, status, stamp, stamp, run_id))
         if status == "completed":
             run = db.execute("SELECT campaign_id,profile_name,suite_id FROM runs WHERE id=?", (run_id,)).fetchone()

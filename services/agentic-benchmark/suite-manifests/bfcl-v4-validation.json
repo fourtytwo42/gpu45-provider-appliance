@@ -1,0 +1,15 @@
+{
+  "id": "bfcl-v4-validation",
+  "name": "BFCL V4 one-item validation",
+  "version": "6ea57973c7a6097fd7c5915698c54c17c5b1b6c8",
+  "track": "gpu45-diagnostic",
+  "adapter": "bfcl",
+  "taskSource": "upstream-simple-python-first-item",
+  "taskCount": 1,
+  "weight": 0,
+  "timeoutSeconds": 900,
+  "requiresDocker": false,
+  "requiresUserSimulator": false,
+  "categories": ["simple_python"],
+  "validationLimit": 1
+}
