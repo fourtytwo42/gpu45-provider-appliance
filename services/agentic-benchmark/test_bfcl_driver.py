@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agentic_benchmark.bfcl_driver import configure_lock_root, select_entries
+from agentic_benchmark.bfcl_driver import configure_lock_root, is_single_case_run, select_entries
 
 
 class BfclDriverTests(unittest.TestCase):
@@ -36,6 +36,11 @@ class BfclDriverTests(unittest.TestCase):
 
         self.assertEqual(path, utils.LOCK_DIR)
         self.assertEqual(path, eval_config.LOCK_DIR)
+
+    def test_exact_case_is_a_single_case_run(self):
+        self.assertTrue(is_single_case_run("simple_python_0", 0))
+        self.assertTrue(is_single_case_run(None, 1))
+        self.assertFalse(is_single_case_run(None, 0))
 
 
 if __name__ == "__main__":

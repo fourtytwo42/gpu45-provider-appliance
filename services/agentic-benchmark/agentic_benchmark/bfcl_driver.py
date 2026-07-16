@@ -75,6 +75,10 @@ def configure_lock_root(path: Path) -> None:
     utils.LOCK_DIR = path
 
 
+def is_single_case_run(case_id: str | None, limit: int) -> bool:
+    return bool(case_id) or limit == 1
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--alias")
@@ -151,7 +155,7 @@ def main() -> None:
     try:
         eval_runner.main([registry_name], [category], str(result_root), str(score_root), partial_eval=bool(args.case_id or args.limit > 0))
     except statistics.StatisticsError:
-        if args.limit != 1:
+        if not is_single_case_run(args.case_id, args.limit):
             raise
         # BFCL's aggregate CSV asks for a sample standard deviation. A
         # one-item diagnostic has no standard deviation, but its verifier
