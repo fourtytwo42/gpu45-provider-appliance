@@ -52,7 +52,7 @@ export function deriveModelCapabilities(models: ModelAsset[], benchmarks: Benchm
     const maxContext = model.launchProfile?.ctxSize ?? 262144;
     const issue = knownIssue(model);
     const toolCalling: ModelCapability["toolCalling"] = lower.includes("gemma") ? "limited" : model.served ? "expected" : "unknown";
-    const reasoning: ModelCapability["reasoning"] = "optional";
+    const reasoning: ModelCapability["reasoning"] = lower.includes("ornith") ? "on" : "optional";
     const codex: ModelCapability["codex"] = model.served && !issue ? "ready" : model.served ? "check" : "risky";
     return {
       name,
