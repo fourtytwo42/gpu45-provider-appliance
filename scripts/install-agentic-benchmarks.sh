@@ -97,9 +97,12 @@ chown -R gpu45-benchmark:gpu45-benchmark "$harness_root"
 
 install -m 0644 "$repo_root/deploy/systemd/gpu45-agentic-benchmark.service" /etc/systemd/system/gpu45-agentic-benchmark.service
 systemctl daemon-reload
-systemctl enable --now docker.service gpu45-agentic-benchmark.service
+systemctl enable docker.service gpu45-agentic-benchmark.service
+systemctl restart docker.service
+systemctl restart gpu45-agentic-benchmark.service
 
 docker info >/dev/null
+[[ "$(docker info --format '{{.DockerRootDir}}')" == "$cache_root/docker" ]]
 docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 256m alpine:3.22 sh -c 'test ! -e /dev/dri && echo sandbox-ok'
 
 source /etc/gpu45/agentic-benchmark.env
