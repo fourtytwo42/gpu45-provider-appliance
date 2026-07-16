@@ -889,6 +889,21 @@ def store_response(request_body, response_body):
     prune_store()
 
 
+def is_benchmark_request(headers, token=None):
+    expected = AGENTIC_BENCHMARK_TOKEN if token is None else token
+    if not expected:
+        return False
+    authorization = headers.get("Authorization", "")
+    return (
+        headers.get("X-GPU45-Benchmark-Token", "") == expected
+        or authorization == f"Bearer {expected}"
+    )
+
+
+def should_acquire_eager_interactive_lease(path, benchmark_request):
+    return path != "/v1/responses" and not benchmark_request
+
+
 class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -920,11 +935,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
     def proxy(self):
         path = urlparse(self.path).path
-        authorization = self.headers.get("Authorization", "")
-        benchmark_request = bool(AGENTIC_BENCHMARK_TOKEN) and (
-            self.headers.get("X-GPU45-Benchmark-Token", "") == AGENTIC_BENCHMARK_TOKEN
-            or authorization == f"Bearer {AGENTIC_BENCHMARK_TOKEN}"
-        )
+        benchmark_request = is_benchmark_request(self.headers)
         api_key, auth_error = authenticate(self.headers)
         if auth_error:
             self.send_json(401, {"error": {"message": auth_error, "type": "authentication_error"}})
@@ -963,7 +974,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 cancel_llm_idle_unload()
                 MODEL_REQUEST_LOCK.acquire()
                 lock_acquired = True
-                if path != "/v1/responses":
+                if should_acquire_eager_interactive_lease(path, benchmark_request):
                     try:
                         resource_lease = acquire_lease(f"codex-{uuid.uuid4().hex[:12]}", "llm", 100, False, "keep-loaded", timeout=600)
                         ensure_model_loaded(selected_model)
@@ -971,6 +982,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         if resource_lease is not None:
                             resource_lease.release()
                             resource_lease = None
+                        MODEL_REQUEST_LOCK.release()
+                        lock_acquired = False
+                        self.send_json(503, {"error": {"message": str(exc), "type": "model_load_error"}})
+                        record_usage(api_key["id"] if api_key else None, selected_model["servedAlias"], requested_model, 503)
+                        return
+                elif path != "/v1/responses":
+                    try:
+                        ensure_model_loaded(selected_model)
+                    except Exception as exc:
                         MODEL_REQUEST_LOCK.release()
                         lock_acquired = False
                         self.send_json(503, {"error": {"message": str(exc), "type": "model_load_error"}})
