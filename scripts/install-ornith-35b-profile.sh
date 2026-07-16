@@ -6,7 +6,7 @@ MODEL_ROOT=${MODEL_ROOT:-/models/huggingface/staging/deepreinforce-ai--Ornith-1.
 HF_BIN=${HF_BIN:-/opt/gpu45-image-venv/bin/hf}
 REPO=deepreinforce-ai/Ornith-1.0-35B-GGUF
 QUANT=${1:-Q5_K_M}
-DB_PATH=${DATABASE_PATH:-$APP_ROOT/prisma/dev.db}
+DB_PATH=${DATABASE_PATH:-/var/lib/gpu45/appliance.db}
 
 case "$QUANT" in
   Q4_K_M|Q5_K_M) ;;
