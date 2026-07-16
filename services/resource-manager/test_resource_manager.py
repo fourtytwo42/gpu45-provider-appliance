@@ -28,7 +28,8 @@ class ResourceManagerTests(unittest.TestCase):
                     "INSERT INTO leases VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (job, job, job, priority, 0, "restart", "queued", rm.now(), None, None, None, "{}"),
                 )
-            owner = rm.grant_next(db)
+            with mock.patch.object(rm, "transition_before_grant"):
+                owner = rm.grant_next(db)
             self.assertEqual(owner["job_id"], "codex")
 
     def test_expired_active_lease_is_reclaimed(self):
