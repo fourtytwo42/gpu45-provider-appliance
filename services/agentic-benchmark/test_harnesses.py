@@ -7,10 +7,14 @@ from pathlib import Path
 
 from unittest import mock
 
-from agentic_benchmark.harnesses import BfclAdapter, HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter, run_interruptible
+from agentic_benchmark.harnesses import BfclAdapter, HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter, bfcl_case_passed, run_interruptible
 
 
 class HarnessProcessTests(unittest.TestCase):
+    def test_bfcl_case_pass_requires_full_credit(self):
+        self.assertTrue(bfcl_case_passed(1.0))
+        self.assertFalse(bfcl_case_passed(0.0))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)

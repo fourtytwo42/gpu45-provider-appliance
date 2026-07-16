@@ -26,6 +26,10 @@ class HarnessResult:
     error_class: str | None = None
 
 
+def bfcl_case_passed(reward: float) -> bool:
+    return reward >= 1.0
+
+
 def run_interruptible(
     command: list[str],
     cwd: Path,
@@ -160,7 +164,7 @@ class BfclAdapter:
         score_file = Path(str(payload["scoreFile"]))
         if score_file.is_file():
             artifacts.append(("verifier", score_file))
-        return HarnessResult(True, reward, duration_ms, f"{payload['correct']}/{payload['total']} correct", artifacts=artifacts)
+        return HarnessResult(bfcl_case_passed(reward), reward, duration_ms, f"{payload['correct']}/{payload['total']} correct", artifacts=artifacts)
 
 
 class TauAdapter:
