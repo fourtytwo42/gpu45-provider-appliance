@@ -31,7 +31,7 @@ def _sidecar_checksum(model_path: Path) -> str | None:
 def discover_profiles(database_path: Path) -> list[dict[str, Any]]:
     if not database_path.exists():
         return []
-    db = sqlite3.connect(database_path)
+    db = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     try:
         profile_columns = {row[1] for row in db.execute("PRAGMA table_info(LaunchProfile)")}

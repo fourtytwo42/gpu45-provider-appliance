@@ -16,7 +16,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/gpu45
+ReadWritePaths=/var/lib/gpu45 /etc/gpu45
 MemoryHigh=512M
 MemoryMax=1G
 

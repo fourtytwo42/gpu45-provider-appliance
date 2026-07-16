@@ -226,7 +226,7 @@ class BenchmarkRunner:
 
     def _active_profile(self) -> str | None:
         try:
-            with sqlite3.connect(self.appliance_db) as db:
+            with sqlite3.connect(f"file:{self.appliance_db}?mode=ro", uri=True) as db:
                 row = db.execute("SELECT name FROM LaunchProfile WHERE active=1 ORDER BY updatedAt DESC LIMIT 1").fetchone()
                 return str(row[0]) if row else None
         except sqlite3.Error:
