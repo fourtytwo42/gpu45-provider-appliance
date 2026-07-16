@@ -73,6 +73,23 @@ class StoreTests(unittest.TestCase):
         self.assertTrue(self.store.set_campaign_action(campaign_id, "cancel"))
         self.assertEqual("cancelled", self.store.apply_pending_control(campaign_id, run["id"]))
 
+    def test_cancel_marks_running_task_cancelled(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Cancel running", "custom", [profile], [suite])
+        runnable = self.store.next_runnable()
+        assert runnable is not None
+        run = self.store.begin_run(runnable["id"], None)
+        self.store.ensure_tasks(run["id"], ["task-one"])
+        task = self.store.next_task(run["id"])
+        assert task is not None
+        self.store.begin_task(task["id"])
+        self.store.set_campaign_action(campaign_id, "cancel")
+        self.assertEqual("cancelled", self.store.apply_pending_control(campaign_id, run["id"]))
+        with self.store.session() as db:
+            status = db.execute("SELECT status FROM tasks WHERE id=?", (task["id"],)).fetchone()[0]
+        self.assertEqual("cancelled", status)
+
 
 if __name__ == "__main__":
     unittest.main()

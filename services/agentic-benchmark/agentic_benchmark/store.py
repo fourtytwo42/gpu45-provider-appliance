@@ -46,6 +46,11 @@ class BenchmarkStore:
             db.execute("UPDATE tasks SET status='interrupted', error_class='service_restart', updated_at=? WHERE status='running'", (stamp,))
             db.execute("UPDATE runs SET status='queued', lease_id=NULL, updated_at=? WHERE status IN ('running','restoring')", (stamp,))
             db.execute("UPDATE campaigns SET status='queued', current_run_id=NULL, updated_at=? WHERE status IN ('running','restoring')", (stamp,))
+            cancelled = [row[0] for row in db.execute("SELECT id FROM campaigns WHERE cancel_requested=1 AND status NOT IN ('completed','failed','cancelled')")]
+            for campaign_id in cancelled:
+                db.execute("UPDATE tasks SET status='cancelled',error_class=COALESCE(error_class,'cancelled'),completed_at=COALESCE(completed_at,?),updated_at=? WHERE run_id IN (SELECT id FROM runs WHERE campaign_id=?) AND status NOT IN ('completed','failed','cancelled')", (stamp, stamp, campaign_id))
+                db.execute("UPDATE runs SET status='cancelled',completed_at=COALESCE(completed_at,?),updated_at=? WHERE campaign_id=? AND status NOT IN ('completed','failed','cancelled')", (stamp, stamp, campaign_id))
+                db.execute("UPDATE campaigns SET status='cancelled',current_run_id=NULL,completed_at=COALESCE(completed_at,?),updated_at=? WHERE id=?", (stamp, stamp, campaign_id))
 
     def sync_qualifications(self, profiles: list[dict[str, Any]]) -> list[str]:
         pending: list[str] = []
@@ -198,12 +203,13 @@ class BenchmarkStore:
             if not control:
                 return "cancelled"
             if control["cancel_requested"]:
-                db.execute("UPDATE tasks SET status='cancelled',updated_at=? WHERE run_id=? AND status IN ('queued','interrupted')", (stamp, run_id))
+                db.execute("UPDATE tasks SET status='cancelled',error_class=CASE WHEN status='running' THEN 'cancelled' ELSE error_class END,completed_at=CASE WHEN status='running' THEN ? ELSE completed_at END,updated_at=? WHERE run_id=? AND status IN ('queued','interrupted','running')", (stamp, stamp, run_id))
                 db.execute("UPDATE runs SET status='cancelled',completed_at=?,updated_at=? WHERE id=?", (stamp, stamp, run_id))
                 db.execute("UPDATE campaigns SET status='cancelled',current_run_id=NULL,completed_at=?,updated_at=? WHERE id=?", (stamp, stamp, campaign_id))
                 self._event(db, campaign_id, run_id, None, "campaign.cancelled", "Campaign cancelled at a task boundary", {})
                 return "cancelled"
             if control["pause_requested"]:
+                db.execute("UPDATE tasks SET status='interrupted',error_class='paused',updated_at=? WHERE run_id=? AND status='running'", (stamp, run_id))
                 db.execute("UPDATE runs SET status='interrupted',updated_at=? WHERE id=?", (stamp, run_id))
                 db.execute("UPDATE campaigns SET status='paused',current_run_id=NULL,updated_at=? WHERE id=?", (stamp, campaign_id))
                 self._event(db, campaign_id, run_id, None, "campaign.paused", "Campaign paused at a task boundary", {})

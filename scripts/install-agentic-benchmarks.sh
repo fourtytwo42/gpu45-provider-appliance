@@ -106,6 +106,7 @@ runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark XDG_CONFIG_HOME=
 runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark XDG_CONFIG_HOME=/var/lib/gpu45-benchmark/.config UV_NO_CONFIG=1 UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/swebench/bin/python" -e "$harness_root/sources/swebench"
 [[ -x "$harness_root/venvs/mini-swe-agent/bin/python" ]] || runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark XDG_CONFIG_HOME=/var/lib/gpu45-benchmark/.config UV_NO_CONFIG=1 UV_CACHE_DIR="$cache_root/uv" "$uv_bin" venv --python 3.12 "$harness_root/venvs/mini-swe-agent"
 runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark XDG_CONFIG_HOME=/var/lib/gpu45-benchmark/.config UV_NO_CONFIG=1 UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/mini-swe-agent/bin/python" -e "$harness_root/sources/miniSweAgent"
+runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark XDG_CONFIG_HOME=/var/lib/gpu45-benchmark/.config UV_NO_CONFIG=1 UV_CACHE_DIR="$cache_root/uv" "$uv_bin" pip install --python "$harness_root/venvs/mini-swe-agent/bin/python" 'litellm[proxy]==1.92.0'
 runuser -u gpu45-benchmark -- env HOME=/var/lib/gpu45-benchmark XDG_CONFIG_HOME=/var/lib/gpu45-benchmark/.config UV_NO_CONFIG=1 UV_CACHE_DIR="$cache_root/uv" UV_PROJECT_ENVIRONMENT="$harness_root/venvs/harbor" "$uv_bin" sync --frozen --python 3.12 --project "$harness_root/sources/harbor"
 
 "$harness_root/venvs/bfcl/bin/bfcl" --help >/dev/null

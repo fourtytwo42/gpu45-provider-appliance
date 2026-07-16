@@ -7,6 +7,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -335,6 +336,7 @@ class BenchmarkRunner:
                         passed, message = self.smoke.run(task["external_task_id"], alias, lease)
                         self.store.complete_task(task["id"], passed, int((time.monotonic() - started) * 1000), None if passed else "model_failure", message)
                 except HarnessInterrupted:
+                    self._cleanup_benchmark_containers(run["campaign_id"])
                     self.store.apply_pending_control(run["campaign_id"], run["id"])
                     raise CampaignControlled("campaign control requested")
                 except ResourcePreempted:
@@ -362,6 +364,27 @@ class BenchmarkRunner:
                         print(f"agentic-runner: previous profile restore failed: {exc!r}", flush=True)
                 lease.release()
             time.sleep(60 if lease and lease.lost.is_set() else 1)
+
+    def _cleanup_benchmark_containers(self, campaign_id: str) -> None:
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "--format", '{{.ID}}\t{{.Names}}\t{{.Label "com.docker.compose.project.working_dir"}}'],
+                capture_output=True, text=True, timeout=10, check=True,
+            )
+            owned: list[str] = []
+            artifact_prefix = str((self.artifact_root / campaign_id).resolve())
+            for line in result.stdout.splitlines():
+                parts = line.split("\t", 2)
+                if len(parts) < 2:
+                    continue
+                container_id, name = parts[:2]
+                working_dir = parts[2] if len(parts) > 2 else ""
+                if name.startswith("minisweagent-") or working_dir.startswith(artifact_prefix):
+                    owned.append(container_id)
+            if owned:
+                subprocess.run(["docker", "rm", "-f", *owned], capture_output=True, timeout=30, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(f"agentic-runner: benchmark container cleanup failed: {exc!r}", flush=True)
 
     def _control_request(self, campaign_id: str) -> str | None:
         control = self.store.campaign_control(campaign_id)
