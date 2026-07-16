@@ -74,6 +74,32 @@ class BenchmarkStore:
         with self.session() as db:
             return [dict(row) for row in db.execute("SELECT * FROM model_qualifications ORDER BY profile_name")]
 
+    def pending_qualification_names(self) -> list[str]:
+        with self.session() as db:
+            return [row[0] for row in db.execute("SELECT profile_name FROM model_qualifications WHERE status IN ('pending','interrupted') ORDER BY updated_at")]
+
+    def ensure_smoke_campaign(self, profile: dict[str, Any], suite: dict[str, Any]) -> str | None:
+        with self.session() as db:
+            qualification = db.execute(
+                "SELECT status,last_smoke_campaign_id FROM model_qualifications WHERE profile_name=? AND profile_hash=?",
+                (profile["name"], profile["profileHash"]),
+            ).fetchone()
+            if not qualification or qualification["status"] not in {"pending", "interrupted"}:
+                return None
+            if qualification["last_smoke_campaign_id"]:
+                campaign = db.execute("SELECT status FROM campaigns WHERE id=?", (qualification["last_smoke_campaign_id"],)).fetchone()
+                if campaign and campaign["status"] not in {"completed", "failed", "cancelled"}:
+                    return str(qualification["last_smoke_campaign_id"])
+        campaign_id = self.create_campaign(
+            f"Compatibility smoke: {profile['name']}", "automatic-model-smoke", [profile], [suite]
+        )
+        with self.session() as db:
+            db.execute(
+                "UPDATE model_qualifications SET status='queued',last_smoke_campaign_id=?,updated_at=? WHERE profile_name=?",
+                (campaign_id, now(), profile["name"]),
+            )
+        return campaign_id
+
     def create_campaign(self, name: str, preset: str, profiles: list[dict[str, Any]], suites: list[dict[str, Any]]) -> str:
         if not profiles or not suites:
             raise ValueError("A campaign requires at least one model and one suite")
@@ -143,6 +169,110 @@ class BenchmarkStore:
             if result.rowcount:
                 self._event(db, campaign_id, None, None, event_type, action.capitalize(), {})
             return bool(result.rowcount)
+
+    def next_runnable(self) -> dict[str, Any] | None:
+        with self.session() as db:
+            row = db.execute(
+                """
+                SELECT r.*,c.status campaign_status,c.pause_requested,c.cancel_requested,c.previous_profile_name
+                FROM runs r JOIN campaigns c ON c.id=r.campaign_id
+                WHERE c.status='queued' AND c.pause_requested=0 AND c.cancel_requested=0
+                  AND r.status IN ('queued','interrupted')
+                ORDER BY c.created_at,r.created_at LIMIT 1
+                """
+            ).fetchone()
+            return dict(row) if row else None
+
+    def begin_run(self, run_id: str, previous_profile_name: str | None) -> dict[str, Any]:
+        stamp = now()
+        with self.session() as db:
+            run = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+            if not run:
+                raise ValueError("run not found")
+            db.execute("UPDATE campaigns SET status='running',current_run_id=?,previous_profile_name=COALESCE(previous_profile_name,?),started_at=COALESCE(started_at,?),updated_at=? WHERE id=?", (run_id, previous_profile_name, stamp, stamp, run["campaign_id"]))
+            db.execute("UPDATE runs SET status='running',started_at=COALESCE(started_at,?),updated_at=? WHERE id=?", (stamp, stamp, run_id))
+            self._event(db, run["campaign_id"], run_id, None, "run.started", f"Started {run['suite_id']} on {run['profile_name']}", {})
+            return dict(run)
+
+    def ensure_tasks(self, run_id: str, external_task_ids: list[str]) -> None:
+        stamp = now()
+        with self.session() as db:
+            for external_id in external_task_ids:
+                db.execute(
+                    "INSERT OR IGNORE INTO tasks(id,run_id,external_task_id,created_at,updated_at) VALUES(?,?,?,?,?)",
+                    (str(uuid.uuid4()), run_id, external_id, stamp, stamp),
+                )
+            db.execute("UPDATE runs SET expected_tasks=?,updated_at=? WHERE id=?", (len(external_task_ids), stamp, run_id))
+
+    def next_task(self, run_id: str) -> dict[str, Any] | None:
+        with self.session() as db:
+            row = db.execute("SELECT * FROM tasks WHERE run_id=? AND status IN ('queued','interrupted') ORDER BY created_at LIMIT 1", (run_id,)).fetchone()
+            return dict(row) if row else None
+
+    def begin_task(self, task_id: str) -> None:
+        stamp = now()
+        with self.session() as db:
+            db.execute("UPDATE tasks SET status='running',started_at=?,updated_at=? WHERE id=?", (stamp, stamp, task_id))
+
+    def complete_task(self, task_id: str, passed: bool, duration_ms: int, error_class: str | None = None, user_message: str | None = None, technical_error: str | None = None) -> None:
+        stamp = now()
+        status = "completed" if passed else "failed"
+        with self.session() as db:
+            task = db.execute("SELECT run_id FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if not task:
+                return
+            db.execute(
+                "UPDATE tasks SET status=?,passed=?,reward=?,duration_ms=?,error_class=?,user_message=?,technical_error=?,completed_at=?,updated_at=? WHERE id=?",
+                (status, int(passed), 1.0 if passed else 0.0, duration_ms, error_class, user_message, technical_error, stamp, stamp, task_id),
+            )
+            self._refresh_run(db, task["run_id"])
+
+    def interrupt_run(self, run_id: str, reason: str) -> None:
+        stamp = now()
+        with self.session() as db:
+            run = db.execute("SELECT campaign_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            if not run:
+                return
+            db.execute("UPDATE tasks SET status='interrupted',error_class='resource_preempted',updated_at=? WHERE run_id=? AND status='running'", (stamp, run_id))
+            db.execute("UPDATE runs SET status='interrupted',lease_id=NULL,updated_at=? WHERE id=?", (stamp, run_id))
+            db.execute("UPDATE campaigns SET status='queued',current_run_id=NULL,updated_at=? WHERE id=?", (stamp, run["campaign_id"]))
+            self._event(db, run["campaign_id"], run_id, None, "run.interrupted", reason, {})
+
+    def fail_run(self, run_id: str, error: str) -> None:
+        stamp = now()
+        with self.session() as db:
+            run = db.execute("SELECT campaign_id,profile_name,suite_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            if not run:
+                return
+            db.execute("UPDATE runs SET status='failed',error=?,completed_at=?,updated_at=? WHERE id=?", (error, stamp, stamp, run_id))
+            self._finish_campaign_if_ready(db, run["campaign_id"])
+            if run["suite_id"] == "gpu45-smoke-v1":
+                db.execute("UPDATE model_qualifications SET status='failed',remediation=?,last_checked_at=?,updated_at=? WHERE profile_name=?", (error, stamp, stamp, run["profile_name"]))
+
+    def _refresh_run(self, db: sqlite3.Connection, run_id: str) -> None:
+        stamp = now()
+        counts = db.execute("SELECT COUNT(*) total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) passed,SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) failed FROM tasks WHERE run_id=?", (run_id,)).fetchone()
+        expected = int(db.execute("SELECT expected_tasks FROM runs WHERE id=?", (run_id,)).fetchone()[0])
+        done = int(counts["passed"] or 0) + int(counts["failed"] or 0)
+        status = "completed" if expected > 0 and done >= expected else "running"
+        score = (float(counts["passed"] or 0) / expected) if expected else None
+        db.execute("UPDATE runs SET status=?,completed_tasks=?,passed_tasks=?,failed_tasks=?,score=?,completed_at=CASE WHEN ?='completed' THEN ? ELSE completed_at END,updated_at=? WHERE id=?", (status, done, int(counts["passed"] or 0), int(counts["failed"] or 0), score, status, stamp, stamp, run_id))
+        if status == "completed":
+            run = db.execute("SELECT campaign_id,profile_name,suite_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            if run["suite_id"] == "gpu45-smoke-v1":
+                qualification_status = "eligible" if int(counts["failed"] or 0) == 0 else "failed"
+                remediation = None if qualification_status == "eligible" else f"{int(counts['failed'] or 0)} smoke checks failed"
+                db.execute("UPDATE model_qualifications SET status=?,remediation=?,last_checked_at=?,updated_at=? WHERE profile_name=?", (qualification_status, remediation, stamp, stamp, run["profile_name"]))
+            self._finish_campaign_if_ready(db, run["campaign_id"])
+
+    def _finish_campaign_if_ready(self, db: sqlite3.Connection, campaign_id: str) -> None:
+        remaining = db.execute("SELECT COUNT(*) FROM runs WHERE campaign_id=? AND status NOT IN ('completed','failed','cancelled')", (campaign_id,)).fetchone()[0]
+        if remaining:
+            db.execute("UPDATE campaigns SET status='queued',current_run_id=NULL,updated_at=? WHERE id=?", (now(), campaign_id))
+            return
+        failures = db.execute("SELECT COUNT(*) FROM runs WHERE campaign_id=? AND status='failed'", (campaign_id,)).fetchone()[0]
+        status = "failed" if failures else "completed"
+        db.execute("UPDATE campaigns SET status=?,current_run_id=NULL,completed_at=?,updated_at=? WHERE id=?", (status, now(), now(), campaign_id))
 
     def _event(self, db: sqlite3.Connection, campaign_id: str | None, run_id: str | None, task_id: str | None, event_type: str, message: str, details: dict[str, Any]) -> None:
         db.execute("INSERT INTO events(campaign_id,run_id,task_id,event_type,message,details_json,created_at) VALUES(?,?,?,?,?,?,?)", (campaign_id, run_id, task_id, event_type, message, json.dumps(details, sort_keys=True), now()))

@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 import urllib.request
 
 DB_PATH = Path(os.environ.get("GPU45_RESOURCE_DB", "/var/lib/gpu45/resource-manager.db"))
+APPLIANCE_DB_PATH = Path(os.environ.get("GPU45_APPLIANCE_DB", "/var/lib/gpu45/appliance.db"))
+PROVIDER_PROFILE_PATH = Path(os.environ.get("GPU45_PROVIDER_PROFILE", "/etc/gpu45/provider-profile.json"))
 TOKEN = os.environ.get("GPU45_RESOURCE_MANAGER_TOKEN", "")
 HOST = os.environ.get("GPU45_RESOURCE_MANAGER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("GPU45_RESOURCE_MANAGER_PORT", "8040"))
@@ -210,14 +212,52 @@ def post_local(url: str, payload: dict | None = None) -> None:
 def transition_before_grant(db: sqlite3.Connection, row: sqlite3.Row) -> None:
     metadata = json.loads(row["metadata_json"] or "{}")
     stopped = []
-    if row["kind"] == "llm":
+    if row["kind"] in {"llm", "benchmark"}:
         set_transition(db, "starting")
-    if row["kind"] != "llm" and service_active("llama-openai.service"):
+    if row["kind"] not in {"llm", "benchmark"} and service_active("llama-openai.service"):
         set_transition(db, "releasing")
         service_action("stop", "llama-openai.service"); stopped.append("llama-openai.service")
         set_transition(db, None)
     metadata["stoppedServices"] = stopped
     db.execute("UPDATE leases SET metadata_json=? WHERE lease_id=?", (json.dumps(metadata), row["lease_id"]))
+
+
+def activate_profile(profile_name: str) -> dict[str, object]:
+    """Activate a catalog profile without accepting arbitrary paths or commands."""
+    if not profile_name.strip():
+        raise ValueError("profileName is required")
+    if not APPLIANCE_DB_PATH.is_file():
+        raise ValueError("appliance model catalog is unavailable")
+    with sqlite3.connect(APPLIANCE_DB_PATH, timeout=30) as appliance_db:
+        appliance_db.row_factory = sqlite3.Row
+        row = appliance_db.execute("SELECT * FROM LaunchProfile WHERE name=?", (profile_name,)).fetchone()
+        if not row:
+            raise ValueError("unknown launch profile")
+        profile = dict(row)
+        model_path = Path(str(profile.get("modelPath") or ""))
+        if not model_path.is_file():
+            raise ValueError("launch profile model file is missing")
+        asset = appliance_db.execute(
+            "SELECT served FROM ModelAsset WHERE path=? LIMIT 1", (str(model_path),)
+        ).fetchone()
+        if not asset or not bool(asset["served"]):
+            raise ValueError("launch profile is not served by the appliance catalog")
+
+        PROVIDER_PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary = PROVIDER_PROFILE_PATH.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(profile, indent=2) + "\n", encoding="utf-8")
+        os.chmod(temporary, 0o640)
+        temporary.replace(PROVIDER_PROFILE_PATH)
+        appliance_db.execute("UPDATE LaunchProfile SET active=CASE WHEN name=? THEN 1 ELSE 0 END", (profile_name,))
+        appliance_db.commit()
+
+    service_action("restart", "llama-openai.service")
+    deadline = time.time() + 600
+    while time.time() < deadline:
+        if backend_ready():
+            return {"ok": True, "profileName": profile_name, "modelPath": str(model_path)}
+        time.sleep(1)
+    raise TimeoutError("provider did not become ready after profile activation")
 
 
 def restore_after_release(db: sqlite3.Connection, row: sqlite3.Row) -> None:
@@ -425,6 +465,14 @@ class Handler(BaseHTTPRequestHandler):
                         "granted": granted, "leaseId": lease_id,
                     })
                     return
+                if path == "/v1/provider/activate":
+                    active = db.execute("SELECT * FROM leases WHERE status='active'").fetchone()
+                    if not active or active["kind"] not in {"benchmark", "llm"}:
+                        self.send_json(HTTPStatus.CONFLICT, {"error": "an active LLM or benchmark lease is required"}); return
+                    result = activate_profile(str(payload.get("profileName") or ""))
+                    event(db, "provider.profile_activated", active["lease_id"], active["job_id"], profileName=result["profileName"])
+                    set_transition(db, None)
+                    self.send_json(HTTPStatus.OK, result); return
                 parts = path.strip("/").split("/")
                 if len(parts) == 4 and parts[:2] == ["v1", "workers"] and parts[3] == "touch":
                     kind = parts[2]
@@ -446,7 +494,7 @@ class Handler(BaseHTTPRequestHandler):
                         grant_next(db)
                         self.send_json(HTTPStatus.OK, {"ok": True}); return
                 self.send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
-        except (KeyError, ValueError, json.JSONDecodeError) as exc:
+        except (KeyError, ValueError, TimeoutError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
             self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
 
 

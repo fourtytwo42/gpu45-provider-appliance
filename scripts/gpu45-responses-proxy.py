@@ -31,6 +31,7 @@ LLM_IDLE_SECONDS = float(os.environ.get("GPU45_LLM_IDLE_SECONDS", "120"))
 LLM_IDLE_LOCK = threading.Lock()
 LLM_IDLE_TIMER = None
 LLM_IDLE_GENERATION = 0
+AGENTIC_BENCHMARK_TOKEN = os.environ.get("GPU45_AGENTIC_TOKEN", "")
 
 
 def cancel_llm_idle_unload():
@@ -919,6 +920,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
     def proxy(self):
         path = urlparse(self.path).path
+        benchmark_request = bool(AGENTIC_BENCHMARK_TOKEN) and self.headers.get("X-GPU45-Benchmark-Token", "") == AGENTIC_BENCHMARK_TOKEN
         api_key, auth_error = authenticate(self.headers)
         if auth_error:
             self.send_json(401, {"error": {"message": auth_error, "type": "authentication_error"}})
@@ -1004,7 +1006,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         headers = {
             key: value
             for key, value in self.headers.items()
-            if key.lower() not in {"host", "content-length", "connection", "accept-encoding", "authorization", "x-api-key"}
+            if key.lower() not in {"host", "content-length", "connection", "accept-encoding", "authorization", "x-api-key", "x-gpu45-benchmark-token"}
         }
         if self.command == "POST" and path == "/v1/responses":
             headers["Accept"] = "text/event-stream"
@@ -1026,6 +1028,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     api_key["id"] if api_key else None,
                     selected_model["servedAlias"] if selected_model else None,
                     requested_model,
+                    benchmark_request,
                 )
             else:
                 usage_recorded = self.proxy_upstream_response(
@@ -1099,7 +1102,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(payload)
             return bool(inference_request)
 
-    def proxy_responses_stream(self, req, request_body, namespace_map, api_key_id, model, requested_model):
+    def proxy_responses_stream(self, req, request_body, namespace_map, api_key_id, model, requested_model, benchmark_request=False):
         request_id = f"gpu45-{uuid.uuid4().hex[:12]}"
         started_at = time.time()
         input_size = len(json.dumps(request_body.get("input", ""), ensure_ascii=False))
@@ -1117,7 +1120,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         def read_upstream():
             stream_lease = None
             try:
-                stream_lease = acquire_lease(f"codex-{request_id}", "llm", 100, False, "keep-loaded", timeout=600)
+                if not benchmark_request:
+                    stream_lease = acquire_lease(f"codex-{request_id}", "llm", 100, False, "keep-loaded", timeout=600)
                 selected = resolve_model(model)
                 if not selected:
                     raise RuntimeError(f"Model is no longer available: {model}")

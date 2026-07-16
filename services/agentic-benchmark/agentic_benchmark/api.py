@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .domain import load_suite_manifests
 from .model_catalog import discover_profiles
+from .runner import BenchmarkRunner
 from .store import BenchmarkStore
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
@@ -54,7 +55,7 @@ def service_status() -> dict[str, object]:
         "database": str(DATABASE_PATH),
         "artifactRoot": str(ARTIFACT_ROOT),
         "models": len(profiles),
-        "pendingQualifications": len(pending),
+        "pendingQualifications": len(STORE.pending_qualification_names()),
         "suites": len(suites),
         "docker": docker_status(),
         "storage": storage_status(),
@@ -151,6 +152,7 @@ def serve() -> None:
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     STORE.initialize()
+    BenchmarkRunner(STORE, PACKAGE_ROOT, APPLIANCE_DATABASE_PATH, MIN_FREE_BYTES).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"GPU45 agentic benchmark coordinator listening on {HOST}:{PORT}", flush=True)
     server.serve_forever()

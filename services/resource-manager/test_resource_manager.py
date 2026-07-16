@@ -63,6 +63,23 @@ class ResourceManagerTests(unittest.TestCase):
             rm.grant_next(db)
             self.assertEqual(db.execute("SELECT value FROM state WHERE key='transition'").fetchone()[0], "starting")
 
+    def test_benchmark_grant_keeps_loaded_llm(self):
+        with rm.connect() as db:
+            db.execute(
+                "INSERT INTO leases VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("benchmark", "campaign", "benchmark", 10, 1, "restart-task", "queued", rm.now(), None, None, None, "{}"),
+            )
+            original_active, original_action = rm.service_active, rm.service_action
+            calls = []
+            rm.service_active = lambda _service: True
+            rm.service_action = lambda action, service: calls.append((action, service))
+            try:
+                rm.grant_next(db)
+            finally:
+                rm.service_active, rm.service_action = original_active, original_action
+            self.assertEqual(calls, [])
+            self.assertEqual(db.execute("SELECT value FROM state WHERE key='transition'").fetchone()[0], "starting")
+
     def test_restoring_stopped_llm_records_transition(self):
         with rm.connect() as db:
             db.execute(
