@@ -261,6 +261,10 @@ def activate_profile(profile_name: str) -> dict[str, object]:
         if not asset or not bool(asset["served"]):
             raise ValueError("launch profile is not served by the appliance catalog")
 
+        active = appliance_db.execute("SELECT name FROM LaunchProfile WHERE active=1 LIMIT 1").fetchone()
+        if active and str(active["name"]) == profile_name and backend_ready():
+            return {"ok": True, "profileName": profile_name, "modelPath": str(model_path), "reused": True}
+
         PROVIDER_PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
         temporary = PROVIDER_PROFILE_PATH.with_suffix(".json.tmp")
         temporary.write_text(json.dumps(profile, indent=2) + "\n", encoding="utf-8")

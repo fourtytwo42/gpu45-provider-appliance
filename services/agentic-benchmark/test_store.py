@@ -102,6 +102,20 @@ class StoreTests(unittest.TestCase):
         self.assertEqual("cancelled", detail["campaign"]["status"])
         self.assertEqual("cancelled", detail["runs"][0]["status"])
 
+    def test_pending_profile_runs_keep_the_same_model_warm(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suites = [
+            {"id": "suite-a", "manifestHash": "suite-a-hash", "taskCount": 1},
+            {"id": "suite-b", "manifestHash": "suite-b-hash", "taskCount": 1},
+        ]
+        campaign_id = self.store.create_campaign("Warm model", "custom", [profile], suites)
+        runs = self.store.campaign_detail(campaign_id)["runs"]
+        first, second = runs
+        self.assertTrue(self.store.has_pending_profile_runs(campaign_id, "model-a", first["id"]))
+        with self.store.session() as db:
+            db.execute("UPDATE runs SET status='completed' WHERE id=?", (second["id"],))
+        self.assertFalse(self.store.has_pending_profile_runs(campaign_id, "model-a", first["id"]))
+
     def test_completed_common_campaign_promotes_top_three_once(self):
         profiles = [{"name": f"model-{i}", "profileHash": f"hash-{i}", "modelPath": f"/models/{i}.gguf"} for i in range(4)]
         common_ids = ["bfcl-v4-local", "tau-text-base", "swe-verified-mini50", "terminal-bench-2"]

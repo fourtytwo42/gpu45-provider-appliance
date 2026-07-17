@@ -441,9 +441,13 @@ class BenchmarkRunner:
                         self.resources.simulator("stop")
                     except Exception as exc:
                         print(f"agentic-runner: tau simulator stop failed: {exc!r}", flush=True)
-                if previous and not lease.lost.is_set():
+                keep_profile_warm = self.store.has_pending_profile_runs(
+                    run["campaign_id"], run["profile_name"], run["id"],
+                )
+                restore_profile = self.store.campaign_previous_profile(run["campaign_id"]) or previous
+                if restore_profile and not keep_profile_warm and not lease.lost.is_set():
                     try:
-                        self.resources.activate(previous)
+                        self.resources.activate(restore_profile)
                     except Exception as exc:
                         print(f"agentic-runner: previous profile restore failed: {exc!r}", flush=True)
                 lease.release()

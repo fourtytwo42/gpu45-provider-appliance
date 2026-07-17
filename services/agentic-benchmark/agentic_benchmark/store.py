@@ -341,7 +341,22 @@ class BenchmarkStore:
                 ORDER BY c.created_at,CASE WHEN r.status='interrupted' THEN 0 ELSE 1 END,r.created_at LIMIT 1
                 """
             ).fetchone()
-            return dict(row) if row else None
+        return dict(row) if row else None
+
+    def has_pending_profile_runs(self, campaign_id: str, profile_name: str, current_run_id: str) -> bool:
+        """Keep a benchmark model warm while its remaining campaign suites run."""
+        with self.session() as db:
+            row = db.execute(
+                "SELECT 1 FROM runs WHERE campaign_id=? AND profile_name=? AND id<>? "
+                "AND status IN ('queued','interrupted','running') LIMIT 1",
+                (campaign_id, profile_name, current_run_id),
+            ).fetchone()
+            return row is not None
+
+    def campaign_previous_profile(self, campaign_id: str) -> str | None:
+        with self.session() as db:
+            row = db.execute("SELECT previous_profile_name FROM campaigns WHERE id=?", (campaign_id,)).fetchone()
+            return str(row[0]) if row and row[0] else None
 
     def begin_run(self, run_id: str, previous_profile_name: str | None) -> dict[str, Any]:
         stamp = now()
