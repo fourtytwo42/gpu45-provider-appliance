@@ -30,6 +30,16 @@ def bfcl_case_passed(reward: float) -> bool:
     return reward >= 1.0
 
 
+def stratified_sample(items: list[str], count: int) -> list[str]:
+    """Select stable, evenly spaced cases so compact campaigns stay comparable."""
+    if count <= 0 or count >= len(items):
+        return list(items)
+    if count == 1:
+        return [items[0]]
+    indices = [round(index * (len(items) - 1) / (count - 1)) for index in range(count)]
+    return [items[index] for index in indices]
+
+
 def run_interruptible(
     command: list[str],
     cwd: Path,
@@ -116,6 +126,12 @@ class BfclAdapter:
                 tasks.extend(str(item) for item in json.loads(marker))
             self._tasks[categories] = tasks
         tasks = list(self._tasks[categories])
+        per_category_limit = int(suite.get("perCategoryLimit") or 0)
+        if per_category_limit:
+            sampled: list[str] = []
+            for category in categories:
+                sampled.extend(stratified_sample([task for task in tasks if task.startswith(f"{category}::")], per_category_limit))
+            tasks = sampled
         validation_limit = int(suite.get("validationLimit") or 0)
         return tasks[:validation_limit] if validation_limit else tasks
 
@@ -194,6 +210,15 @@ class TauAdapter:
                 raise RuntimeError("tau task discovery did not return a task list")
             self._tasks = [str(item) for item in json.loads(marker)]
         tasks = list(self._tasks)
+        domains = {str(domain) for domain in suite.get("domains", [])}
+        if domains:
+            tasks = [task for task in tasks if task.split(":", 1)[0] in domains]
+        per_domain_limit = int(suite.get("perDomainLimit") or 0)
+        if per_domain_limit:
+            selected: list[str] = []
+            for domain in sorted(domains or {task.split(":", 1)[0] for task in tasks}):
+                selected.extend(stratified_sample([task for task in tasks if task.startswith(f"{domain}:")], per_domain_limit))
+            tasks = selected
         trials = max(1, int(suite.get("trials") or 1))
         if trials > 1:
             return [f"{task}:trial-{trial}" for task in tasks for trial in range(1, trials + 1)]
@@ -279,7 +304,8 @@ class SweBenchAdapter:
             if not marker:
                 raise RuntimeError("SWE-bench full task discovery did not return a task list")
             return [str(item) for item in json.loads(marker)]
-        return [str(item) for item in json.loads(self.ids_path.read_text(encoding="utf-8"))]
+        tasks = [str(item) for item in json.loads(self.ids_path.read_text(encoding="utf-8"))]
+        return stratified_sample(tasks, int(suite.get("stratifiedTaskCount") or 0))
 
     def run(
         self,
@@ -387,7 +413,8 @@ class HarborAdapter:
             return [str(item) for item in configured]
         if not self.dataset.is_dir():
             raise FileNotFoundError(f"Terminal-Bench dataset is missing: {self.dataset}")
-        return sorted(path.name for path in self.dataset.iterdir() if (path / "task.toml").is_file())
+        tasks = sorted(path.name for path in self.dataset.iterdir() if (path / "task.toml").is_file())
+        return stratified_sample(tasks, int(suite.get("stratifiedTaskCount") or 0))
 
     def run(
         self,

@@ -1,11 +1,11 @@
 {
   "id": "bfcl-v4-local",
-  "name": "BFCL V4 local deterministic",
+  "name": "BFCL V4 stratified tool use",
   "version": "6ea57973c7a6097fd7c5915698c54c17c5b1b6c8",
   "track": "standardized",
   "adapter": "bfcl",
-  "taskSource": "upstream-local-cases",
-  "taskCount": null,
+  "taskSource": "upstream-stratified-cases",
+  "taskCount": 36,
   "weight": 0.2,
   "timeoutSeconds": 900,
   "requiresDocker": false,
@@ -24,5 +24,6 @@
     "multi_turn_long_context",
     "format_sensitivity"
   ],
-  "excludedCategories": ["live", "web-search", "memory"]
+  "excludedCategories": ["live", "web-search", "memory"],
+  "perCategoryLimit": 3
 }

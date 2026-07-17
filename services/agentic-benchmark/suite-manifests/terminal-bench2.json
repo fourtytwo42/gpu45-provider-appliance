@@ -1,14 +1,15 @@
 {
   "id": "terminal-bench-2",
-  "name": "Terminal-Bench 2.0",
+  "name": "Terminal-Bench 2.0 stratified 8",
   "version": "2.0-69671fba",
   "track": "standardized",
   "adapter": "harbor",
-  "taskSource": "terminal-bench@2.0",
-  "taskCount": 89,
+  "taskSource": "terminal-bench@2.0-stratified",
+  "taskCount": 8,
   "weight": 0.3,
   "timeoutSeconds": 7200,
   "requiresDocker": true,
   "requiresUserSimulator": false,
-  "maxConcurrency": 1
+  "maxConcurrency": 1,
+  "stratifiedTaskCount": 8
 }

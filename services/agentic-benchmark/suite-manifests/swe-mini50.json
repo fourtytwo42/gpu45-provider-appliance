@@ -1,14 +1,15 @@
 {
   "id": "swe-verified-mini50",
-  "name": "SWE-bench Verified Mini-50",
+  "name": "SWE-bench Verified stratified Mini-8",
   "version": "f7bbbb2",
   "track": "standardized-nonofficial-subset",
   "adapter": "swebench",
-  "taskSource": "published-fixed-50",
-  "taskCount": 50,
+  "taskSource": "published-fixed-50-stratified",
+  "taskCount": 8,
   "weight": 0.35,
   "timeoutSeconds": 7200,
   "requiresDocker": true,
   "requiresUserSimulator": false,
-  "maxConcurrency": 1
+  "maxConcurrency": 1,
+  "stratifiedTaskCount": 8
 }

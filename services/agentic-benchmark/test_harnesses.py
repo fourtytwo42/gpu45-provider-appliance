@@ -7,13 +7,18 @@ from pathlib import Path
 
 from unittest import mock
 
-from agentic_benchmark.harnesses import BfclAdapter, HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter, bfcl_case_passed, run_interruptible
+from agentic_benchmark.harnesses import BfclAdapter, HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter, bfcl_case_passed, run_interruptible, stratified_sample
 
 
 class HarnessProcessTests(unittest.TestCase):
     def test_bfcl_case_pass_requires_full_credit(self):
         self.assertTrue(bfcl_case_passed(1.0))
         self.assertFalse(bfcl_case_passed(0.0))
+
+    def test_stratified_sample_is_stable_and_evenly_spaced(self):
+        self.assertEqual(["0", "3", "6", "9"], stratified_sample([str(index) for index in range(10)], 4))
+        self.assertEqual(["0"], stratified_sample(["0", "1"], 1))
+        self.assertEqual(["0", "1"], stratified_sample(["0", "1"], 3))
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -47,6 +52,7 @@ class HarnessProcessTests(unittest.TestCase):
         adapter = SweBenchAdapter(harness, self.root / "artifacts")
         self.assertEqual(["django__django-11790", "sympy__sympy-123"], adapter.tasks({}))
         self.assertEqual(["one"], adapter.tasks({"taskIds": ["one"]}))
+        self.assertEqual(["django__django-11790", "sympy__sympy-123"], adapter.tasks({"stratifiedTaskCount": 2}))
 
     def test_harbor_discovers_pinned_terminal_bench_tasks(self):
         cache = self.root / "cache"
@@ -60,6 +66,7 @@ class HarnessProcessTests(unittest.TestCase):
             adapter = HarborAdapter(self.root / "harnesses", self.root / "artifacts", "token")
             self.assertEqual(["task-a", "task-b"], adapter.tasks({}))
             self.assertEqual(["one"], adapter.tasks({"taskIds": ["one"]}))
+            self.assertEqual(["task-a"], adapter.tasks({"stratifiedTaskCount": 1}))
         finally:
             if previous is None:
                 os.environ.pop("GPU45_AGENTIC_CACHE_ROOT", None)
@@ -81,6 +88,14 @@ class HarnessProcessTests(unittest.TestCase):
             adapter.tasks({"trials": 3}),
         )
 
+    def test_tau_stratifies_each_requested_domain(self):
+        adapter = TauAdapter(self.root / "harnesses", self.root / "artifacts")
+        adapter._tasks = ["airline:0", "airline:1", "airline:2", "retail:0", "retail:1", "retail:2", "telecom:0"]
+        self.assertEqual(
+            ["airline:0", "airline:2", "retail:0", "retail:2"],
+            adapter.tasks({"domains": ["airline", "retail"], "perDomainLimit": 2}),
+        )
+
     @mock.patch("agentic_benchmark.harnesses.subprocess.run")
     def test_bfcl_discovers_individual_cases_and_honors_validation_limit(self, run):
         run.return_value = mock.Mock(stdout='GPU45_TASKS=["simple_python::simple_python_0","simple_python::simple_python_1"]\n')
@@ -92,6 +107,7 @@ class HarnessProcessTests(unittest.TestCase):
             adapter.tasks(suite),
         )
         self.assertEqual(["simple_python::simple_python_0"], adapter.tasks({**suite, "validationLimit": 1}))
+        self.assertEqual(["simple_python::simple_python_0"], adapter.tasks({**suite, "perCategoryLimit": 1}))
         run.assert_called_once()
 
     @mock.patch("agentic_benchmark.harnesses.subprocess.run")
