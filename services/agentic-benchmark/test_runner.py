@@ -16,6 +16,8 @@ class ResourceClientTests(unittest.TestCase):
             client.activate("model-a")
 
         self.assertEqual(2, client.post.call_count)
+        for call in client.post.call_args_list:
+            self.assertEqual(ResourceClient.PROVIDER_ACTIVATION_TIMEOUT, call.kwargs["timeout"])
 
 
 if __name__ == "__main__":

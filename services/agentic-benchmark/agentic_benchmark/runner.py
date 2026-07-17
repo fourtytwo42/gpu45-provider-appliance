@@ -73,6 +73,8 @@ class BenchmarkLease:
 
 
 class ResourceClient:
+    PROVIDER_ACTIVATION_TIMEOUT = 660
+
     def __init__(self) -> None:
         self.url = os.environ.get("GPU45_RESOURCE_MANAGER_URL", "http://127.0.0.1:8040").rstrip("/")
         self.token = os.environ.get("GPU45_RESOURCE_MANAGER_TOKEN", "")
@@ -81,8 +83,8 @@ class ResourceClient:
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token}"}
 
-    def post(self, path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        return request_json(self.url + path, payload, self.headers, 120)
+    def post(self, path: str, payload: dict[str, Any], timeout: int = 120) -> tuple[int, dict[str, Any]]:
+        return request_json(self.url + path, payload, self.headers, timeout)
 
     def get(self, path: str) -> tuple[int, dict[str, Any]]:
         return request_json(self.url + path, headers=self.headers, timeout=30)
@@ -110,7 +112,13 @@ class ResourceClient:
     def activate(self, profile_name: str) -> None:
         deadline = time.time() + 180
         while True:
-            status, result = self.post("/v1/provider/activate", {"profileName": profile_name})
+            # The resource manager waits up to ten minutes for a cold model load.
+            # Do not abandon the owning transition at the generic request timeout.
+            status, result = self.post(
+                "/v1/provider/activate",
+                {"profileName": profile_name},
+                timeout=self.PROVIDER_ACTIVATION_TIMEOUT,
+            )
             if status == 200:
                 return
             if status != 503 or time.time() >= deadline:
