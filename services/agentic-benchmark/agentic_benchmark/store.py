@@ -275,6 +275,27 @@ class BenchmarkStore:
             result = db.execute(f"UPDATE campaigns SET {assignment},updated_at=? WHERE id=?", (stamp, campaign_id))
             if result.rowcount:
                 self._event(db, campaign_id, None, None, event_type, action.capitalize(), {})
+                if action == "cancel":
+                    running = db.execute(
+                        "SELECT 1 FROM runs WHERE campaign_id=? AND status IN ('running','restoring') LIMIT 1",
+                        (campaign_id,),
+                    ).fetchone()
+                    if not running:
+                        db.execute(
+                            "UPDATE tasks SET status='cancelled',error_class=COALESCE(error_class,'cancelled'),completed_at=COALESCE(completed_at,?),updated_at=? "
+                            "WHERE run_id IN (SELECT id FROM runs WHERE campaign_id=?) AND status NOT IN ('completed','failed','cancelled')",
+                            (stamp, stamp, campaign_id),
+                        )
+                        db.execute(
+                            "UPDATE runs SET status='cancelled',completed_at=COALESCE(completed_at,?),updated_at=? "
+                            "WHERE campaign_id=? AND status NOT IN ('completed','failed','cancelled')",
+                            (stamp, stamp, campaign_id),
+                        )
+                        db.execute(
+                            "UPDATE campaigns SET status='cancelled',current_run_id=NULL,completed_at=COALESCE(completed_at,?),updated_at=? WHERE id=?",
+                            (stamp, stamp, campaign_id),
+                        )
+                        self._event(db, campaign_id, None, None, "campaign.cancelled", "Campaign cancelled while idle", {})
             return bool(result.rowcount)
 
     def campaign_control(self, campaign_id: str) -> dict[str, Any] | None:

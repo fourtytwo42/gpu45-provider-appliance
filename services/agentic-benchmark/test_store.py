@@ -90,6 +90,18 @@ class StoreTests(unittest.TestCase):
             status = db.execute("SELECT status FROM tasks WHERE id=?", (task["id"],)).fetchone()[0]
         self.assertEqual("cancelled", status)
 
+    def test_cancelled_paused_campaign_finishes_without_runner_wakeup(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Cancel paused", "custom", [profile], [suite])
+        with self.store.session() as db:
+            db.execute("UPDATE campaigns SET status='paused',pause_requested=1 WHERE id=?", (campaign_id,))
+            db.execute("UPDATE runs SET status='interrupted' WHERE campaign_id=?", (campaign_id,))
+        self.assertTrue(self.store.set_campaign_action(campaign_id, "cancel"))
+        detail = self.store.campaign_detail(campaign_id)
+        self.assertEqual("cancelled", detail["campaign"]["status"])
+        self.assertEqual("cancelled", detail["runs"][0]["status"])
+
     def test_completed_common_campaign_promotes_top_three_once(self):
         profiles = [{"name": f"model-{i}", "profileHash": f"hash-{i}", "modelPath": f"/models/{i}.gguf"} for i in range(4)]
         common_ids = ["bfcl-v4-local", "tau-text-base", "swe-verified-mini50", "terminal-bench-2"]
