@@ -52,6 +52,34 @@ class NamespaceToolTranslationTests(unittest.TestCase):
         self.assertEqual({"cached_tokens": 9, "reasoning_tokens": 3}, PROXY.usage_details(response))
         self.assertEqual(1, PROXY.response_tool_calls(response))
 
+    def test_chat_completion_tool_calls_are_counted(self):
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}},
+                            {"id": "call_2", "type": "function", "function": {"name": "submit", "arguments": "{}"}},
+                        ],
+                    }
+                }
+            ]
+        }
+
+        self.assertEqual(2, PROXY.response_tool_calls(response))
+
+    def test_chat_completion_json_is_parsed_without_rewriting_payload(self):
+        payload = b'{"usage":{"prompt_tokens":12,"completion_tokens":4},"choices":[{"message":{"tool_calls":[{"id":"call_1"}]}}]}'
+
+        forwarded, response = PROXY.decode_upstream_response(
+            "/v1/chat/completions", payload, {}
+        )
+
+        self.assertEqual(payload, forwarded)
+        self.assertEqual((12, 4), PROXY.usage_tokens(response))
+        self.assertEqual(1, PROXY.response_tool_calls(response))
+
     def test_benchmark_chat_request_does_not_acquire_interactive_lease(self):
         self.assertFalse(PROXY.should_acquire_eager_interactive_lease("/v1/chat/completions", True))
         self.assertTrue(PROXY.should_acquire_eager_interactive_lease("/v1/chat/completions", False))

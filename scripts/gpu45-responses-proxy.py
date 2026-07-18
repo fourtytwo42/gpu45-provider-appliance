@@ -357,11 +357,36 @@ def usage_details(response):
 def response_tool_calls(response):
     if not isinstance(response, dict):
         return 0
-    return sum(
+    responses_calls = sum(
         1
         for item in response.get("output", []) or []
         if isinstance(item, dict) and item.get("type") in {"function_call", "computer_call", "custom_tool_call"}
     )
+    chat_calls = 0
+    for choice in response.get("choices", []) or []:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            continue
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            chat_calls += sum(1 for call in tool_calls if isinstance(call, dict))
+    return responses_calls + chat_calls
+
+
+def decode_upstream_response(path, payload, namespace_map):
+    """Parse JSON for metrics while preserving non-Responses payload bytes."""
+    if not payload:
+        return payload, None
+    try:
+        response_body = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return payload, None
+    if path == "/v1/responses":
+        response_body = restore_namespaced_calls(response_body, namespace_map)
+        payload = json.dumps(response_body, ensure_ascii=False).encode("utf-8")
+    return payload, response_body
 
 
 def benchmark_correlation(headers):
@@ -1240,16 +1265,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 return self.stream_sse(resp, request_body, namespace_map, api_key_id, model, requested_model)
 
             payload = resp.read()
-            response_body = None
-            if path == "/v1/responses" and payload:
-                try:
-                    response_body = restore_namespaced_calls(
-                        json.loads(payload.decode("utf-8")), namespace_map
-                    )
-                    payload = json.dumps(response_body, ensure_ascii=False).encode("utf-8")
-                    store_response(request_body or {}, response_body)
-                except Exception as exc:
-                    print(f"response store skipped: {exc}", flush=True)
+            payload, response_body = decode_upstream_response(path, payload, namespace_map)
+            if path == "/v1/responses" and response_body:
+                store_response(request_body or {}, response_body)
             if inference_request:
                 record_usage(api_key_id, model or "unknown", requested_model, resp.status, response_body)
             self.send_header("Content-Length", str(len(payload)))
