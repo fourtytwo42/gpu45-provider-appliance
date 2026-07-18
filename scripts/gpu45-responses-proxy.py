@@ -32,6 +32,14 @@ LLM_IDLE_LOCK = threading.Lock()
 LLM_IDLE_TIMER = None
 LLM_IDLE_GENERATION = 0
 AGENTIC_BENCHMARK_TOKEN = os.environ.get("GPU45_AGENTIC_TOKEN", "")
+AGENTIC_BENCHMARK_URL = os.environ.get("GPU45_AGENTIC_URL", "http://127.0.0.1:8055").rstrip("/")
+BENCHMARK_REQUEST_CONTEXT = threading.local()
+BENCHMARK_CORRELATION_HEADERS = {
+    "campaign_id": "X-GPU45-Benchmark-Campaign",
+    "run_id": "X-GPU45-Benchmark-Run",
+    "task_id": "X-GPU45-Benchmark-Task",
+    "attempt": "X-GPU45-Benchmark-Attempt",
+}
 
 
 def cancel_llm_idle_unload():
@@ -336,6 +344,119 @@ def usage_tokens(response):
     return int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0), int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0)
 
 
+def usage_details(response):
+    usage = response.get("usage", {}) if isinstance(response, dict) else {}
+    input_details = usage.get("input_tokens_details", {}) or {}
+    output_details = usage.get("output_tokens_details", {}) or {}
+    return {
+        "cached_tokens": int(input_details.get("cached_tokens", 0) or 0),
+        "reasoning_tokens": int(output_details.get("reasoning_tokens", 0) or 0),
+    }
+
+
+def response_tool_calls(response):
+    if not isinstance(response, dict):
+        return 0
+    return sum(
+        1
+        for item in response.get("output", []) or []
+        if isinstance(item, dict) and item.get("type") in {"function_call", "computer_call", "custom_tool_call"}
+    )
+
+
+def benchmark_correlation(headers):
+    values = {key: str(headers.get(header, "")).strip() for key, header in BENCHMARK_CORRELATION_HEADERS.items()}
+    if not all(values.values()):
+        return None
+    try:
+        values["attempt"] = int(values["attempt"])
+    except (TypeError, ValueError):
+        return None
+    if values["attempt"] < 1:
+        return None
+    return values
+
+
+def llama_metrics_snapshot():
+    try:
+        with urllib.request.urlopen(UPSTREAM + "/metrics", timeout=2) as response:
+            text = response.read(1_000_000).decode("utf-8", "replace")
+    except (OSError, urllib.error.URLError, TimeoutError):
+        return None
+    values = {}
+    for name, key in (
+        ("llamacpp:prompt_tokens_total", "prompt_tokens"),
+        ("llamacpp:tokens_predicted_total", "completion_tokens"),
+    ):
+        match = re.search(rf"(?m)^{re.escape(name)}\s+([0-9.eE+-]+)$", text)
+        if not match:
+            return None
+        values[key] = int(float(match.group(1)))
+    return values
+
+
+def start_benchmark_request_context(headers, path):
+    correlation = benchmark_correlation(headers)
+    if not correlation:
+        BENCHMARK_REQUEST_CONTEXT.value = None
+        return
+    BENCHMARK_REQUEST_CONTEXT.value = {
+        **correlation,
+        "request_id": uuid.uuid4().hex,
+        "api_path": path,
+        "started": time.monotonic(),
+        "metrics_start": llama_metrics_snapshot(),
+        "reported": False,
+    }
+
+
+def submit_benchmark_metric(model, requested_model, status_code, response):
+    context = getattr(BENCHMARK_REQUEST_CONTEXT, "value", None)
+    if not context or context.get("reported"):
+        return
+    context["reported"] = True
+    prompt_tokens, completion_tokens = usage_tokens(response or {})
+    usage_source = "response" if prompt_tokens or completion_tokens else "missing"
+    if not prompt_tokens and not completion_tokens and context.get("metrics_start"):
+        metrics_end = llama_metrics_snapshot()
+        if metrics_end:
+            prompt_tokens = max(0, metrics_end["prompt_tokens"] - context["metrics_start"]["prompt_tokens"])
+            completion_tokens = max(0, metrics_end["completion_tokens"] - context["metrics_start"]["completion_tokens"])
+            if prompt_tokens or completion_tokens:
+                usage_source = "metrics_delta"
+    details = usage_details(response or {})
+    payload = {
+        "campaignId": context["campaign_id"],
+        "runId": context["run_id"],
+        "taskId": context["task_id"],
+        "attempt": context["attempt"],
+        "requestId": context["request_id"],
+        "apiPath": context["api_path"],
+        "model": model or "unknown",
+        "requestedModel": requested_model,
+        "statusCode": int(status_code),
+        "promptTokens": prompt_tokens,
+        "completionTokens": completion_tokens,
+        "cachedTokens": details["cached_tokens"],
+        "reasoningTokens": details["reasoning_tokens"],
+        "durationMs": max(0, int((time.monotonic() - context["started"]) * 1000)),
+        "toolCalls": response_tool_calls(response),
+        "usageSource": usage_source,
+        "completed": 200 <= int(status_code) < 300,
+    }
+    try:
+        request = urllib.request.Request(
+            AGENTIC_BENCHMARK_URL + "/v1/metrics/requests",
+            data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+            headers={"Authorization": f"Bearer {AGENTIC_BENCHMARK_TOKEN}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=2) as result:
+            result.read()
+    except (OSError, urllib.error.URLError, TimeoutError) as exc:
+        print(f"benchmark metric submission failed: {exc}", flush=True)
+
+
 def record_usage(api_key_id, model, requested_model, status_code, response=None):
     prompt_tokens, completion_tokens = usage_tokens(response or {})
     now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -350,6 +471,7 @@ def record_usage(api_key_id, model, requested_model, status_code, response=None)
                 (now, prompt_tokens, completion_tokens, api_key_id),
             )
         db.commit()
+    submit_benchmark_metric(model, requested_model, status_code, response)
 
 
 def flatten_namespace_tools(body):
@@ -940,6 +1062,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def proxy(self):
         path = urlparse(self.path).path
         benchmark_request = is_benchmark_request(self.headers)
+        start_benchmark_request_context(self.headers if benchmark_request else {}, path)
         api_key, auth_error = authenticate(self.headers)
         if auth_error:
             self.send_json(401, {"error": {"message": auth_error, "type": "authentication_error"}})
@@ -1034,7 +1157,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
         headers = {
             key: value
             for key, value in self.headers.items()
-            if key.lower() not in {"host", "content-length", "connection", "accept-encoding", "authorization", "x-api-key", "x-gpu45-benchmark-token"}
+            if key.lower() not in {
+                "host", "content-length", "connection", "accept-encoding", "authorization", "x-api-key",
+                "x-gpu45-benchmark-token", "x-gpu45-benchmark-campaign", "x-gpu45-benchmark-run",
+                "x-gpu45-benchmark-task", "x-gpu45-benchmark-attempt",
+            }
         }
         if self.command == "POST" and path == "/v1/responses":
             headers["Accept"] = "text/event-stream"

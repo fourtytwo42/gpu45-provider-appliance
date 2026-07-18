@@ -24,6 +24,34 @@ class NamespaceToolTranslationTests(unittest.TestCase):
         self.assertTrue(PROXY.is_benchmark_request({"X-GPU45-Benchmark-Token": token}, token))
         self.assertFalse(PROXY.is_benchmark_request({"Authorization": "Bearer another-token"}, token))
 
+    def test_benchmark_correlation_requires_complete_positive_attempt(self):
+        headers = {
+            "X-GPU45-Benchmark-Campaign": "campaign",
+            "X-GPU45-Benchmark-Run": "run",
+            "X-GPU45-Benchmark-Task": "task",
+            "X-GPU45-Benchmark-Attempt": "2",
+        }
+        self.assertEqual(
+            {"campaign_id": "campaign", "run_id": "run", "task_id": "task", "attempt": 2},
+            PROXY.benchmark_correlation(headers),
+        )
+        self.assertIsNone(PROXY.benchmark_correlation({**headers, "X-GPU45-Benchmark-Attempt": "0"}))
+        self.assertIsNone(PROXY.benchmark_correlation({key: value for key, value in headers.items() if key != "X-GPU45-Benchmark-Task"}))
+
+    def test_usage_details_and_tool_calls_are_normalized(self):
+        response = {
+            "usage": {
+                "input_tokens": 20,
+                "output_tokens": 7,
+                "input_tokens_details": {"cached_tokens": 9},
+                "output_tokens_details": {"reasoning_tokens": 3},
+            },
+            "output": [{"type": "function_call"}, {"type": "message"}],
+        }
+        self.assertEqual((20, 7), PROXY.usage_tokens(response))
+        self.assertEqual({"cached_tokens": 9, "reasoning_tokens": 3}, PROXY.usage_details(response))
+        self.assertEqual(1, PROXY.response_tool_calls(response))
+
     def test_benchmark_chat_request_does_not_acquire_interactive_lease(self):
         self.assertFalse(PROXY.should_acquire_eager_interactive_lease("/v1/chat/completions", True))
         self.assertTrue(PROXY.should_acquire_eager_interactive_lease("/v1/chat/completions", False))

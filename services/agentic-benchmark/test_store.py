@@ -90,6 +90,54 @@ class StoreTests(unittest.TestCase):
             status = db.execute("SELECT status FROM tasks WHERE id=?", (task["id"],)).fetchone()[0]
         self.assertEqual("cancelled", status)
 
+    def test_interrupted_task_uses_a_new_measurement_attempt(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Attempt", "custom", [profile], [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+        self.store.ensure_tasks(run["id"], ["task-one"])
+        task = self.store.next_task(run["id"])
+        with self.store.session() as db:
+            db.execute("UPDATE tasks SET status='interrupted' WHERE id=?", (task["id"],))
+
+        restarted = self.store.begin_task(task["id"])
+
+        self.assertEqual(2, restarted["attempt"])
+
+    def test_request_metrics_are_correlated_and_deduplicated(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Metrics", "custom", [profile], [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+        self.store.ensure_tasks(run["id"], ["task-one"])
+        task = self.store.begin_task(self.store.next_task(run["id"])["id"])
+        payload = {
+            "campaignId": campaign_id,
+            "runId": run["id"],
+            "taskId": task["id"],
+            "attempt": task["attempt"],
+            "requestId": "request-one",
+            "apiPath": "/v1/responses",
+            "statusCode": 200,
+            "promptTokens": 30,
+            "completionTokens": 10,
+            "durationMs": 123,
+            "toolCalls": 2,
+            "usageSource": "response",
+            "completed": True,
+        }
+
+        self.assertTrue(self.store.record_request_metric(payload))
+        self.assertFalse(self.store.record_request_metric(payload))
+        with self.store.session() as db:
+            metric = db.execute("SELECT * FROM request_metrics WHERE task_id=?", (task["id"],)).fetchone()
+        self.assertEqual(30, metric["prompt_tokens"])
+        self.assertEqual(10, metric["completion_tokens"])
+        self.assertEqual(2, metric["tool_calls"])
+
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            self.store.record_request_metric({**payload, "requestId": "request-two", "runId": "wrong"})
+
     def test_cancelled_paused_campaign_finishes_without_runner_wakeup(self):
         profile = {"name": "model-a", "profileHash": "hash-a"}
         suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}

@@ -30,6 +30,22 @@ def bfcl_case_passed(reward: float) -> bool:
     return reward >= 1.0
 
 
+def benchmark_headers(
+    token: str,
+    campaign_id: str,
+    run_id: str,
+    task_id: str,
+    attempt: int,
+) -> dict[str, str]:
+    return {
+        "X-GPU45-Benchmark-Token": token,
+        "X-GPU45-Benchmark-Campaign": campaign_id,
+        "X-GPU45-Benchmark-Run": run_id,
+        "X-GPU45-Benchmark-Task": task_id,
+        "X-GPU45-Benchmark-Attempt": str(attempt),
+    }
+
+
 def stratified_sample(items: list[str], count: int) -> list[str]:
     """Select stable, evenly spaced cases so compact campaigns stay comparable."""
     if count <= 0 or count >= len(items):
@@ -140,6 +156,7 @@ class BfclAdapter:
         campaign_id: str,
         run_id: str,
         task_id: str,
+        attempt: int,
         external_task_id: str,
         alias: str,
         timeout_seconds: int,
@@ -155,7 +172,10 @@ class BfclAdapter:
         env.update(
             OPENAI_API_KEY="gpu45-benchmark",
             OPENAI_BASE_URL=os.environ.get("GPU45_RESPONSES_URL", "http://127.0.0.1:30001").rstrip("/") + "/v1",
-            OPENAI_DEFAULT_HEADERS=json.dumps({"X-GPU45-Benchmark-Token": self.token}),
+            OPENAI_DEFAULT_HEADERS=json.dumps(
+                benchmark_headers(self.token, campaign_id, run_id, task_id, attempt),
+                separators=(",", ":"),
+            ),
         )
         category, separator, case_id = external_task_id.partition("::")
         command = [
@@ -184,9 +204,10 @@ class BfclAdapter:
 
 
 class TauAdapter:
-    def __init__(self, harness_root: Path, artifact_root: Path) -> None:
+    def __init__(self, harness_root: Path, artifact_root: Path, token: str = "") -> None:
         self.harness_root = harness_root
         self.artifact_root = artifact_root
+        self.token = token
         self.source = harness_root / "sources" / "tau"
         self.python = harness_root / "venvs" / "tau" / "bin" / "python"
         self._tasks: list[str] | None = None
@@ -242,6 +263,7 @@ class TauAdapter:
         campaign_id: str,
         run_id: str,
         task_id: str,
+        attempt: int,
         external_task_id: str,
         alias: str,
         timeout_seconds: int,
@@ -260,7 +282,12 @@ class TauAdapter:
             "--timeout", str(timeout_seconds),
         ]
         started = time.monotonic()
-        code = run_interruptible(command, self.source, os.environ.copy(), log, timeout_seconds + 60, ensure_active, control_state)
+        env = os.environ.copy()
+        env["GPU45_BENCHMARK_HEADERS"] = json.dumps(
+            benchmark_headers(self.token, campaign_id, run_id, task_id, attempt),
+            separators=(",", ":"),
+        )
+        code = run_interruptible(command, self.source, env, log, timeout_seconds + 60, ensure_active, control_state)
         duration_ms = int((time.monotonic() - started) * 1000)
         text = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
         marker = next((line[len("GPU45_RESULT="):] for line in reversed(text.splitlines()) if line.startswith("GPU45_RESULT=")), None)
@@ -275,9 +302,10 @@ class TauAdapter:
 
 
 class SweBenchAdapter:
-    def __init__(self, harness_root: Path, artifact_root: Path) -> None:
+    def __init__(self, harness_root: Path, artifact_root: Path, token: str = "") -> None:
         self.harness_root = harness_root
         self.artifact_root = artifact_root
+        self.token = token
         self.mini_source = harness_root / "sources" / "miniSweAgent"
         self.mini = harness_root / "venvs" / "mini-swe-agent" / "bin" / "mini-extra"
         self.mini_python = harness_root / "venvs" / "mini-swe-agent" / "bin" / "python"
@@ -312,6 +340,7 @@ class SweBenchAdapter:
         campaign_id: str,
         run_id: str,
         task_id: str,
+        attempt: int,
         external_task_id: str,
         alias: str,
         timeout_seconds: int,
@@ -325,6 +354,8 @@ class SweBenchAdapter:
         verifier_output = root / "verifier"
         generated_config = root / "gpu45-swebench.yaml"
         root.mkdir(parents=True, exist_ok=True)
+        headers = benchmark_headers(self.token, campaign_id, run_id, task_id, attempt)
+        yaml_headers = "".join(f"      {name}: {json.dumps(value)}\n" for name, value in headers.items())
         generated_config.write_text(
             "environment:\n"
             "  run_args:\n"
@@ -336,8 +367,10 @@ class SweBenchAdapter:
             "    - --memory=8g\n"
             "model:\n"
             "  model_kwargs:\n"
-            "    api_base: http://127.0.0.1:30000/v1\n"
-            "    api_key: gpu45-benchmark\n"
+            "    api_base: http://127.0.0.1:30001/v1\n"
+            f"    api_key: {json.dumps(self.token)}\n"
+            "    extra_headers:\n"
+            f"{yaml_headers}"
             "    temperature: 0\n"
             "    seed: 42\n"
             "    drop_params: true\n",
@@ -421,6 +454,7 @@ class HarborAdapter:
         campaign_id: str,
         run_id: str,
         task_id: str,
+        attempt: int,
         external_task_id: str,
         alias: str,
         timeout_seconds: int,
@@ -442,7 +476,10 @@ class HarborAdapter:
             "    extra_hosts: [host.docker.internal:host-gateway]\n",
             encoding="utf-8",
         )
-        default_headers = json.dumps({"X-GPU45-Benchmark-Token": self.token}, separators=(",", ":"))
+        default_headers = json.dumps(
+            benchmark_headers(self.token, campaign_id, run_id, task_id, attempt),
+            separators=(",", ":"),
+        )
         command = [
             str(self.harbor), "run", "--path", str(self.dataset / external_task_id),
             "--agent", "mini-swe-agent", "--model", f"openai/{alias}",

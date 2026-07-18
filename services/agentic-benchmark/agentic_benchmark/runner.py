@@ -311,8 +311,8 @@ class BenchmarkRunner:
         self.smoke = SmokeAdapter(os.environ.get("GPU45_AGENTIC_TOKEN", ""))
         self.artifact_root = Path(os.environ.get("GPU45_AGENTIC_ARTIFACT_ROOT", "/var/lib/gpu45/benchmarks/artifacts"))
         self.bfcl = BfclAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root, os.environ.get("GPU45_AGENTIC_TOKEN", ""))
-        self.tau = TauAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root)
-        self.swebench = SweBenchAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root)
+        self.tau = TauAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root, os.environ.get("GPU45_AGENTIC_TOKEN", ""))
+        self.swebench = SweBenchAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root, os.environ.get("GPU45_AGENTIC_TOKEN", ""))
         self.harbor = HarborAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root, os.environ.get("GPU45_AGENTIC_TOKEN", ""))
         self.stop_event = threading.Event()
 
@@ -387,12 +387,12 @@ class BenchmarkRunner:
                 if control:
                     raise CampaignControlled(control)
                 lease.ensure_active()
-                self.store.begin_task(task["id"])
+                task = self.store.begin_task(task["id"])
                 started = time.monotonic()
                 try:
                     if suite.get("adapter") == "bfcl":
                         result = self.bfcl.run(
-                            run["campaign_id"], run["id"], task["id"], task["external_task_id"], alias,
+                            run["campaign_id"], run["id"], task["id"], int(task["attempt"]), task["external_task_id"], alias,
                             int(suite.get("timeoutSeconds") or 900), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
                             int(suite.get("validationLimit") or 0),
@@ -400,21 +400,21 @@ class BenchmarkRunner:
                         self._finish_harness_result(run, task, result, "harness_failure")
                     elif suite.get("adapter") == "tau":
                         result = self.tau.run(
-                            run["campaign_id"], run["id"], task["id"], task["external_task_id"], alias,
+                            run["campaign_id"], run["id"], task["id"], int(task["attempt"]), task["external_task_id"], alias,
                             int(suite.get("timeoutSeconds") or 1800), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
                         )
                         self._finish_harness_result(run, task, result, "model_failure")
                     elif suite.get("adapter") == "swebench":
                         result = self.swebench.run(
-                            run["campaign_id"], run["id"], task["id"], task["external_task_id"], alias,
+                            run["campaign_id"], run["id"], task["id"], int(task["attempt"]), task["external_task_id"], alias,
                             int(suite.get("timeoutSeconds") or 7200), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
                         )
                         self._finish_harness_result(run, task, result, "model_failure")
                     elif suite.get("adapter") == "harbor":
                         result = self.harbor.run(
-                            run["campaign_id"], run["id"], task["id"], task["external_task_id"], alias,
+                            run["campaign_id"], run["id"], task["id"], int(task["attempt"]), task["external_task_id"], alias,
                             int(suite.get("timeoutSeconds") or 7200), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
                         )

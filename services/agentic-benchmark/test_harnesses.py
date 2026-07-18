@@ -7,7 +7,7 @@ from pathlib import Path
 
 from unittest import mock
 
-from agentic_benchmark.harnesses import BfclAdapter, HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter, bfcl_case_passed, run_interruptible, stratified_sample
+from agentic_benchmark.harnesses import BfclAdapter, HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter, benchmark_headers, bfcl_case_passed, run_interruptible, stratified_sample
 
 
 class HarnessProcessTests(unittest.TestCase):
@@ -19,6 +19,18 @@ class HarnessProcessTests(unittest.TestCase):
         self.assertEqual(["0", "3", "6", "9"], stratified_sample([str(index) for index in range(10)], 4))
         self.assertEqual(["0"], stratified_sample(["0", "1"], 1))
         self.assertEqual(["0", "1"], stratified_sample(["0", "1"], 3))
+
+    def test_benchmark_headers_correlate_attempt(self):
+        self.assertEqual(
+            {
+                "X-GPU45-Benchmark-Token": "secret",
+                "X-GPU45-Benchmark-Campaign": "campaign",
+                "X-GPU45-Benchmark-Run": "run",
+                "X-GPU45-Benchmark-Task": "task",
+                "X-GPU45-Benchmark-Attempt": "2",
+            },
+            benchmark_headers("secret", "campaign", "run", "task", 2),
+        )
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

@@ -95,6 +95,30 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE INDEX IF NOT EXISTS tasks_run_status_idx ON tasks(run_id, status, created_at);
 
+CREATE TABLE IF NOT EXISTS request_metrics (
+  id TEXT PRIMARY KEY,
+  campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  attempt INTEGER NOT NULL,
+  request_id TEXT NOT NULL UNIQUE,
+  model TEXT,
+  requested_model TEXT,
+  api_path TEXT NOT NULL,
+  status_code INTEGER NOT NULL,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_tokens INTEGER NOT NULL DEFAULT 0,
+  reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  tool_calls INTEGER NOT NULL DEFAULT 0,
+  usage_source TEXT NOT NULL DEFAULT 'response',
+  completed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS request_metrics_task_attempt_idx ON request_metrics(task_id, attempt, created_at);
+CREATE INDEX IF NOT EXISTS request_metrics_campaign_created_idx ON request_metrics(campaign_id, created_at);
+
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   campaign_id TEXT REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -128,3 +152,6 @@ CREATE TABLE IF NOT EXISTS coordinator_state (
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));

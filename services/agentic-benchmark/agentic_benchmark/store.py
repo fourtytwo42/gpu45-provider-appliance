@@ -401,10 +401,48 @@ class BenchmarkStore:
             row = db.execute("SELECT * FROM tasks WHERE run_id=? AND status IN ('queued','interrupted') ORDER BY created_at LIMIT 1", (run_id,)).fetchone()
             return dict(row) if row else None
 
-    def begin_task(self, task_id: str) -> None:
+    def begin_task(self, task_id: str) -> dict[str, Any]:
         stamp = now()
         with self.session() as db:
-            db.execute("UPDATE tasks SET status='running',error_class=NULL,user_message=NULL,technical_error=NULL,started_at=?,completed_at=NULL,updated_at=? WHERE id=?", (stamp, stamp, task_id))
+            db.execute(
+                "UPDATE tasks SET attempt=CASE WHEN status='interrupted' THEN attempt+1 ELSE attempt END,"
+                "status='running',error_class=NULL,user_message=NULL,technical_error=NULL,started_at=?,completed_at=NULL,updated_at=? WHERE id=?",
+                (stamp, stamp, task_id),
+            )
+            task = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if not task:
+                raise ValueError("task not found")
+            return dict(task)
+
+    def record_request_metric(self, payload: dict[str, Any]) -> bool:
+        required = ("campaignId", "runId", "taskId", "attempt", "requestId", "apiPath", "statusCode")
+        if any(payload.get(key) is None for key in required):
+            raise ValueError("Incomplete benchmark request metric")
+        with self.session() as db:
+            task = db.execute(
+                "SELECT t.attempt,t.run_id,r.campaign_id FROM tasks t JOIN runs r ON r.id=t.run_id WHERE t.id=?",
+                (str(payload["taskId"]),),
+            ).fetchone()
+            if not task or task["run_id"] != str(payload["runId"]) or task["campaign_id"] != str(payload["campaignId"]):
+                raise ValueError("Benchmark request correlation does not match a task")
+            db.execute(
+                """
+                INSERT OR IGNORE INTO request_metrics(
+                  id,campaign_id,run_id,task_id,attempt,request_id,model,requested_model,api_path,status_code,
+                  prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,duration_ms,tool_calls,usage_source,completed,created_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    str(uuid.uuid4()), str(payload["campaignId"]), str(payload["runId"]), str(payload["taskId"]),
+                    int(payload["attempt"]), str(payload["requestId"]), payload.get("model"), payload.get("requestedModel"),
+                    str(payload["apiPath"]), int(payload["statusCode"]), max(0, int(payload.get("promptTokens") or 0)),
+                    max(0, int(payload.get("completionTokens") or 0)), max(0, int(payload.get("cachedTokens") or 0)),
+                    max(0, int(payload.get("reasoningTokens") or 0)), max(0, int(payload.get("durationMs") or 0)),
+                    max(0, int(payload.get("toolCalls") or 0)), str(payload.get("usageSource") or "response"),
+                    int(bool(payload.get("completed"))), str(payload.get("createdAt") or now()),
+                ),
+            )
+            return bool(db.execute("SELECT changes()").fetchone()[0])
 
     def complete_task(self, task_id: str, passed: bool, duration_ms: int, error_class: str | None = None, user_message: str | None = None, technical_error: str | None = None, reward: float | None = None) -> None:
         stamp = now()

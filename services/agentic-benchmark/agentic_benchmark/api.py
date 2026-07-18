@@ -182,6 +182,9 @@ class Handler(BaseHTTPRequestHandler):
                 requested_suites = [by_suite[suite_id] for suite_id in body.get("suiteIds", []) if suite_id in by_suite]  # type: ignore[union-attr]
                 campaign_id = STORE.create_campaign(str(body.get("name") or "Agentic benchmark campaign"), str(body.get("preset") or "custom"), requested_profiles, requested_suites)
                 self._json(HTTPStatus.ACCEPTED, {"id": campaign_id})
+            elif segments == ["v1", "metrics", "requests"]:
+                created = STORE.record_request_metric(body)
+                self._json(HTTPStatus.CREATED if created else HTTPStatus.OK, {"ok": True, "created": created})
             elif len(segments) == 4 and segments[:2] == ["v1", "models"] and segments[3] == "smoke":
                 found = STORE.retry_qualification(segments[2])
                 self._json(HTTPStatus.ACCEPTED if found else HTTPStatus.NOT_FOUND, {"ok": found})

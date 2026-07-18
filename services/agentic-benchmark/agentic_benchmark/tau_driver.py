@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 
@@ -27,7 +28,14 @@ def main() -> None:
     if not all((args.domain, args.task_id, args.target_alias, args.output)):
         raise SystemExit("domain, task-id, target-alias, and output are required")
 
-    target_args = {"temperature": 0.0, "api_base": "http://127.0.0.1:30000/v1", "api_key": "gpu45", "timeout": args.timeout, "num_retries": 0}
+    target_args = {
+        "temperature": 0.0,
+        "api_base": "http://127.0.0.1:30001/v1",
+        "api_key": "gpu45-benchmark",
+        "timeout": args.timeout,
+        "num_retries": 0,
+        "extra_headers": json.loads(os.environ.get("GPU45_BENCHMARK_HEADERS", "{}")),
+    }
     user_args = {"temperature": 0.0, "api_base": "http://127.0.0.1:30002/v1", "api_key": "gpu45", "timeout": args.timeout, "num_retries": 0}
     config = TextRunConfig(
         domain=args.domain,
