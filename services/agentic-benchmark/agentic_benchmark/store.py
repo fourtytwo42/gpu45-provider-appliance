@@ -418,7 +418,8 @@ class BenchmarkStore:
                 (campaign_id,),
             ).fetchall()
             failed_runs = db.execute(
-                "SELECT id FROM runs WHERE campaign_id=? AND status='failed' AND completed_tasks=0 AND error IS NOT NULL",
+                "SELECT r.id FROM runs r WHERE r.campaign_id=? AND r.status='failed' AND r.error IS NOT NULL "
+                "AND (r.completed_tasks=0 OR EXISTS (SELECT 1 FROM tasks t WHERE t.run_id=r.id AND t.status IN ('queued','interrupted')))",
                 (campaign_id,),
             ).fetchall()
             if not rows and not failed_runs:
@@ -430,7 +431,7 @@ class BenchmarkStore:
                 [(stamp, task_id) for task_id in task_ids],
             )
             db.executemany(
-                "UPDATE runs SET error=NULL,completed_at=NULL,updated_at=? WHERE id=?",
+                "UPDATE runs SET error=NULL,infrastructure_failures=0,completed_at=NULL,updated_at=? WHERE id=?",
                 [(stamp, run_id) for run_id in run_ids],
             )
             for run_id in run_ids:
@@ -438,7 +439,7 @@ class BenchmarkStore:
                 # failures above are reset for another attempt.
                 self._refresh_run(db, run_id, incomplete_status="queued")
             db.executemany(
-                "UPDATE runs SET status='interrupted',error=NULL,completed_at=NULL,updated_at=? WHERE id=?",
+                "UPDATE runs SET status='interrupted',error=NULL,infrastructure_failures=0,completed_at=NULL,updated_at=? WHERE id=?",
                 [(stamp, row["id"]) for row in failed_runs],
             )
             db.execute("UPDATE campaigns SET status='queued',completed_at=NULL,updated_at=? WHERE id=?", (stamp, campaign_id))

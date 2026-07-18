@@ -290,6 +290,23 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(1, self.store.retry_campaign_infrastructure(campaign_id))
         self.assertEqual("interrupted", self.store.campaign_detail(campaign_id)["runs"][0]["status"])
 
+    def test_manual_retry_resumes_failed_run_after_partial_completion(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 2}
+        campaign_id = self.store.create_campaign("Retry partial run", "custom", [profile], [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+        self.store.ensure_tasks(run["id"], ["first", "second"])
+        first = self.store.next_task(run["id"])
+        self.store.begin_task(first["id"])
+        self.store.complete_task(first["id"], True, 10)
+        self.store.fail_run(run["id"], "resource lease expired during model activation")
+
+        self.assertEqual(1, self.store.retry_campaign_infrastructure(campaign_id))
+        retried_run = self.store.campaign_detail(campaign_id)["runs"][0]
+        self.assertEqual("interrupted", retried_run["status"])
+        self.assertEqual(1, retried_run["completed_tasks"])
+        self.assertEqual("second", self.store.next_task(run["id"])["external_task_id"])
+
     def test_ensure_tasks_replaces_obsolete_task_definitions(self):
         profile = {"name": "model-a", "profileHash": "hash-a"}
         suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
