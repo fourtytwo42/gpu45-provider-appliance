@@ -50,6 +50,16 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def refresh_active_lease(db: sqlite3.Connection, lease_id: str) -> None:
+    """Keep a lease alive across a transition that blocks heartbeat requests."""
+    cursor = db.execute(
+        "UPDATE leases SET heartbeat_at=? WHERE lease_id=? AND status='active'",
+        (now(), lease_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError("GPU lease was lost during the resource transition")
+
+
 def connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(DB_PATH, timeout=10)
@@ -498,7 +508,10 @@ class Handler(BaseHTTPRequestHandler):
                     active = db.execute("SELECT * FROM leases WHERE status='active'").fetchone()
                     if not active or active["kind"] not in {"benchmark", "llm"}:
                         self.send_json(HTTPStatus.CONFLICT, {"error": "an active LLM or benchmark lease is required"}); return
+                    lease_id = str(active["lease_id"])
+                    refresh_active_lease(db, lease_id)
                     result = activate_profile(str(payload.get("profileName") or ""))
+                    refresh_active_lease(db, lease_id)
                     event(db, "provider.profile_activated", active["lease_id"], active["job_id"], profileName=result["profileName"])
                     set_transition(db, None)
                     self.send_json(HTTPStatus.OK, result); return
@@ -507,7 +520,10 @@ class Handler(BaseHTTPRequestHandler):
                     if not active or active["kind"] != "benchmark":
                         self.send_json(HTTPStatus.CONFLICT, {"error": "an active benchmark lease is required"}); return
                     action = "start" if path.endswith("/start") else "stop"
+                    lease_id = str(active["lease_id"])
+                    refresh_active_lease(db, lease_id)
                     service_action(action, "gpu45-tau-simulator.service")
+                    refresh_active_lease(db, lease_id)
                     event(db, f"benchmark.simulator_{action}", active["lease_id"], active["job_id"])
                     self.send_json(HTTPStatus.OK, {"ok": True, "action": action}); return
                 parts = path.strip("/").split("/")

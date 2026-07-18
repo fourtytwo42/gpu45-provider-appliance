@@ -41,6 +41,17 @@ class ResourceManagerTests(unittest.TestCase):
             self.assertEqual(rm.reclaim_expired(db), 1)
             self.assertEqual(db.execute("SELECT status FROM leases WHERE lease_id='stale'").fetchone()[0], "interrupted")
 
+    def test_long_transition_refresh_prevents_active_lease_reclamation(self):
+        with rm.connect() as db:
+            db.execute(
+                "INSERT INTO leases VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("benchmark", "campaign", "benchmark", 10, 1, "restart-task", "active", rm.now(),
+                 "2000-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00", None, "{}"),
+            )
+            rm.refresh_active_lease(db, "benchmark")
+            self.assertEqual(rm.reclaim_expired(db), 0)
+            self.assertEqual(db.execute("SELECT status FROM leases WHERE lease_id='benchmark'").fetchone()[0], "active")
+
     def test_locked_db_fails_fast_when_transition_lock_is_busy(self):
         busy_lock = mock.Mock()
         busy_lock.acquire.return_value = False
