@@ -6,6 +6,38 @@ import os
 from pathlib import Path
 
 
+TAU_AGENT_MAX_TOKENS = 2048
+TAU_USER_MAX_TOKENS = 256
+
+
+def build_llm_args(
+    timeout: int,
+    headers: dict[str, str],
+) -> tuple[dict[str, object], dict[str, object]]:
+    target_args: dict[str, object] = {
+        "temperature": 0.0,
+        "api_base": "http://127.0.0.1:30001/v1",
+        "api_key": "gpu45-benchmark",
+        "timeout": timeout,
+        "num_retries": 0,
+        "max_tokens": TAU_AGENT_MAX_TOKENS,
+        "extra_headers": headers,
+    }
+    user_args: dict[str, object] = {
+        "temperature": 0.0,
+        "api_base": "http://127.0.0.1:30002/v1",
+        "api_key": "gpu45",
+        "timeout": timeout,
+        "num_retries": 0,
+        "max_tokens": TAU_USER_MAX_TOKENS,
+        "extra_body": {
+            "chat_template_kwargs": {"enable_thinking": False},
+            "reasoning_budget": 0,
+        },
+    }
+    return target_args, user_args
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--list", action="store_true")
@@ -28,15 +60,10 @@ def main() -> None:
     if not all((args.domain, args.task_id, args.target_alias, args.output)):
         raise SystemExit("domain, task-id, target-alias, and output are required")
 
-    target_args = {
-        "temperature": 0.0,
-        "api_base": "http://127.0.0.1:30001/v1",
-        "api_key": "gpu45-benchmark",
-        "timeout": args.timeout,
-        "num_retries": 0,
-        "extra_headers": json.loads(os.environ.get("GPU45_BENCHMARK_HEADERS", "{}")),
-    }
-    user_args = {"temperature": 0.0, "api_base": "http://127.0.0.1:30002/v1", "api_key": "gpu45", "timeout": args.timeout, "num_retries": 0}
+    target_args, user_args = build_llm_args(
+        args.timeout,
+        json.loads(os.environ.get("GPU45_BENCHMARK_HEADERS", "{}")),
+    )
     config = TextRunConfig(
         domain=args.domain,
         agent="llm_agent",
