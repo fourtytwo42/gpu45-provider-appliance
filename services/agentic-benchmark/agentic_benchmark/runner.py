@@ -43,6 +43,11 @@ def request_json(url: str, payload: dict[str, Any] | None = None, headers: dict[
         return exc.code, json.loads(exc.read() or b"{}")
 
 
+def is_scored_task_timeout(suite: dict[str, Any], exc: Exception) -> bool:
+    """Benchmark task timeouts reflect a model/scaffold outcome, not host failure."""
+    return isinstance(exc, TimeoutError) and suite.get("adapter") in {"tau", "swebench", "harbor"}
+
+
 @dataclass
 class BenchmarkLease:
     lease_id: str
@@ -424,7 +429,12 @@ class BenchmarkRunner:
                 except ResourcePreempted:
                     raise
                 except Exception as exc:
-                    if not self.store.retry_infrastructure_task(task["id"], "Infrastructure failed; retrying once"):
+                    if is_scored_task_timeout(suite, exc):
+                        self.store.complete_task(
+                            task["id"], False, int((time.monotonic() - started) * 1000),
+                            "model_timeout", "Task timed out", repr(exc),
+                        )
+                    elif not self.store.retry_infrastructure_task(task["id"], "Infrastructure failed; retrying once"):
                         self.store.complete_task(task["id"], False, int((time.monotonic() - started) * 1000), "infrastructure_failure", "Smoke check could not complete", repr(exc))
         except CampaignControlled:
             pass
