@@ -49,6 +49,49 @@ export type AgenticCampaignDetail = {
   artifacts: Array<{ id: string; kind: string; relative_path: string; size_bytes: number; created_at: string }>;
 };
 
+export type AgenticEfficiencyRow = {
+  profileName: string;
+  rank: number | null;
+  qualityScore: number | null;
+  expectedTasks: number;
+  completedTasks: number;
+  successes: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  activeInferenceMs: number;
+  wallDurationMs: number;
+  grossEnergyWh: number;
+  incrementalEnergyWh: number;
+  responseCalls: number;
+  toolCalls: number;
+  invalidCalls: number;
+  peakPowerW?: number | null;
+  peakGpuTempC?: number | null;
+  peakVramBytes?: number | null;
+  peakRamBytes?: number | null;
+  measurementComplete: boolean;
+  qualityEligible: boolean;
+  solveEligible: boolean;
+  eligible: boolean;
+  timePerSolveMs?: number | null;
+  tokensPerSolve?: number | null;
+  energyPerSolveWh?: number | null;
+  energyBasis?: "gross" | "incremental";
+  efficiencyIndex?: number | null;
+};
+
+export type AgenticEfficiencyReport = {
+  sourceCampaignId: string;
+  campaignId: string | null;
+  status: string;
+  rows: AgenticEfficiencyRow[];
+  panelLeaderSolves?: number;
+  qualityLeaderScore?: number | null;
+  tie: boolean;
+  confirmationRecommended: boolean;
+};
+
 async function agenticFetch(path: string, init?: RequestInit): Promise<unknown> {
   const cfg = getConfig();
   if (!cfg.agenticToken) throw new Error("Agentic benchmark coordinator token is not configured");
@@ -99,8 +142,12 @@ export async function getAgenticCampaign(id: string): Promise<AgenticCampaignDet
   return (await agenticFetch(`/v1/campaigns/${encodeURIComponent(id)}`)) as AgenticCampaignDetail;
 }
 
-export async function agenticCampaignAction(id: string, action: string): Promise<{ ok: boolean; retried?: number; qualificationCampaignId?: string }> {
-  return (await agenticFetch(`/v1/campaigns/${encodeURIComponent(id)}/action`, { method: "POST", body: JSON.stringify({ action }) })) as { ok: boolean; retried?: number; qualificationCampaignId?: string };
+export async function agenticCampaignAction(id: string, action: string): Promise<{ ok: boolean; retried?: number; qualificationCampaignId?: string; efficiencyCampaignId?: string }> {
+  return (await agenticFetch(`/v1/campaigns/${encodeURIComponent(id)}/action`, { method: "POST", body: JSON.stringify({ action }) })) as { ok: boolean; retried?: number; qualificationCampaignId?: string; efficiencyCampaignId?: string };
+}
+
+export async function getAgenticEfficiency(id: string): Promise<AgenticEfficiencyReport> {
+  return (await agenticFetch(`/v1/campaigns/${encodeURIComponent(id)}/efficiency`)) as AgenticEfficiencyReport;
 }
 
 export async function agenticModelSmoke(profileName: string): Promise<{ ok: boolean }> {
