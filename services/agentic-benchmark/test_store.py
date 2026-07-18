@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from agentic_benchmark.model_catalog import discover_profiles
-from agentic_benchmark.store import BenchmarkStore
+from agentic_benchmark.store import BenchmarkStore, now
 
 
 class StoreTests(unittest.TestCase):
@@ -306,6 +306,43 @@ class StoreTests(unittest.TestCase):
         self.assertEqual("interrupted", retried_run["status"])
         self.assertEqual(1, retried_run["completed_tasks"])
         self.assertEqual("second", self.store.next_task(run["id"])["external_task_id"])
+
+    def test_manual_retry_deduplicates_legacy_attempt_rows(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Retry duplicate", "custom", [profile], [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+        self.store.ensure_tasks(run["id"], ["task-one"])
+        task = self.store.next_task(run["id"])
+        self.store.begin_task(task["id"])
+        self.store.retry_infrastructure_task(task["id"], "retry")
+        retried = self.store.begin_task(task["id"])
+        self.store.complete_task(retried["id"], False, 10, "infrastructure_failure", "transport failed")
+        with self.store.session() as db:
+            db.execute(
+                "INSERT INTO tasks(id,run_id,external_task_id,attempt,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                ("legacy-duplicate", run["id"], "task-one", 1, "queued", now(), now()),
+            )
+
+        self.assertEqual(1, self.store.retry_campaign_infrastructure(campaign_id))
+        with self.store.session() as db:
+            rows = db.execute("SELECT attempt,status FROM tasks WHERE run_id=?", (run["id"],)).fetchall()
+        self.assertEqual([(3, "queued")], [(row["attempt"], row["status"]) for row in rows])
+
+    def test_ensure_tasks_does_not_reinsert_an_advanced_attempt(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        self.store.create_campaign("No duplicate", "custom", [profile], [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+        self.store.ensure_tasks(run["id"], ["task-one"])
+        task = self.store.next_task(run["id"])
+        self.store.begin_task(task["id"])
+        self.store.retry_infrastructure_task(task["id"], "retry")
+
+        self.store.ensure_tasks(run["id"], ["task-one"])
+        with self.store.session() as db:
+            rows = db.execute("SELECT attempt FROM tasks WHERE run_id=?", (run["id"],)).fetchall()
+        self.assertEqual([2], [row["attempt"] for row in rows])
 
     def test_ensure_tasks_replaces_obsolete_task_definitions(self):
         profile = {"name": "model-a", "profileHash": "hash-a"}

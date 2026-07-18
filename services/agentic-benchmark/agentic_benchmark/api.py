@@ -221,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(HTTPStatus.OK if found else HTTPStatus.NOT_FOUND, {"ok": found})
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
-        except (ValueError, KeyError, OSError) as exc:
+        except (ValueError, KeyError, OSError, sqlite3.Error) as exc:
             self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
 
 

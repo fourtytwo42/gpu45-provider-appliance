@@ -413,21 +413,27 @@ class BenchmarkStore:
         """Queue failed infrastructure tasks as a fresh user-requested attempt."""
         stamp = now()
         with self.session() as db:
-            rows = db.execute(
-                "SELECT t.id,t.run_id FROM tasks t JOIN runs r ON r.id=t.run_id WHERE r.campaign_id=? AND t.error_class='infrastructure_failure' AND t.status='completed'",
-                (campaign_id,),
-            ).fetchall()
             failed_runs = db.execute(
                 "SELECT r.id FROM runs r WHERE r.campaign_id=? AND r.status='failed' AND r.error IS NOT NULL "
                 "AND (r.completed_tasks=0 OR EXISTS (SELECT 1 FROM tasks t WHERE t.run_id=r.id AND t.status IN ('queued','interrupted')))",
                 (campaign_id,),
             ).fetchall()
+            deduped_run_ids = {
+                row["id"] for row in db.execute("SELECT id FROM runs WHERE campaign_id=?", (campaign_id,)).fetchall()
+                if self._dedupe_run_tasks(db, row["id"])
+            }
+            rows = db.execute(
+                "SELECT t.id,t.run_id FROM tasks t JOIN runs r ON r.id=t.run_id WHERE r.campaign_id=? AND t.error_class='infrastructure_failure' AND t.status='completed'",
+                (campaign_id,),
+            ).fetchall()
             if not rows and not failed_runs:
+                for run_id in deduped_run_ids:
+                    self._refresh_run(db, run_id, incomplete_status="queued")
                 return 0
             task_ids = [row["id"] for row in rows]
             run_ids = sorted({row["run_id"] for row in rows})
             db.executemany(
-                "UPDATE tasks SET status='queued',attempt=1,passed=NULL,reward=NULL,duration_ms=0,error_class=NULL,user_message=NULL,technical_error=NULL,started_at=NULL,completed_at=NULL,updated_at=? WHERE id=?",
+                "UPDATE tasks SET status='queued',attempt=attempt+1,passed=NULL,reward=NULL,duration_ms=0,error_class=NULL,user_message=NULL,technical_error=NULL,started_at=NULL,completed_at=NULL,updated_at=? WHERE id=?",
                 [(stamp, task_id) for task_id in task_ids],
             )
             db.executemany(
@@ -442,6 +448,10 @@ class BenchmarkStore:
                 "UPDATE runs SET status='interrupted',error=NULL,infrastructure_failures=0,completed_at=NULL,updated_at=? WHERE id=?",
                 [(stamp, row["id"]) for row in failed_runs],
             )
+            for run_id in {row["id"] for row in failed_runs}:
+                self._refresh_run(db, run_id, incomplete_status="interrupted")
+            for run_id in deduped_run_ids - set(run_ids) - {row["id"] for row in failed_runs}:
+                self._refresh_run(db, run_id, incomplete_status="queued")
             db.execute("UPDATE campaigns SET status='queued',completed_at=NULL,updated_at=? WHERE id=?", (stamp, campaign_id))
             retried = len(task_ids) + len(failed_runs)
             self._event(db, campaign_id, None, None, "campaign.infrastructure_retry", f"Queued {retried} infrastructure failures", {})
@@ -588,14 +598,16 @@ class BenchmarkStore:
             run = db.execute("SELECT campaign_id,suite_id FROM runs WHERE id=?", (run_id,)).fetchone()
             if not run:
                 raise ValueError("run not found")
+            self._dedupe_run_tasks(db, run_id)
             existing = db.execute("SELECT id,external_task_id FROM tasks WHERE run_id=?", (run_id,)).fetchall()
             stale_ids = [row["id"] for row in existing if row["external_task_id"] not in desired]
             if stale_ids:
                 db.executemany("DELETE FROM artifacts WHERE task_id=?", [(task_id,) for task_id in stale_ids])
                 db.executemany("DELETE FROM tasks WHERE id=?", [(task_id,) for task_id in stale_ids])
-            for external_id in external_task_ids:
+            existing_ids = {row["external_task_id"] for row in existing if row["external_task_id"] in desired}
+            for external_id in (item for item in external_task_ids if item not in existing_ids):
                 db.execute(
-                    "INSERT OR IGNORE INTO tasks(id,run_id,external_task_id,created_at,updated_at) VALUES(?,?,?,?,?)",
+                    "INSERT INTO tasks(id,run_id,external_task_id,created_at,updated_at) VALUES(?,?,?,?,?)",
                     (str(uuid.uuid4()), run_id, external_id, stamp, stamp),
                 )
             db.execute(
@@ -603,6 +615,26 @@ class BenchmarkStore:
                 (len(external_task_ids), stamp, run["campaign_id"], run["suite_id"]),
             )
             self._refresh_run(db, run_id)
+
+    @staticmethod
+    def _dedupe_run_tasks(db: sqlite3.Connection, run_id: str) -> int:
+        """Remove legacy duplicate rows while retaining the newest attempt for each case."""
+        rows = db.execute(
+            "SELECT id,external_task_id,attempt,updated_at FROM tasks WHERE run_id=? "
+            "ORDER BY external_task_id,attempt DESC,updated_at DESC,id DESC",
+            (run_id,),
+        ).fetchall()
+        seen: set[str] = set()
+        stale_ids: list[str] = []
+        for row in rows:
+            external_id = str(row["external_task_id"])
+            if external_id in seen:
+                stale_ids.append(str(row["id"]))
+            else:
+                seen.add(external_id)
+        if stale_ids:
+            db.executemany("DELETE FROM tasks WHERE id=?", [(task_id,) for task_id in stale_ids])
+        return len(stale_ids)
 
     def next_task(self, run_id: str) -> dict[str, Any] | None:
         with self.session() as db:
