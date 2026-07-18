@@ -106,6 +106,24 @@ class ResourceManagerTests(unittest.TestCase):
             self.assertEqual(calls, [])
             self.assertEqual(db.execute("SELECT value FROM state WHERE key='transition'").fetchone()[0], "starting")
 
+    def test_provider_restart_stops_then_starts_slow_service(self):
+        calls = []
+        with mock.patch.object(rm, "service_active", return_value=True), mock.patch.object(
+            rm, "service_action", side_effect=lambda action, service: calls.append((action, service))
+        ):
+            rm.restart_service("llama-openai.service")
+        self.assertEqual(
+            calls,
+            [("stop", "llama-openai.service"), ("start", "llama-openai.service")],
+        )
+
+    def test_provider_readiness_fails_fast_after_service_exit(self):
+        with mock.patch.object(rm, "backend_ready", return_value=False), mock.patch.object(
+            rm, "service_status", return_value="inactive"
+        ):
+            with self.assertRaisesRegex(RuntimeError, "stopped before becoming ready"):
+                rm.wait_backend_ready(timeout=10, startup_grace=0)
+
     def test_restoring_stopped_llm_records_transition(self):
         with rm.connect() as db:
             db.execute(

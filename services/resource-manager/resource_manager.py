@@ -231,6 +231,28 @@ def service_action(action: str, service: str) -> None:
         subprocess.run(["systemctl", "kill", "--signal=SIGKILL", service], check=False, timeout=10)
 
 
+def restart_service(service: str) -> None:
+    if service_active(service):
+        service_action("stop", service)
+    service_action("start", service)
+
+
+def wait_backend_ready(timeout: int = 600, startup_grace: int = 5) -> None:
+    started = time.monotonic()
+    deadline = started + timeout
+    while time.monotonic() < deadline:
+        if backend_ready():
+            return
+        if time.monotonic() - started >= startup_grace and service_status("llama-openai.service") in {
+            "inactive",
+            "failed",
+            "unknown",
+        }:
+            raise RuntimeError("provider service stopped before becoming ready")
+        time.sleep(1)
+    raise TimeoutError("provider did not become ready after profile activation")
+
+
 def post_local(url: str, payload: dict | None = None) -> None:
     request = urllib.request.Request(url, data=json.dumps(payload or {}).encode(), headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(request, timeout=30):
@@ -283,13 +305,9 @@ def activate_profile(profile_name: str) -> dict[str, object]:
         appliance_db.execute("UPDATE LaunchProfile SET active=CASE WHEN name=? THEN 1 ELSE 0 END", (profile_name,))
         appliance_db.commit()
 
-    service_action("restart", "llama-openai.service")
-    deadline = time.time() + 600
-    while time.time() < deadline:
-        if backend_ready():
-            return {"ok": True, "profileName": profile_name, "modelPath": str(model_path)}
-        time.sleep(1)
-    raise TimeoutError("provider did not become ready after profile activation")
+    restart_service("llama-openai.service")
+    wait_backend_ready()
+    return {"ok": True, "profileName": profile_name, "modelPath": str(model_path)}
 
 
 def restore_after_release(db: sqlite3.Connection, row: sqlite3.Row) -> None:
