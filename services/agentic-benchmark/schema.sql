@@ -119,6 +119,49 @@ CREATE TABLE IF NOT EXISTS request_metrics (
 CREATE INDEX IF NOT EXISTS request_metrics_task_attempt_idx ON request_metrics(task_id, attempt, created_at);
 CREATE INDEX IF NOT EXISTS request_metrics_campaign_created_idx ON request_metrics(campaign_id, created_at);
 
+CREATE TABLE IF NOT EXISTS run_baselines (
+  run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+  idle_power_w REAL NOT NULL,
+  duration_seconds REAL NOT NULL,
+  sample_count INTEGER NOT NULL,
+  measured_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS task_measurements (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  attempt INTEGER NOT NULL,
+  wall_duration_ms INTEGER NOT NULL DEFAULT 0,
+  active_inference_ms INTEGER NOT NULL DEFAULT 0,
+  response_calls INTEGER NOT NULL DEFAULT 0,
+  tool_calls INTEGER NOT NULL DEFAULT 0,
+  invalid_calls INTEGER NOT NULL DEFAULT 0,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_tokens INTEGER NOT NULL DEFAULT 0,
+  reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+  idle_power_w REAL NOT NULL DEFAULT 0,
+  gross_energy_wh REAL NOT NULL DEFAULT 0,
+  incremental_energy_wh REAL NOT NULL DEFAULT 0,
+  peak_power_w REAL,
+  peak_gpu_temp_c REAL,
+  peak_vram_bytes INTEGER,
+  peak_ram_bytes INTEGER,
+  sample_count INTEGER NOT NULL DEFAULT 0,
+  measurement_status TEXT NOT NULL DEFAULT 'incomplete',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(task_id, attempt)
+);
+CREATE INDEX IF NOT EXISTS task_measurements_status_idx ON task_measurements(measurement_status, updated_at);
+
+CREATE TABLE IF NOT EXISTS campaign_links (
+  source_campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  target_campaign_id TEXT NOT NULL UNIQUE REFERENCES campaigns(id) ON DELETE CASCADE,
+  link_type TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(source_campaign_id, link_type)
+);
+
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   campaign_id TEXT REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -155,3 +198,6 @@ VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));

@@ -13,6 +13,8 @@ COMMON_WEIGHTS = {
 }
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 ACTIVE_STATUSES = {"queued", "running", "pausing", "paused", "restoring"}
+QUALITY_WINDOW = 0.05
+EFFICIENCY_TIE_WINDOW = 3.0
 
 
 def canonical_json(value: Any) -> str:
@@ -68,3 +70,59 @@ def ranking_rows(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ),
         reverse=True,
     )
+
+
+def efficiency_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {"rows": [], "panelLeaderSolves": 0, "qualityLeaderScore": None, "tie": False}
+    quality_scores = [float(row["qualityScore"]) for row in rows if row.get("qualityScore") is not None]
+    quality_leader = max(quality_scores, default=None)
+    panel_leader = max((int(row.get("successes") or 0) for row in rows), default=0)
+    normalized = []
+    for source in rows:
+        row = dict(source)
+        successes = int(row.get("successes") or 0)
+        quality = row.get("qualityScore")
+        row["qualityEligible"] = quality_leader is not None and quality is not None and float(quality) >= quality_leader - QUALITY_WINDOW
+        row["solveEligible"] = successes > 0 and successes >= panel_leader - 1
+        row["measurementComplete"] = bool(row.get("measurementComplete"))
+        row["eligible"] = row["qualityEligible"] and row["solveEligible"] and row["measurementComplete"]
+        row["timePerSolveMs"] = float(row.get("activeInferenceMs") or 0) / successes if successes else None
+        row["tokensPerSolve"] = float(row.get("totalTokens") or 0) / successes if successes else None
+        incremental = float(row.get("incrementalEnergyWh") or 0)
+        gross = float(row.get("grossEnergyWh") or 0)
+        energy = incremental if incremental > 0 else gross
+        row["energyBasis"] = "incremental" if incremental > 0 else "gross"
+        row["energyPerSolveWh"] = energy / successes if successes and energy > 0 else None
+        row["efficiencyIndex"] = None
+        normalized.append(row)
+
+    eligible = [row for row in normalized if row["eligible"] and row["timePerSolveMs"] and row["tokensPerSolve"] and row["energyPerSolveWh"]]
+    if eligible:
+        best_time = min(row["timePerSolveMs"] for row in eligible)
+        best_tokens = min(row["tokensPerSolve"] for row in eligible)
+        best_energy = min(row["energyPerSolveWh"] for row in eligible)
+        for row in eligible:
+            time_factor = min(1.0, best_time / row["timePerSolveMs"])
+            token_factor = min(1.0, best_tokens / row["tokensPerSolve"])
+            energy_factor = min(1.0, best_energy / row["energyPerSolveWh"])
+            row["timeFactor"] = time_factor
+            row["tokenFactor"] = token_factor
+            row["energyFactor"] = energy_factor
+            row["efficiencyIndex"] = round(100.0 * time_factor**0.50 * energy_factor**0.30 * token_factor**0.20, 3)
+
+    normalized.sort(
+        key=lambda row: (row.get("efficiencyIndex") is not None, row.get("efficiencyIndex") or -1, row.get("successes") or 0),
+        reverse=True,
+    )
+    for index, row in enumerate(normalized, start=1):
+        row["rank"] = index if row.get("efficiencyIndex") is not None else None
+    scored = [row for row in normalized if row.get("efficiencyIndex") is not None]
+    tie = len(scored) > 1 and float(scored[0]["efficiencyIndex"]) - float(scored[1]["efficiencyIndex"]) <= EFFICIENCY_TIE_WINDOW
+    return {
+        "rows": normalized,
+        "panelLeaderSolves": panel_leader,
+        "qualityLeaderScore": quality_leader,
+        "tie": tie,
+        "confirmationRecommended": tie,
+    }

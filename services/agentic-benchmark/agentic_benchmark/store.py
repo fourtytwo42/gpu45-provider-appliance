@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .domain import COMMON_WEIGHTS, configuration_hash, ranking_rows
+from .domain import COMMON_WEIGHTS, configuration_hash, efficiency_rows, ranking_rows
 
 
 def now() -> str:
@@ -202,6 +202,213 @@ class BenchmarkStore:
             self._event(db, campaign_id, None, None, "campaign.promoted", "Queued top-three qualification", {"qualificationCampaignId": qualification_id, "profiles": sorted(profile_names)})
         return qualification_id
 
+    def create_efficiency_campaign(
+        self,
+        campaign_id: str,
+        profiles: list[dict[str, Any]],
+        suites: list[dict[str, Any]],
+        confirmation: bool = False,
+    ) -> str | None:
+        detail = self.campaign_detail(campaign_id)
+        if not detail or detail["campaign"]["status"] != "completed" or detail["campaign"]["preset"] != "common":
+            return None
+        top = [row for row in detail["ranking"] if row.get("compositeScore") is not None][:3]
+        if len(top) < 3:
+            return None
+        link_type = "efficiency-confirmation" if confirmation else "efficiency"
+        if confirmation:
+            report = self.efficiency_report(campaign_id)
+            if not report or not report.get("tie"):
+                return None
+            top = report["rows"][:2]
+            profile_names = {row["profileName"] for row in top}
+        else:
+            profile_names = {row["profileName"] for row in top}
+        required_ids = {"bfcl-efficiency-v1", "tau-efficiency-v1", "swe-efficiency-v1", "terminal-efficiency-v1"}
+        selected_profiles = [profile for profile in profiles if profile["name"] in profile_names]
+        selected_suites = [suite for suite in suites if suite["id"] in required_ids]
+        expected_profiles = 2 if confirmation else 3
+        if len(selected_profiles) != expected_profiles or {suite["id"] for suite in selected_suites} != required_ids:
+            return None
+        with self.session() as db:
+            existing = db.execute(
+                "SELECT target_campaign_id FROM campaign_links WHERE source_campaign_id=? AND link_type=?",
+                (campaign_id, link_type),
+            ).fetchone()
+            if existing:
+                return str(existing["target_campaign_id"])
+        target_id = self.create_campaign(
+            f"{'Confirmation' if confirmation else 'Finalist'} efficiency panel for {detail['campaign']['name']}",
+            "efficiency-confirmation-v1" if confirmation else "efficiency-v1",
+            selected_profiles,
+            selected_suites,
+        )
+        with self.session() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO campaign_links(source_campaign_id,target_campaign_id,link_type,created_at) VALUES(?,?,?,?)",
+                (campaign_id, target_id, link_type, now()),
+            )
+            self._event(
+                db, campaign_id, None, None, "campaign.efficiency_queued",
+                "Queued finalist efficiency panel" if not confirmation else "Queued efficiency confirmation",
+                {"targetCampaignId": target_id, "profiles": sorted(profile_names)},
+            )
+        return target_id
+
+    def efficiency_report(self, campaign_id: str) -> dict[str, Any] | None:
+        source = self.campaign_detail(campaign_id)
+        if not source:
+            return None
+        with self.session() as db:
+            link = db.execute(
+                "SELECT target_campaign_id FROM campaign_links WHERE source_campaign_id=? AND link_type='efficiency'",
+                (campaign_id,),
+            ).fetchone()
+            if not link:
+                return {
+                    "sourceCampaignId": campaign_id,
+                    "campaignId": None,
+                    "status": "not_started",
+                    "rows": [],
+                    "tie": False,
+                    "confirmationRecommended": False,
+                }
+            target_id = str(link["target_campaign_id"])
+            target = db.execute("SELECT * FROM campaigns WHERE id=?", (target_id,)).fetchone()
+            aggregates = [dict(row) for row in db.execute(
+                """
+                SELECT r.profile_name,
+                       COALESCE(SUM(r.expected_tasks),0) expected_tasks,
+                       COUNT(t.id) task_rows,
+                       SUM(CASE WHEN t.status IN ('completed','failed') THEN 1 ELSE 0 END) completed_tasks,
+                       SUM(CASE WHEN t.status='completed' AND t.passed=1 THEN 1 ELSE 0 END) successes,
+                       COALESCE(SUM(t.prompt_tokens),0) prompt_tokens,
+                       COALESCE(SUM(t.completion_tokens),0) completion_tokens,
+                       COALESCE(SUM(m.active_inference_ms),0) active_inference_ms,
+                       COALESCE(SUM(m.wall_duration_ms),0) wall_duration_ms,
+                       COALESCE(SUM(m.gross_energy_wh),0) gross_energy_wh,
+                       COALESCE(SUM(m.incremental_energy_wh),0) incremental_energy_wh,
+                       COALESCE(SUM(m.response_calls),0) response_calls,
+                       COALESCE(SUM(m.tool_calls),0) tool_calls,
+                       COALESCE(SUM(m.invalid_calls),0) invalid_calls,
+                       SUM(CASE WHEN m.measurement_status='complete' THEN 1 ELSE 0 END) measured_tasks,
+                       MAX(m.peak_power_w) peak_power_w,
+                       MAX(m.peak_gpu_temp_c) peak_gpu_temp_c,
+                       MAX(m.peak_vram_bytes) peak_vram_bytes,
+                       MAX(m.peak_ram_bytes) peak_ram_bytes
+                FROM runs r
+                LEFT JOIN tasks t ON t.run_id=r.id
+                LEFT JOIN task_measurements m ON m.task_id=t.id AND m.attempt=t.attempt
+                WHERE r.campaign_id=?
+                GROUP BY r.profile_name
+                """,
+                (target_id,),
+            )]
+        quality = {row["profileName"]: row.get("compositeScore") for row in source["ranking"]}
+        rows = []
+        for aggregate in aggregates:
+            completed = int(aggregate["completed_tasks"] or 0)
+            prompt_tokens = int(aggregate["prompt_tokens"] or 0)
+            completion_tokens = int(aggregate["completion_tokens"] or 0)
+            rows.append({
+                "profileName": aggregate["profile_name"],
+                "qualityScore": quality.get(aggregate["profile_name"]),
+                "expectedTasks": int(aggregate["expected_tasks"] or 0),
+                "completedTasks": completed,
+                "successes": int(aggregate["successes"] or 0),
+                "promptTokens": prompt_tokens,
+                "completionTokens": completion_tokens,
+                "totalTokens": prompt_tokens + completion_tokens,
+                "activeInferenceMs": int(aggregate["active_inference_ms"] or 0),
+                "wallDurationMs": int(aggregate["wall_duration_ms"] or 0),
+                "grossEnergyWh": float(aggregate["gross_energy_wh"] or 0),
+                "incrementalEnergyWh": float(aggregate["incremental_energy_wh"] or 0),
+                "responseCalls": int(aggregate["response_calls"] or 0),
+                "toolCalls": int(aggregate["tool_calls"] or 0),
+                "invalidCalls": int(aggregate["invalid_calls"] or 0),
+                "peakPowerW": aggregate["peak_power_w"],
+                "peakGpuTempC": aggregate["peak_gpu_temp_c"],
+                "peakVramBytes": aggregate["peak_vram_bytes"],
+                "peakRamBytes": aggregate["peak_ram_bytes"],
+                "measurementComplete": completed > 0 and completed == int(aggregate["expected_tasks"] or 0) and int(aggregate["measured_tasks"] or 0) == completed,
+            })
+        report = efficiency_rows(rows)
+        return {
+            "sourceCampaignId": campaign_id,
+            "campaignId": target_id,
+            "status": str(target["status"]) if target else "missing",
+            **report,
+        }
+
+    def run_baseline(self, run_id: str) -> dict[str, Any] | None:
+        with self.session() as db:
+            row = db.execute("SELECT * FROM run_baselines WHERE run_id=?", (run_id,)).fetchone()
+            return dict(row) if row else None
+
+    def record_run_baseline(self, run_id: str, measurement: dict[str, Any]) -> None:
+        with self.session() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO run_baselines(run_id,idle_power_w,duration_seconds,sample_count,measured_at) VALUES(?,?,?,?,?)",
+                (run_id, float(measurement.get("idle_power_w") or 0), float(measurement.get("duration_seconds") or 0), int(measurement.get("sample_count") or 0), now()),
+            )
+
+    def record_task_measurement(self, task_id: str, attempt: int, measurement: dict[str, Any]) -> None:
+        stamp = now()
+        with self.session() as db:
+            task = db.execute("SELECT run_id,status FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if not task:
+                return
+            requests = db.execute(
+                """
+                SELECT COUNT(*) response_calls,COALESCE(SUM(tool_calls),0) tool_calls,
+                       COALESCE(SUM(prompt_tokens),0) prompt_tokens,COALESCE(SUM(completion_tokens),0) completion_tokens,
+                       COALESCE(SUM(cached_tokens),0) cached_tokens,COALESCE(SUM(reasoning_tokens),0) reasoning_tokens,
+                       COALESCE(SUM(duration_ms),0) active_inference_ms,
+                       SUM(CASE WHEN completed=0 OR status_code>=400 THEN 1 ELSE 0 END) invalid_calls,
+                       SUM(CASE WHEN usage_source='missing' THEN 1 ELSE 0 END) missing_usage
+                FROM request_metrics WHERE task_id=? AND attempt=?
+                """,
+                (task_id, attempt),
+            ).fetchone()
+            response_calls = int(requests["response_calls"] or 0)
+            prompt_tokens = int(requests["prompt_tokens"] or 0)
+            completion_tokens = int(requests["completion_tokens"] or 0)
+            measurement_status = "complete" if response_calls > 0 and int(requests["missing_usage"] or 0) == 0 else "incomplete"
+            db.execute(
+                """
+                INSERT INTO task_measurements(
+                  task_id,attempt,wall_duration_ms,active_inference_ms,response_calls,tool_calls,invalid_calls,
+                  prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,idle_power_w,gross_energy_wh,
+                  incremental_energy_wh,peak_power_w,peak_gpu_temp_c,peak_vram_bytes,peak_ram_bytes,sample_count,
+                  measurement_status,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(task_id,attempt) DO UPDATE SET
+                  wall_duration_ms=excluded.wall_duration_ms,active_inference_ms=excluded.active_inference_ms,
+                  response_calls=excluded.response_calls,tool_calls=excluded.tool_calls,invalid_calls=excluded.invalid_calls,
+                  prompt_tokens=excluded.prompt_tokens,completion_tokens=excluded.completion_tokens,cached_tokens=excluded.cached_tokens,
+                  reasoning_tokens=excluded.reasoning_tokens,idle_power_w=excluded.idle_power_w,
+                  gross_energy_wh=excluded.gross_energy_wh,incremental_energy_wh=excluded.incremental_energy_wh,
+                  peak_power_w=excluded.peak_power_w,peak_gpu_temp_c=excluded.peak_gpu_temp_c,
+                  peak_vram_bytes=excluded.peak_vram_bytes,peak_ram_bytes=excluded.peak_ram_bytes,
+                  sample_count=excluded.sample_count,measurement_status=excluded.measurement_status,updated_at=excluded.updated_at
+                """,
+                (
+                    task_id, attempt, int(measurement.get("wall_duration_ms") or 0), int(requests["active_inference_ms"] or 0),
+                    response_calls, int(requests["tool_calls"] or 0), int(requests["invalid_calls"] or 0),
+                    prompt_tokens, completion_tokens, int(requests["cached_tokens"] or 0), int(requests["reasoning_tokens"] or 0),
+                    float(measurement.get("idle_power_w") or 0), float(measurement.get("gross_energy_wh") or 0),
+                    float(measurement.get("incremental_energy_wh") or 0), measurement.get("peak_power_w"),
+                    measurement.get("peak_gpu_temp_c"), measurement.get("peak_vram_bytes"), measurement.get("peak_ram_bytes"),
+                    int(measurement.get("sample_count") or 0), measurement_status, stamp, stamp,
+                ),
+            )
+            if int(attempt) == int(db.execute("SELECT attempt FROM tasks WHERE id=?", (task_id,)).fetchone()[0]):
+                db.execute(
+                    "UPDATE tasks SET prompt_tokens=?,completion_tokens=?,steps=?,updated_at=? WHERE id=?",
+                    (prompt_tokens, completion_tokens, max(response_calls, int(requests["tool_calls"] or 0)), stamp, task_id),
+                )
+            self._refresh_run(db, task["run_id"], incomplete_status="queued" if task["status"] == "interrupted" else "running")
+
     def retry_campaign_infrastructure(self, campaign_id: str) -> int:
         """Queue failed infrastructure tasks as a fresh user-requested attempt."""
         stamp = now()
@@ -338,7 +545,7 @@ class BenchmarkStore:
         with self.session() as db:
             row = db.execute(
                 """
-                SELECT r.*,c.status campaign_status,c.pause_requested,c.cancel_requested,c.previous_profile_name
+                SELECT r.*,c.status campaign_status,c.preset campaign_preset,c.pause_requested,c.cancel_requested,c.previous_profile_name
                 FROM runs r JOIN campaigns c ON c.id=r.campaign_id
                 WHERE c.status='queued' AND c.pause_requested=0 AND c.cancel_requested=0
                   AND r.status IN ('queued','interrupted')
@@ -504,11 +711,21 @@ class BenchmarkStore:
             return None
         with self.session() as db:
             tasks = [dict(row) for row in db.execute(
-                "SELECT t.*,r.profile_name,r.suite_id FROM tasks t JOIN runs r ON r.id=t.run_id WHERE r.campaign_id=? ORDER BY r.profile_name,r.suite_id,t.external_task_id",
+                """
+                SELECT t.*,r.profile_name,r.suite_id,
+                       m.active_inference_ms,m.response_calls,m.tool_calls,m.invalid_calls,m.cached_tokens,m.reasoning_tokens,
+                       m.idle_power_w,m.gross_energy_wh,m.incremental_energy_wh,m.peak_power_w,
+                       m.peak_gpu_temp_c measurement_peak_gpu_temp_c,m.peak_vram_bytes measurement_peak_vram_bytes,
+                       m.peak_ram_bytes,m.sample_count,m.measurement_status
+                FROM tasks t JOIN runs r ON r.id=t.run_id
+                LEFT JOIN task_measurements m ON m.task_id=t.id AND m.attempt=t.attempt
+                WHERE r.campaign_id=? ORDER BY r.profile_name,r.suite_id,t.external_task_id
+                """,
                 (campaign_id,),
             )]
             artifacts = [dict(row) for row in db.execute("SELECT * FROM artifacts WHERE campaign_id=? ORDER BY created_at", (campaign_id,))]
-        return {**detail, "tasks": tasks, "artifacts": artifacts}
+            requests = [dict(row) for row in db.execute("SELECT * FROM request_metrics WHERE campaign_id=? ORDER BY created_at", (campaign_id,))]
+        return {**detail, "tasks": tasks, "requestMetrics": requests, "artifacts": artifacts}
 
     def interrupt_run(self, run_id: str, reason: str) -> None:
         stamp = now()
@@ -535,11 +752,31 @@ class BenchmarkStore:
     def _refresh_run(self, db: sqlite3.Connection, run_id: str, incomplete_status: str = "running") -> None:
         stamp = now()
         counts = db.execute("SELECT COUNT(*) total,SUM(CASE WHEN status IN ('completed','failed') THEN 1 ELSE 0 END) done,SUM(CASE WHEN status='completed' AND passed=1 THEN 1 ELSE 0 END) passed,SUM(CASE WHEN status IN ('completed','failed') AND COALESCE(passed,0)=0 THEN 1 ELSE 0 END) failed,AVG(CASE WHEN status IN ('completed','failed') THEN reward END) score FROM tasks WHERE run_id=?", (run_id,)).fetchone()
+        resources = db.execute(
+            """
+            SELECT COALESCE(SUM(t.prompt_tokens+t.completion_tokens),0) total_tokens,
+                   COALESCE(SUM(t.duration_ms),0) duration_ms,
+                   MAX(m.peak_gpu_temp_c) peak_gpu_temp_c,
+                   MAX(m.peak_vram_bytes) peak_vram_bytes
+            FROM tasks t
+            LEFT JOIN task_measurements m ON m.task_id=t.id AND m.attempt=t.attempt
+            WHERE t.run_id=? AND t.status IN ('completed','failed')
+            """,
+            (run_id,),
+        ).fetchone()
         expected = int(db.execute("SELECT expected_tasks FROM runs WHERE id=?", (run_id,)).fetchone()[0])
         done = int(counts["done"] or 0)
         status = "completed" if expected > 0 and done >= expected else incomplete_status
         score = float(counts["score"]) if counts["score"] is not None else None
-        db.execute("UPDATE runs SET status=?,completed_tasks=?,passed_tasks=?,failed_tasks=?,score=?,completed_at=CASE WHEN ?='completed' THEN ? ELSE completed_at END,updated_at=? WHERE id=?", (status, done, int(counts["passed"] or 0), int(counts["failed"] or 0), score, status, stamp, stamp, run_id))
+        db.execute(
+            "UPDATE runs SET status=?,completed_tasks=?,passed_tasks=?,failed_tasks=?,score=?,total_tokens=?,duration_ms=?,"
+            "peak_gpu_temp_c=?,peak_vram_bytes=?,completed_at=CASE WHEN ?='completed' THEN ? ELSE completed_at END,updated_at=? WHERE id=?",
+            (
+                status, done, int(counts["passed"] or 0), int(counts["failed"] or 0), score,
+                int(resources["total_tokens"] or 0), int(resources["duration_ms"] or 0), resources["peak_gpu_temp_c"],
+                resources["peak_vram_bytes"], status, stamp, stamp, run_id,
+            ),
+        )
         if status == "completed":
             run = db.execute("SELECT campaign_id,profile_name,suite_id FROM runs WHERE id=?", (run_id,)).fetchone()
             if run["suite_id"] == "gpu45-smoke-v1":

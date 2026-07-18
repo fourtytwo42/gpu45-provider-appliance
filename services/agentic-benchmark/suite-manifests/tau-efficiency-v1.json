@@ -1,0 +1,17 @@
+{
+  "id": "tau-efficiency-v1",
+  "name": "Tau finalist efficiency panel",
+  "version": "a1e85084a3960281cb06997594133e8f39ea42a7-efficiency-v1",
+  "track": "efficiency",
+  "adapter": "tau",
+  "taskSource": "upstream-stratified-base-split",
+  "taskCount": 3,
+  "weight": 0,
+  "timeoutSeconds": 1800,
+  "requiresDocker": false,
+  "requiresUserSimulator": true,
+  "domains": ["airline", "retail", "telecom"],
+  "userSimulatorProfile": "gpu45-m-shq8-mtp-opta-q5-k-m-69f462b8",
+  "trials": 1,
+  "perDomainLimit": 1
+}

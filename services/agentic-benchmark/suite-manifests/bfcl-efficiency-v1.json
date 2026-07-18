@@ -1,0 +1,15 @@
+{
+  "id": "bfcl-efficiency-v1",
+  "name": "BFCL finalist efficiency panel",
+  "version": "6ea57973c7a6097fd7c5915698c54c17c5b1b6c8-efficiency-v1",
+  "track": "efficiency",
+  "adapter": "bfcl",
+  "taskSource": "upstream-stratified-cases",
+  "taskCount": 4,
+  "weight": 0,
+  "timeoutSeconds": 900,
+  "requiresDocker": false,
+  "requiresUserSimulator": false,
+  "categories": ["multiple", "parallel_multiple", "multi_turn_long_context", "format_sensitivity"],
+  "perCategoryLimit": 1
+}

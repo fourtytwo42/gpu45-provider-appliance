@@ -129,6 +129,9 @@ class Handler(BaseHTTPRequestHandler):
             elif len(segments) == 4 and segments[:2] == ["v1", "campaigns"] and segments[3] == "tasks":
                 query = parse_qs(urlparse(self.path).query)
                 self._json(HTTPStatus.OK, STORE.list_tasks(segments[2], int(query.get("cursor", ["0"])[0]), int(query.get("limit", ["50"])[0])))
+            elif len(segments) == 4 and segments[:2] == ["v1", "campaigns"] and segments[3] == "efficiency":
+                report = STORE.efficiency_report(segments[2])
+                self._json(HTTPStatus.OK if report else HTTPStatus.NOT_FOUND, report or {"error": "Campaign not found"})
             elif len(segments) == 4 and segments[:2] == ["v1", "campaigns"] and segments[3] == "export":
                 export = STORE.export_rows(segments[2])
                 if not export:
@@ -138,7 +141,12 @@ class Handler(BaseHTTPRequestHandler):
                 export_format = query.get("format", ["json"])[0].lower()
                 if export_format == "csv":
                     buffer = io.StringIO()
-                    fields = ["profile_name", "suite_id", "external_task_id", "status", "passed", "reward", "duration_ms", "error_class", "user_message"]
+                    fields = [
+                        "profile_name", "suite_id", "external_task_id", "status", "passed", "reward", "duration_ms",
+                        "prompt_tokens", "completion_tokens", "active_inference_ms", "response_calls", "tool_calls",
+                        "gross_energy_wh", "incremental_energy_wh", "peak_power_w", "measurement_peak_gpu_temp_c",
+                        "measurement_peak_vram_bytes", "measurement_status", "error_class", "user_message",
+                    ]
                     writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction="ignore")
                     writer.writeheader()
                     writer.writerows(export["tasks"])
@@ -198,6 +206,16 @@ class Handler(BaseHTTPRequestHandler):
                     suites = load_suite_manifests(PACKAGE_ROOT / "suite-manifests")
                     qualification_id = STORE.promote_top_three(segments[2], profiles, suites)
                     self._json(HTTPStatus.OK if qualification_id else HTTPStatus.CONFLICT, {"ok": bool(qualification_id), "qualificationCampaignId": qualification_id})
+                elif action in {"efficiency", "confirm-efficiency"}:
+                    profiles = discover_profiles(APPLIANCE_DATABASE_PATH)
+                    suites = load_suite_manifests(PACKAGE_ROOT / "suite-manifests")
+                    efficiency_id = STORE.create_efficiency_campaign(
+                        segments[2], profiles, suites, confirmation=action == "confirm-efficiency",
+                    )
+                    self._json(
+                        HTTPStatus.OK if efficiency_id else HTTPStatus.CONFLICT,
+                        {"ok": bool(efficiency_id), "efficiencyCampaignId": efficiency_id},
+                    )
                 else:
                     found = STORE.set_campaign_action(segments[2], action)
                     self._json(HTTPStatus.OK if found else HTTPStatus.NOT_FOUND, {"ok": found})

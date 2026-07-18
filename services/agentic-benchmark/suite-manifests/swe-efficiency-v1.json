@@ -1,0 +1,15 @@
+{
+  "id": "swe-efficiency-v1",
+  "name": "SWE-bench finalist efficiency panel",
+  "version": "f7bbbb2-efficiency-v1",
+  "track": "efficiency",
+  "adapter": "swebench",
+  "taskSource": "published-fixed-50-stratified",
+  "taskCount": 2,
+  "weight": 0,
+  "timeoutSeconds": 7200,
+  "requiresDocker": true,
+  "requiresUserSimulator": false,
+  "maxConcurrency": 1,
+  "stratifiedTaskCount": 2
+}

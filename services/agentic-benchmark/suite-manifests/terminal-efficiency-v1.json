@@ -1,0 +1,15 @@
+{
+  "id": "terminal-efficiency-v1",
+  "name": "Terminal-Bench finalist efficiency panel",
+  "version": "2.0-69671fba-efficiency-v1",
+  "track": "efficiency",
+  "adapter": "harbor",
+  "taskSource": "terminal-bench@2.0-stratified",
+  "taskCount": 2,
+  "weight": 0,
+  "timeoutSeconds": 7200,
+  "requiresDocker": true,
+  "requiresUserSimulator": false,
+  "maxConcurrency": 1,
+  "stratifiedTaskCount": 2
+}

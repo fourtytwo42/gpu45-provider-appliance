@@ -183,6 +183,57 @@ class StoreTests(unittest.TestCase):
         self.assertEqual("top-three-qualification", promoted["campaign"]["preset"])
         self.assertEqual(12, len(promoted["runs"]))
 
+    def test_completed_common_campaign_creates_one_efficiency_panel(self):
+        profiles = [{"name": f"model-{i}", "profileHash": f"hash-{i}", "modelPath": f"/models/{i}.gguf"} for i in range(4)]
+        common_ids = ["bfcl-v4-local", "tau-text-base", "swe-verified-mini50", "terminal-bench-2"]
+        common_suites = [{"id": item, "manifestHash": f"hash-{item}", "taskCount": 1} for item in common_ids]
+        campaign_id = self.store.create_campaign("Common", "common", profiles, common_suites)
+        with self.store.session() as db:
+            db.execute("UPDATE campaigns SET status='completed' WHERE id=?", (campaign_id,))
+            for index, profile in enumerate(profiles):
+                db.execute("UPDATE runs SET status='completed',score=? WHERE campaign_id=? AND profile_name=?", (1.0 - index * 0.1, campaign_id, profile["name"]))
+        suite_ids = ["bfcl-efficiency-v1", "tau-efficiency-v1", "swe-efficiency-v1", "terminal-efficiency-v1"]
+        suites = [{"id": item, "manifestHash": f"hash-{item}", "taskCount": count} for item, count in zip(suite_ids, (4, 3, 2, 2))]
+
+        first = self.store.create_efficiency_campaign(campaign_id, profiles, suites)
+        second = self.store.create_efficiency_campaign(campaign_id, profiles, suites)
+
+        self.assertIsNotNone(first)
+        self.assertEqual(first, second)
+        panel = self.store.campaign_detail(str(first))
+        self.assertEqual("efficiency-v1", panel["campaign"]["preset"])
+        self.assertEqual(12, len(panel["runs"]))
+        self.assertEqual({"model-0", "model-1", "model-2"}, {run["profile_name"] for run in panel["runs"]})
+
+    def test_task_measurement_aggregates_only_its_attempt(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Measurement", "custom", [profile], [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+        self.store.ensure_tasks(run["id"], ["task-one"])
+        task = self.store.begin_task(self.store.next_task(run["id"])["id"])
+        base = {
+            "campaignId": campaign_id, "runId": run["id"], "taskId": task["id"], "attempt": 1,
+            "apiPath": "/v1/responses", "statusCode": 200, "usageSource": "response", "completed": True,
+        }
+        self.store.record_request_metric({**base, "requestId": "one", "promptTokens": 20, "completionTokens": 5, "durationMs": 100})
+        self.store.record_request_metric({**base, "requestId": "two", "promptTokens": 10, "completionTokens": 7, "durationMs": 200, "toolCalls": 1})
+        self.store.complete_task(task["id"], True, 500)
+        self.store.record_task_measurement(task["id"], 1, {
+            "wall_duration_ms": 500, "idle_power_w": 30, "gross_energy_wh": 0.1,
+            "incremental_energy_wh": 0.07, "peak_power_w": 180, "sample_count": 3,
+        })
+        with self.store.session() as db:
+            measured = db.execute("SELECT * FROM task_measurements WHERE task_id=? AND attempt=1", (task["id"],)).fetchone()
+            updated_task = db.execute("SELECT * FROM tasks WHERE id=?", (task["id"],)).fetchone()
+            updated_run = db.execute("SELECT * FROM runs WHERE id=?", (run["id"],)).fetchone()
+        self.assertEqual(2, measured["response_calls"])
+        self.assertEqual(300, measured["active_inference_ms"])
+        self.assertEqual("complete", measured["measurement_status"])
+        self.assertEqual(30, updated_task["prompt_tokens"])
+        self.assertEqual(12, updated_task["completion_tokens"])
+        self.assertEqual(42, updated_run["total_tokens"])
+
     def test_manual_infrastructure_retry_requeues_failed_task(self):
         profile = {"name": "model-a", "profileHash": "hash-a"}
         suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}

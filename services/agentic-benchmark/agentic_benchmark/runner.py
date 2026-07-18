@@ -17,6 +17,7 @@ from .domain import load_suite_manifests
 from .harnesses import BfclAdapter, HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter
 from .model_catalog import discover_profiles
 from .store import BenchmarkStore
+from .telemetry import HardwareReader, TaskResourceSampler, measure_idle_power
 
 
 class ResourcePreempted(RuntimeError):
@@ -314,6 +315,7 @@ class BenchmarkRunner:
         self.tau = TauAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root, os.environ.get("GPU45_AGENTIC_TOKEN", ""))
         self.swebench = SweBenchAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root, os.environ.get("GPU45_AGENTIC_TOKEN", ""))
         self.harbor = HarborAdapter(Path(os.environ.get("GPU45_HARNESS_ROOT", "/opt/gpu45/benchmark-harnesses")), self.artifact_root, os.environ.get("GPU45_AGENTIC_TOKEN", ""))
+        self.hardware = HardwareReader()
         self.stop_event = threading.Event()
 
     def start(self) -> None:
@@ -324,7 +326,7 @@ class BenchmarkRunner:
         while not self.stop_event.wait(3):
             try:
                 self._queue_model_smokes()
-                self._queue_top_three_qualifications()
+                self._queue_finalist_efficiency()
                 runnable = self.store.next_runnable()
                 if runnable:
                     self._run(runnable)
@@ -340,12 +342,12 @@ class BenchmarkRunner:
         for profile in profiles:
             self.store.ensure_smoke_campaign(profile, smoke)
 
-    def _queue_top_three_qualifications(self) -> None:
+    def _queue_finalist_efficiency(self) -> None:
         profiles = discover_profiles(self.appliance_db)
         suites = load_suite_manifests(self.package_root / "suite-manifests")
         for campaign in self.store.list_campaigns(200):
             if campaign["preset"] == "common" and campaign["status"] == "completed":
-                self.store.promote_top_three(campaign["id"], profiles, suites)
+                self.store.create_efficiency_campaign(campaign["id"], profiles, suites)
 
     def _active_profile(self) -> str | None:
         try:
@@ -379,6 +381,14 @@ class BenchmarkRunner:
             self.resources.activate(str(run["profile_name"]))
             profile = json.loads(run["profile_snapshot_json"])
             alias = str(profile.get("servedAlias") or profile["name"])
+            baseline = self.store.run_baseline(run["id"])
+            if str(runnable.get("campaign_preset") or "").startswith("efficiency") and not baseline:
+                baseline = measure_idle_power(
+                    self.hardware,
+                    float(os.environ.get("GPU45_AGENTIC_IDLE_BASELINE_SECONDS", "30")),
+                )
+                self.store.record_run_baseline(run["id"], baseline)
+            idle_power_w = float((baseline or {}).get("idle_power_w") or 0)
             if suite.get("adapter") == "tau":
                 self.resources.simulator("start")
                 self.tau.wait_ready()
@@ -389,6 +399,8 @@ class BenchmarkRunner:
                 lease.ensure_active()
                 task = self.store.begin_task(task["id"])
                 started = time.monotonic()
+                sampler = TaskResourceSampler(self.hardware, idle_power_w)
+                sampler.start()
                 try:
                     if suite.get("adapter") == "bfcl":
                         result = self.bfcl.run(
@@ -436,6 +448,8 @@ class BenchmarkRunner:
                         )
                     elif not self.store.retry_infrastructure_task(task["id"], "Infrastructure failed; retrying once"):
                         self.store.complete_task(task["id"], False, int((time.monotonic() - started) * 1000), "infrastructure_failure", "Smoke check could not complete", repr(exc))
+                finally:
+                    self.store.record_task_measurement(task["id"], int(task["attempt"]), sampler.stop())
         except CampaignControlled:
             pass
         except ResourcePreempted as exc:
