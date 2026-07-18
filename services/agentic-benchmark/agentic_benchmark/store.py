@@ -223,9 +223,13 @@ class BenchmarkStore:
                 [(stamp, task_id) for task_id in task_ids],
             )
             db.executemany(
-                "UPDATE runs SET status='queued',completed_tasks=0,passed_tasks=0,failed_tasks=0,score=NULL,error=NULL,completed_at=NULL,updated_at=? WHERE id=?",
+                "UPDATE runs SET error=NULL,completed_at=NULL,updated_at=? WHERE id=?",
                 [(stamp, run_id) for run_id in run_ids],
             )
+            for run_id in run_ids:
+                # Keep already scored tasks visible. Only the infrastructure
+                # failures above are reset for another attempt.
+                self._refresh_run(db, run_id, incomplete_status="queued")
             db.executemany(
                 "UPDATE runs SET status='interrupted',error=NULL,completed_at=NULL,updated_at=? WHERE id=?",
                 [(stamp, row["id"]) for row in failed_runs],
@@ -490,12 +494,12 @@ class BenchmarkStore:
             if run["suite_id"] == "gpu45-smoke-v1":
                 db.execute("UPDATE model_qualifications SET status='failed',remediation=?,last_checked_at=?,updated_at=? WHERE profile_name=?", (error, stamp, stamp, run["profile_name"]))
 
-    def _refresh_run(self, db: sqlite3.Connection, run_id: str) -> None:
+    def _refresh_run(self, db: sqlite3.Connection, run_id: str, incomplete_status: str = "running") -> None:
         stamp = now()
         counts = db.execute("SELECT COUNT(*) total,SUM(CASE WHEN status IN ('completed','failed') THEN 1 ELSE 0 END) done,SUM(CASE WHEN status='completed' AND passed=1 THEN 1 ELSE 0 END) passed,SUM(CASE WHEN status IN ('completed','failed') AND COALESCE(passed,0)=0 THEN 1 ELSE 0 END) failed,AVG(CASE WHEN status IN ('completed','failed') THEN reward END) score FROM tasks WHERE run_id=?", (run_id,)).fetchone()
         expected = int(db.execute("SELECT expected_tasks FROM runs WHERE id=?", (run_id,)).fetchone()[0])
         done = int(counts["done"] or 0)
-        status = "completed" if expected > 0 and done >= expected else "running"
+        status = "completed" if expected > 0 and done >= expected else incomplete_status
         score = float(counts["score"]) if counts["score"] is not None else None
         db.execute("UPDATE runs SET status=?,completed_tasks=?,passed_tasks=?,failed_tasks=?,score=?,completed_at=CASE WHEN ?='completed' THEN ? ELSE completed_at END,updated_at=? WHERE id=?", (status, done, int(counts["passed"] or 0), int(counts["failed"] or 0), score, status, stamp, stamp, run_id))
         if status == "completed":

@@ -150,6 +150,26 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(task["id"], retried["id"])
         self.assertEqual("queued", retried["status"])
 
+    def test_manual_infrastructure_retry_preserves_completed_task_counts(self):
+        profile = {"name": "model-a", "profileHash": "hash-a"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 2}
+        campaign_id = self.store.create_campaign("Retry partial", "custom", [profile], [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+        self.store.ensure_tasks(run["id"], ["first", "second"])
+        first = self.store.next_task(run["id"])
+        self.store.begin_task(first["id"])
+        self.store.complete_task(first["id"], True, 10)
+        second = self.store.next_task(run["id"])
+        self.store.begin_task(second["id"])
+        self.store.complete_task(second["id"], False, 10, "infrastructure_failure", "transport failed")
+
+        self.assertEqual(1, self.store.retry_campaign_infrastructure(campaign_id))
+        retried_run = self.store.campaign_detail(campaign_id)["runs"][0]
+        self.assertEqual("queued", retried_run["status"])
+        self.assertEqual(1, retried_run["completed_tasks"])
+        self.assertEqual(1, retried_run["passed_tasks"])
+        self.assertEqual(0, retried_run["failed_tasks"])
+
     def test_run_infrastructure_failure_retries_before_failing(self):
         profile = {"name": "model-a", "profileHash": "hash-a"}
         suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
