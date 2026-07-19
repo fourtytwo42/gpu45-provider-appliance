@@ -273,6 +273,42 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(120.0, row["tokensPerSolve"])
         self.assertFalse(row["energyAvailable"])
 
+    def test_reference_campaign_supersedes_changed_configuration(self):
+        local_profile = {"name": "local", "profileHash": "local-hash"}
+        common_ids = ["bfcl-v4-local", "tau-text-base", "swe-verified-mini50", "terminal-bench-2"]
+        source_id = self.store.create_campaign(
+            "Common", "common", [local_profile],
+            [{"id": item, "manifestHash": f"hash-{item}", "taskCount": 1} for item in common_ids],
+        )
+        suites = [
+            {"id": item, "manifestHash": f"hash-{item}", "taskCount": count}
+            for item, count in zip(
+                ("bfcl-efficiency-v1", "tau-efficiency-v1", "swe-efficiency-v1", "terminal-efficiency-v1"),
+                (4, 3, 2, 2),
+            )
+        ]
+        original = self.store.create_reference_campaign(
+            source_id,
+            [{"name": "reference-codex", "profileHash": "reference-v1"}],
+            suites,
+        )
+        updated_suites = [{**suite, "manifestHash": suite["manifestHash"] + "-v2"} for suite in suites]
+
+        replacement = self.store.create_reference_campaign(
+            source_id,
+            [{"name": "reference-codex", "profileHash": "reference-v2"}],
+            updated_suites,
+        )
+        duplicate = self.store.create_reference_campaign(
+            source_id,
+            [{"name": "reference-codex", "profileHash": "reference-v2"}],
+            updated_suites,
+        )
+
+        self.assertNotEqual(original, replacement)
+        self.assertEqual(replacement, duplicate)
+        self.assertEqual("cancelled", self.store.campaign_detail(str(original))["campaign"]["status"])
+
     def test_task_measurement_aggregates_only_its_attempt(self):
         profile = {"name": "model-a", "profileHash": "hash-a"}
         suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}

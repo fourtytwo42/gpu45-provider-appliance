@@ -275,13 +275,47 @@ class BenchmarkStore:
         selected_suites = [suite for suite in suites if suite["id"] in EFFICIENCY_SUITE_WEIGHTS]
         if {suite["id"] for suite in selected_suites} != set(EFFICIENCY_SUITE_WEIGHTS):
             return None
+        desired_config = {
+            "preset": "agent-system-reference-v1",
+            "profiles": [{"name": profile["name"], "profileHash": profile["profileHash"]} for profile in profiles],
+            "suites": [{"id": suite["id"], "manifestHash": suite["manifestHash"]} for suite in selected_suites],
+            "weights": COMMON_WEIGHTS,
+        }
+        desired_hash = configuration_hash(desired_config)
         with self.session() as db:
             existing = db.execute(
-                "SELECT target_campaign_id FROM campaign_links WHERE source_campaign_id=? AND link_type='reference'",
+                """
+                SELECT l.target_campaign_id,c.configuration_hash,c.status
+                FROM campaign_links l JOIN campaigns c ON c.id=l.target_campaign_id
+                WHERE l.source_campaign_id=? AND l.link_type='reference'
+                """,
                 (campaign_id,),
             ).fetchone()
-            if existing:
+            if existing and existing["configuration_hash"] == desired_hash:
                 return str(existing["target_campaign_id"])
+            if existing:
+                stale_id = str(existing["target_campaign_id"])
+                stamp = now()
+                db.execute(
+                    "UPDATE campaigns SET status='cancelled',error='Superseded by updated reference configuration',current_run_id=NULL,completed_at=?,updated_at=? WHERE id=?",
+                    (stamp, stamp, stale_id),
+                )
+                db.execute(
+                    "UPDATE runs SET status='cancelled',error='Superseded by updated reference configuration',lease_id=NULL,completed_at=?,updated_at=? WHERE campaign_id=? AND status NOT IN ('completed','failed','cancelled')",
+                    (stamp, stamp, stale_id),
+                )
+                db.execute(
+                    "UPDATE tasks SET status='cancelled',error_class='cancelled',user_message='Superseded by updated reference configuration',completed_at=?,updated_at=? WHERE run_id IN (SELECT id FROM runs WHERE campaign_id=?) AND status NOT IN ('completed','failed','cancelled')",
+                    (stamp, stamp, stale_id),
+                )
+                db.execute(
+                    "DELETE FROM campaign_links WHERE source_campaign_id=? AND link_type='reference'",
+                    (campaign_id,),
+                )
+                self._event(
+                    db, campaign_id, None, None, "campaign.reference_superseded",
+                    "Superseded stale Codex reference campaign", {"targetCampaignId": stale_id},
+                )
         profile = profiles[0]
         target_id = self.create_campaign(
             f"{profile.get('displayName') or profile['name']} reference for {source['campaign']['name']}",
