@@ -134,6 +134,7 @@ systemctl restart gpu45-agentic-benchmark.service
 
 if command -v ufw >/dev/null 2>&1; then
   ufw allow from 172.28.0.0/16 to any port 30001 proto tcp comment 'GPU45 benchmark inference' >/dev/null
+  ufw allow from 172.28.0.0/16 to any port 30003 proto tcp comment 'GPU45 Codex benchmark reference' >/dev/null
 fi
 
 docker info >/dev/null
