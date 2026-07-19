@@ -112,6 +112,17 @@ class HarnessProcessTests(unittest.TestCase):
         self.assertEqual(["one"], adapter.tasks({"taskIds": ["one"]}))
         self.assertEqual(["django__django-11790", "sympy__sympy-123"], adapter.tasks({"stratifiedTaskCount": 2}))
 
+    @mock.patch("agentic_benchmark.harnesses.run_interruptible", return_value=1)
+    def test_swebench_caps_each_agent_turn(self, _run_interruptible):
+        adapter = SweBenchAdapter(self.root / "harnesses", self.root / "artifacts", "token")
+        adapter.run(
+            "campaign", "run", "task", 1, "django__django-11790", "model", 60,
+            lambda: None, lambda: None,
+        )
+
+        generated = self.root / "artifacts" / "campaign" / "run" / "task" / "attempt-1" / "gpu45-swebench.yaml"
+        self.assertIn("    max_tokens: 4096\n", generated.read_text(encoding="utf-8"))
+
     def test_harbor_discovers_pinned_terminal_bench_tasks(self):
         cache = self.root / "cache"
         for name in ("task-b", "task-a"):

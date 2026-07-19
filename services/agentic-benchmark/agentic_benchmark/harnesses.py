@@ -436,6 +436,7 @@ class SweBenchAdapter:
             f"    api_key: {json.dumps(self.token)}\n"
             "    extra_headers:\n"
             f"{yaml_headers}"
+            "    max_tokens: 4096\n"
             "    temperature: 0\n"
             "    seed: 42\n"
             "    drop_params: true\n",
