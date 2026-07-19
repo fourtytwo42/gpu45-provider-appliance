@@ -63,6 +63,7 @@ export function AgenticBenchmarkConsole({ initialModels, initialSuites, initialC
     if (!modelResponse.ok || !suiteResponse.ok || !campaignResponse.ok) {
       throw new Error(modelPayload.error || suitePayload.error || campaignPayload.error || "Benchmark coordinator unavailable");
     }
+    setError(null);
     setModels(modelPayload.models);
     setSuites(suitePayload.suites);
     setCampaigns(campaignPayload.campaigns);
@@ -142,7 +143,7 @@ export function AgenticBenchmarkConsole({ initialModels, initialSuites, initialC
       <section className="bg-[#0d131c] p-5">
         <div className="flex items-center justify-between">
           <div><h2 className="font-semibold text-white">Model qualification</h2><p className="mt-1 text-sm text-slate-500">New or changed profiles are tested automatically.</p></div>
-          <button type="button" title="Refresh model qualifications" onClick={() => void refresh()} className="grid h-9 w-9 place-items-center text-slate-400 hover:bg-white/5 hover:text-white"><RefreshCw className="h-4 w-4" /></button>
+          <button type="button" title="Refresh model qualifications" onClick={() => void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : "Refresh failed"))} className="grid h-9 w-9 place-items-center text-slate-400 hover:bg-white/5 hover:text-white"><RefreshCw className="h-4 w-4" /></button>
         </div>
         <div className="mt-4 divide-y divide-white/8 border-y border-white/8">
           {models.map((model) => {
