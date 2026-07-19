@@ -17,6 +17,7 @@ from typing import Any
 
 
 HOST = os.environ.get("GPU45_CODEX_PROXY_HOST", "127.0.0.1")
+DOCKER_HOST = os.environ.get("GPU45_CODEX_PROXY_DOCKER_HOST", "").strip()
 PORT = int(os.environ.get("GPU45_CODEX_PROXY_PORT", "30003"))
 CODEX_BIN = os.environ.get("GPU45_CODEX_BIN") or shutil.which("codex") or "/usr/bin/codex"
 CODEX_HOME = Path(os.environ.get("GPU45_CODEX_HOME", "/var/lib/gpu45-benchmark/.codex"))
@@ -56,6 +57,10 @@ TURN_SCHEMA = {
     "required": ["content", "tool_calls"],
     "additionalProperties": False,
 }
+
+
+def listener_hosts(primary: str, docker_host: str = "") -> list[str]:
+    return list(dict.fromkeys(host for host in (primary.strip(), docker_host.strip()) if host))
 
 
 def build_turn_prompt(body: dict[str, Any]) -> str:
@@ -302,9 +307,13 @@ class Handler(BaseHTTPRequestHandler):
 def serve() -> None:
     WORK_ROOT.mkdir(parents=True, exist_ok=True)
     CODEX_HOME.mkdir(parents=True, exist_ok=True)
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"codex-reference listening on http://{HOST}:{PORT} model={MODEL} effort={EFFORT}", flush=True)
-    server.serve_forever()
+    servers = [ThreadingHTTPServer((host, PORT), Handler) for host in listener_hosts(HOST, DOCKER_HOST)]
+    for server in servers[1:]:
+        thread = threading.Thread(target=server.serve_forever, name=f"codex-reference-{server.server_address[0]}", daemon=True)
+        thread.start()
+    hosts = ",".join(str(server.server_address[0]) for server in servers)
+    print(f"codex-reference listening on {hosts}:{PORT} model={MODEL} effort={EFFORT}", flush=True)
+    servers[0].serve_forever()
 
 
 if __name__ == "__main__":

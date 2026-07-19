@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from agentic_benchmark.codex_reference_proxy import build_chat_response, build_turn_prompt, parse_codex_jsonl
+from agentic_benchmark.codex_reference_proxy import build_chat_response, build_turn_prompt, listener_hosts, parse_codex_jsonl
 
 
 class CodexReferenceProxyTests(unittest.TestCase):
@@ -39,6 +39,10 @@ class CodexReferenceProxyTests(unittest.TestCase):
         self.assertEqual(2, len(response["choices"][0]["message"]["tool_calls"]))
         self.assertEqual(120, response["usage"]["total_tokens"])
         self.assertEqual(7, response["usage"]["completion_tokens_details"]["reasoning_tokens"])
+
+    def test_listener_hosts_adds_docker_bridge_without_public_wildcard(self):
+        self.assertEqual(["127.0.0.1", "172.28.0.1"], listener_hosts("127.0.0.1", "172.28.0.1"))
+        self.assertNotIn("0.0.0.0", listener_hosts("127.0.0.1", "172.28.0.1"))
 
 
 if __name__ == "__main__":
