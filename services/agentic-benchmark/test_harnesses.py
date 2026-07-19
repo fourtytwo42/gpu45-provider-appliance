@@ -19,10 +19,17 @@ from agentic_benchmark.harnesses import (
     openai_base_url,
     run_interruptible,
     stratified_sample,
+    task_attempt_root,
 )
 
 
 class HarnessProcessTests(unittest.TestCase):
+    def test_task_artifacts_are_isolated_by_attempt(self):
+        first = task_attempt_root(Path("/artifacts"), "campaign", "run", "task", 1)
+        second = task_attempt_root(Path("/artifacts"), "campaign", "run", "task", 2)
+        self.assertNotEqual(first, second)
+        self.assertEqual(Path("/artifacts/campaign/run/task/attempt-2"), second)
+
     def test_bfcl_case_pass_requires_full_credit(self):
         self.assertTrue(bfcl_case_passed(1.0))
         self.assertFalse(bfcl_case_passed(0.0))

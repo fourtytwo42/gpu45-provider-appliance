@@ -56,6 +56,18 @@ def stratified_sample(items: list[str], count: int) -> list[str]:
     return [items[index] for index in indices]
 
 
+def task_attempt_root(
+    artifact_root: Path,
+    campaign_id: str,
+    run_id: str,
+    task_id: str,
+    attempt: int,
+) -> Path:
+    if attempt < 1:
+        raise ValueError("Benchmark task attempts start at 1")
+    return artifact_root / campaign_id / run_id / task_id / f"attempt-{attempt}"
+
+
 def openai_base_url(endpoint_url: str | None = None) -> str:
     return (endpoint_url or os.environ.get("GPU45_RESPONSES_URL", "http://127.0.0.1:30001")).rstrip("/") + "/v1"
 
@@ -175,7 +187,7 @@ class BfclAdapter:
         endpoint_url: str | None = None,
         transport: str = "responses",
     ) -> HarnessResult:
-        root = self.artifact_root / campaign_id / run_id / task_id
+        root = task_attempt_root(self.artifact_root, campaign_id, run_id, task_id, attempt)
         results = root / "results"
         scores = root / "scores"
         log = root / "bfcl.log"
@@ -293,7 +305,7 @@ class TauAdapter:
     ) -> HarnessResult:
         parts = external_task_id.split(":", 2)
         domain, upstream_id = parts[:2]
-        root = self.artifact_root / campaign_id / run_id / task_id
+        root = task_attempt_root(self.artifact_root, campaign_id, run_id, task_id, attempt)
         output = root / "tau-result.json"
         log = root / "tau.log"
         command = [
@@ -370,7 +382,7 @@ class SweBenchAdapter:
         control_state: Callable[[], str | None],
         endpoint_url: str | None = None,
     ) -> HarnessResult:
-        root = self.artifact_root / campaign_id / run_id / task_id
+        root = task_attempt_root(self.artifact_root, campaign_id, run_id, task_id, attempt)
         agent_output = root / "agent"
         agent_log = root / "mini-swe-agent.log"
         verifier_log = root / "swebench-verifier.log"
@@ -485,7 +497,7 @@ class HarborAdapter:
         control_state: Callable[[], str | None],
         endpoint_url: str | None = None,
     ) -> HarnessResult:
-        root = self.artifact_root / campaign_id / run_id / task_id
+        root = task_attempt_root(self.artifact_root, campaign_id, run_id, task_id, attempt)
         jobs = root / "jobs"
         log = root / "harbor.log"
         overlay = root / "gpu45-sandbox.yaml"
