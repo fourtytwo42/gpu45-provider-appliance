@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import time
@@ -55,6 +56,17 @@ def harbor_agent_config(headers: dict[str, str]) -> dict[str, object]:
             },
         },
     }
+
+
+def parse_tau_task_id(external_task_id: str) -> tuple[str, str]:
+    """Preserve colons in upstream IDs while removing our optional trial suffix."""
+    if ":" not in external_task_id:
+        raise ValueError(f"Invalid tau task ID: {external_task_id}")
+    domain, upstream_id = external_task_id.split(":", 1)
+    upstream_id = re.sub(r":trial-\d+$", "", upstream_id)
+    if not domain or not upstream_id:
+        raise ValueError(f"Invalid tau task ID: {external_task_id}")
+    return domain, upstream_id
 
 
 def stratified_sample(items: list[str], count: int) -> list[str]:
@@ -314,8 +326,7 @@ class TauAdapter:
         control_state: Callable[[], str | None],
         endpoint_url: str | None = None,
     ) -> HarnessResult:
-        parts = external_task_id.split(":", 2)
-        domain, upstream_id = parts[:2]
+        domain, upstream_id = parse_tau_task_id(external_task_id)
         root = task_attempt_root(self.artifact_root, campaign_id, run_id, task_id, attempt)
         output = root / "tau-result.json"
         log = root / "tau.log"
@@ -340,7 +351,15 @@ class TauAdapter:
         if output.is_file():
             artifacts.append(("trajectory", output))
         if code or not marker:
-            return HarnessResult(False, 0.0, duration_ms, "tau harness failed", text[-4000:], artifacts)
+            return HarnessResult(
+                False,
+                0.0,
+                duration_ms,
+                "tau harness failed",
+                text[-4000:],
+                artifacts,
+                "infrastructure_failure",
+            )
         payload = json.loads(marker)
         reward = float(payload["reward"])
         return HarnessResult(reward >= 1.0, reward, duration_ms, f"reward {reward:.3f}; {payload['terminationReason']}", artifacts=artifacts)

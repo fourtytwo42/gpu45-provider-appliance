@@ -18,6 +18,7 @@ from agentic_benchmark.harnesses import (
     container_openai_base_url,
     harbor_agent_config,
     openai_base_url,
+    parse_tau_task_id,
     run_interruptible,
     stratified_sample,
     task_attempt_root,
@@ -64,6 +65,17 @@ class HarnessProcessTests(unittest.TestCase):
         self.assertEqual(
             headers,
             harbor_agent_config(headers)["model"]["model_kwargs"]["extra_headers"],
+        )
+
+    def test_tau_task_parser_preserves_colons_and_removes_only_trial_suffix(self):
+        task_id = "telecom:[mobile_data_issue]roaming_enabled[PERSONA:None]"
+        self.assertEqual(
+            ("telecom", "[mobile_data_issue]roaming_enabled[PERSONA:None]"),
+            parse_tau_task_id(task_id),
+        )
+        self.assertEqual(
+            ("telecom", "[mobile_data_issue]roaming_enabled[PERSONA:None]"),
+            parse_tau_task_id(task_id + ":trial-3"),
         )
 
     def setUp(self):
