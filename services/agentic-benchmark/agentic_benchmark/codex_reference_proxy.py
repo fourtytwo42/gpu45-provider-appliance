@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -17,7 +18,7 @@ from typing import Any
 
 HOST = os.environ.get("GPU45_CODEX_PROXY_HOST", "127.0.0.1")
 PORT = int(os.environ.get("GPU45_CODEX_PROXY_PORT", "30003"))
-CODEX_BIN = os.environ.get("GPU45_CODEX_BIN", "/usr/local/bin/codex")
+CODEX_BIN = os.environ.get("GPU45_CODEX_BIN") or shutil.which("codex") or "/usr/bin/codex"
 CODEX_HOME = Path(os.environ.get("GPU45_CODEX_HOME", "/var/lib/gpu45-benchmark/.codex"))
 WORK_ROOT = Path(os.environ.get("GPU45_CODEX_WORK_ROOT", "/var/lib/gpu45-benchmark/codex-reference"))
 MODEL = os.environ.get("GPU45_CODEX_MODEL", "gpt-5.6-sol")

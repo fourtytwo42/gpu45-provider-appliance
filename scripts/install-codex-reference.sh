@@ -27,5 +27,6 @@ install -d -m 0750 -o gpu45-benchmark -g gpu45-benchmark \
   /var/lib/gpu45-benchmark/codex-reference
 
 echo "Codex CLI $(codex --version) is installed for the GPU45 reference runner."
+echo "Codex executable: $(command -v codex)"
 echo "Authenticate once with:"
 echo "sudo -u gpu45-benchmark env CODEX_HOME=/var/lib/gpu45-benchmark/.codex codex login --device-auth"

@@ -12,6 +12,7 @@ Environment=PYTHONPATH=/opt/gpu45-agentic-benchmark
 Environment=CODEX_HOME=/var/lib/gpu45-benchmark/.codex
 Environment=GPU45_CODEX_HOME=/var/lib/gpu45-benchmark/.codex
 Environment=GPU45_CODEX_WORK_ROOT=/var/lib/gpu45-benchmark/codex-reference
+Environment=GPU45_CODEX_BIN=/usr/bin/codex
 Environment=GPU45_CODEX_MODEL=gpt-5.6-sol
 Environment=GPU45_CODEX_REASONING_EFFORT=medium
 ExecStart=/usr/bin/python3 -m agentic_benchmark.codex_reference_proxy
