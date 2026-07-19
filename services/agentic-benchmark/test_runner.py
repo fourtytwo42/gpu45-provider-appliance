@@ -1,13 +1,22 @@
 import unittest
 from unittest import mock
 
-from agentic_benchmark.runner import ExternalBenchmarkLease, ResourceClient, is_external_profile, is_scored_task_timeout
+from agentic_benchmark.runner import (
+    ExternalBenchmarkLease,
+    ResourceClient,
+    is_external_profile,
+    is_scored_task_timeout,
+    requires_gpu45_lease,
+)
 
 
 class ResourceClientTests(unittest.TestCase):
-    def test_external_reference_profile_never_requires_a_gpu_lease(self):
+    def test_external_reference_uses_a_lease_only_for_tau_simulator(self):
         self.assertTrue(is_external_profile({"executionMode": "external-openai"}))
         self.assertFalse(is_external_profile({"backend": "llama.cpp"}))
+        self.assertFalse(requires_gpu45_lease({"executionMode": "external-openai"}, {"adapter": "harbor"}))
+        self.assertTrue(requires_gpu45_lease({"executionMode": "external-openai"}, {"adapter": "tau"}))
+        self.assertTrue(requires_gpu45_lease({"backend": "llama.cpp"}, {"adapter": "harbor"}))
         lease = ExternalBenchmarkLease()
         lease.ensure_active()
         self.assertFalse(lease.lost.is_set())

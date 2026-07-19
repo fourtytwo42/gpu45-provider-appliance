@@ -16,6 +16,7 @@ from agentic_benchmark.harnesses import (
     benchmark_headers,
     bfcl_case_passed,
     container_openai_base_url,
+    harbor_agent_config,
     openai_base_url,
     run_interruptible,
     stratified_sample,
@@ -56,6 +57,13 @@ class HarnessProcessTests(unittest.TestCase):
         self.assertEqual(
             "http://host.docker.internal:30003/v1",
             container_openai_base_url("http://127.0.0.1:30003"),
+        )
+
+    def test_harbor_agent_config_preserves_benchmark_correlation_headers(self):
+        headers = benchmark_headers("secret", "campaign", "run", "task", 3)
+        self.assertEqual(
+            headers,
+            harbor_agent_config(headers)["model"]["model_kwargs"]["extra_headers"],
         )
 
     def setUp(self):
@@ -117,6 +125,7 @@ class HarnessProcessTests(unittest.TestCase):
         self.assertIn("cap_drop: [ALL]", text)
         self.assertIn("cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]", text)
         self.assertIn('glob("*/result.json")', text)
+        self.assertIn('f"config_file={agent_config}"', text)
 
     def test_tau_reliability_expands_trials_without_changing_upstream_ids(self):
         adapter = TauAdapter(self.root / "harnesses", self.root / "artifacts")

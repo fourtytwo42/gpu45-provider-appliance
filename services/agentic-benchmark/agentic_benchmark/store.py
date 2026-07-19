@@ -540,12 +540,12 @@ class BenchmarkStore:
                 (run_id, float(measurement.get("idle_power_w") or 0), float(measurement.get("duration_seconds") or 0), int(measurement.get("sample_count") or 0), now()),
             )
 
-    def record_task_measurement(self, task_id: str, attempt: int, measurement: dict[str, Any]) -> None:
+    def record_task_measurement(self, task_id: str, attempt: int, measurement: dict[str, Any]) -> str | None:
         stamp = now()
         with self.session() as db:
             task = db.execute("SELECT run_id,status FROM tasks WHERE id=?", (task_id,)).fetchone()
             if not task:
-                return
+                return None
             requests = db.execute(
                 """
                 SELECT COUNT(*) response_calls,COALESCE(SUM(tool_calls),0) tool_calls,
@@ -596,6 +596,56 @@ class BenchmarkStore:
                     (prompt_tokens, completion_tokens, max(response_calls, int(requests["tool_calls"] or 0)), stamp, task_id),
                 )
             self._refresh_run(db, task["run_id"], incomplete_status="queued" if task["status"] == "interrupted" else "running")
+            return measurement_status
+
+    def retry_incomplete_measurement_task(
+        self,
+        task_id: str,
+        attempt: int,
+        message: str,
+        max_attempts: int = 5,
+    ) -> bool:
+        """Reopen a scored external task when request accounting was incomplete."""
+        stamp = now()
+        with self.session() as db:
+            task = db.execute(
+                "SELECT t.*,r.campaign_id FROM tasks t JOIN runs r ON r.id=t.run_id WHERE t.id=?",
+                (task_id,),
+            ).fetchone()
+            measurement = db.execute(
+                "SELECT measurement_status FROM task_measurements WHERE task_id=? AND attempt=?",
+                (task_id, attempt),
+            ).fetchone()
+            if (
+                not task
+                or not measurement
+                or int(task["attempt"]) != int(attempt)
+                or task["status"] not in {"completed", "failed"}
+                or measurement["measurement_status"] == "complete"
+                or int(attempt) >= max_attempts
+            ):
+                return False
+            db.execute(
+                "UPDATE tasks SET status='queued',attempt=attempt+1,passed=NULL,reward=NULL,duration_ms=0,"
+                "prompt_tokens=0,completion_tokens=0,steps=0,error_class='measurement_retry',user_message=?,"
+                "technical_error=NULL,started_at=NULL,completed_at=NULL,updated_at=? WHERE id=?",
+                (message, stamp, task_id),
+            )
+            self._refresh_run(db, task["run_id"], incomplete_status="queued")
+            db.execute(
+                "UPDATE campaigns SET status='queued',current_run_id=NULL,completed_at=NULL,updated_at=? WHERE id=?",
+                (stamp, task["campaign_id"]),
+            )
+            self._event(
+                db,
+                task["campaign_id"],
+                task["run_id"],
+                task_id,
+                "task.measurement_retry",
+                message,
+                {"attempt": int(attempt), "nextAttempt": int(attempt) + 1},
+            )
+            return True
 
     def retry_campaign_infrastructure(self, campaign_id: str) -> int:
         """Queue failed infrastructure tasks as a fresh user-requested attempt."""
@@ -611,7 +661,10 @@ class BenchmarkStore:
                 if self._dedupe_run_tasks(db, row["id"])
             }
             rows = db.execute(
-                "SELECT t.id,t.run_id FROM tasks t JOIN runs r ON r.id=t.run_id WHERE r.campaign_id=? AND t.error_class='infrastructure_failure' AND t.status='completed'",
+                "SELECT DISTINCT t.id,t.run_id FROM tasks t JOIN runs r ON r.id=t.run_id "
+                "LEFT JOIN task_measurements m ON m.task_id=t.id AND m.attempt=t.attempt "
+                "WHERE r.campaign_id=? AND t.status='completed' "
+                "AND (t.error_class='infrastructure_failure' OR m.measurement_status='incomplete')",
                 (campaign_id,),
             ).fetchall()
             if not rows and not failed_runs:

@@ -46,6 +46,17 @@ def benchmark_headers(
     }
 
 
+def harbor_agent_config(headers: dict[str, str]) -> dict[str, object]:
+    """Pass benchmark correlation through Harbor's nested mini-swe-agent."""
+    return {
+        "model": {
+            "model_kwargs": {
+                "extra_headers": dict(headers),
+            },
+        },
+    }
+
+
 def stratified_sample(items: list[str], count: int) -> list[str]:
     """Select stable, evenly spaced cases so compact campaigns stay comparable."""
     if count <= 0 or count >= len(items):
@@ -501,6 +512,7 @@ class HarborAdapter:
         jobs = root / "jobs"
         log = root / "harbor.log"
         overlay = root / "gpu45-sandbox.yaml"
+        agent_config = root / "gpu45-agent.yaml"
         root.mkdir(parents=True, exist_ok=True)
         overlay.write_text(
             "services:\n"
@@ -512,9 +524,11 @@ class HarborAdapter:
             "    extra_hosts: [host.docker.internal:host-gateway]\n",
             encoding="utf-8",
         )
-        default_headers = json.dumps(
-            benchmark_headers(self.token, campaign_id, run_id, task_id, attempt),
-            separators=(",", ":"),
+        headers = benchmark_headers(self.token, campaign_id, run_id, task_id, attempt)
+        default_headers = json.dumps(headers, separators=(",", ":"))
+        agent_config.write_text(
+            json.dumps(harbor_agent_config(headers), indent=2, sort_keys=True),
+            encoding="utf-8",
         )
         command = [
             str(self.harbor), "run", "--path", str(self.dataset / external_task_id),
@@ -530,6 +544,7 @@ class HarborAdapter:
             "--agent-env", f"OPENAI_API_BASE={container_openai_base_url(endpoint_url)}",
             "--agent-env", f"OPENAI_BASE_URL={container_openai_base_url(endpoint_url)}",
             "--agent-env", f"OPENAI_DEFAULT_HEADERS={default_headers}",
+            "--agent-kwarg", f"config_file={agent_config}",
             "--agent-kwarg", "max_tokens=4096",
         ]
         env = os.environ.copy()
@@ -543,7 +558,11 @@ class HarborAdapter:
         code = run_interruptible(command, self.source, env, log, timeout_seconds, ensure_active, control_state)
         duration_ms = int((time.monotonic() - started) * 1000)
         result_path = jobs / "gpu45" / "result.json"
-        artifacts: list[tuple[str, Path]] = [("log", log), ("configuration", overlay)]
+        artifacts: list[tuple[str, Path]] = [
+            ("log", log),
+            ("configuration", overlay),
+            ("configuration", agent_config),
+        ]
         if result_path.is_file():
             artifacts.append(("verifier", result_path))
         for trajectory in jobs.rglob("trajectory.json") if jobs.exists() else []:

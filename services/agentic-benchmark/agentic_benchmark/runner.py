@@ -32,6 +32,11 @@ def is_external_profile(profile: dict[str, Any]) -> bool:
     return profile.get("executionMode") == "external-openai"
 
 
+def requires_gpu45_lease(profile: dict[str, Any], suite: dict[str, Any]) -> bool:
+    """External tau still needs a managed lease for its local CPU simulator."""
+    return not is_external_profile(profile) or suite.get("adapter") == "tau"
+
+
 class ExternalBenchmarkLease:
     """No-op lease for a remote reference system that does not own GPU45 resources."""
 
@@ -397,10 +402,11 @@ class BenchmarkRunner:
         self.store.ensure_tasks(run["id"], tasks)
         lease: BenchmarkLease | ExternalBenchmarkLease | None = None
         try:
-            if external:
-                lease = ExternalBenchmarkLease()
-            else:
+            if requires_gpu45_lease(profile, suite):
                 lease = self.resources.acquire(f"agentic-{run['id']}")
+            else:
+                lease = ExternalBenchmarkLease()
+            if not external:
                 self.resources.activate(str(run["profile_name"]))
             alias = str(profile.get("servedAlias") or profile["name"])
             baseline = self.store.run_baseline(run["id"])
@@ -476,7 +482,15 @@ class BenchmarkRunner:
                     elif not self.store.retry_infrastructure_task(task["id"], "Infrastructure failed; retrying once"):
                         self.store.complete_task(task["id"], False, int((time.monotonic() - started) * 1000), "infrastructure_failure", "Smoke check could not complete", repr(exc))
                 finally:
-                    self.store.record_task_measurement(task["id"], int(task["attempt"]), sampler.stop())
+                    measurement_status = self.store.record_task_measurement(
+                        task["id"], int(task["attempt"]), sampler.stop()
+                    )
+                    if external and measurement_status == "incomplete":
+                        self.store.retry_incomplete_measurement_task(
+                            task["id"],
+                            int(task["attempt"]),
+                            "Provider request accounting was incomplete; rerunning the task",
+                        )
         except CampaignControlled:
             pass
         except ResourcePreempted as exc:

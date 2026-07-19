@@ -338,6 +338,30 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(12, updated_task["completion_tokens"])
         self.assertEqual(42, updated_run["total_tokens"])
 
+    def test_incomplete_reference_measurement_reopens_the_task(self):
+        profile = {"name": "reference", "profileHash": "hash-a", "executionMode": "external-openai"}
+        suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
+        campaign_id = self.store.create_campaign("Reference", "agent-system-reference-v1", [profile], [suite])
+        run = self.store.begin_run(self.store.next_runnable()["id"], None)
+        self.store.ensure_tasks(run["id"], ["task-one"])
+        task = self.store.begin_task(self.store.next_task(run["id"])["id"])
+        self.store.complete_task(task["id"], True, 500)
+
+        status = self.store.record_task_measurement(task["id"], 1, {"wall_duration_ms": 500})
+        retried = self.store.retry_incomplete_measurement_task(
+            task["id"], 1, "request accounting missing"
+        )
+
+        self.assertEqual("incomplete", status)
+        self.assertTrue(retried)
+        with self.store.session() as db:
+            updated_task = db.execute("SELECT * FROM tasks WHERE id=?", (task["id"],)).fetchone()
+            updated_run = db.execute("SELECT * FROM runs WHERE id=?", (run["id"],)).fetchone()
+            campaign = db.execute("SELECT * FROM campaigns WHERE id=?", (campaign_id,)).fetchone()
+        self.assertEqual(("queued", 2, None), (updated_task["status"], updated_task["attempt"], updated_task["passed"]))
+        self.assertEqual("queued", updated_run["status"])
+        self.assertEqual("queued", campaign["status"])
+
     def test_manual_infrastructure_retry_requeues_failed_task(self):
         profile = {"name": "model-a", "profileHash": "hash-a"}
         suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
