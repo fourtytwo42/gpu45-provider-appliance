@@ -187,6 +187,7 @@ install -m 0644 deploy/systemd/gpu45-provider-appliance@.service /etc/systemd/sy
 install -m 0644 deploy/systemd/gpu45-provider-appliance-worker.service /etc/systemd/system/gpu45-provider-appliance-worker.service
 install -m 0644 deploy/systemd/gpu45-resource-manager.service /etc/systemd/system/gpu45-resource-manager.service
 install -m 0644 deploy/systemd/gpu45-agentic-benchmark.service /etc/systemd/system/gpu45-agentic-benchmark.service
+install -m 0644 deploy/systemd/gpu45-codex-reference-proxy.service /etc/systemd/system/gpu45-codex-reference-proxy.service
 install -m 0644 deploy/systemd/gpu45-tau-simulator.service /etc/systemd/system/gpu45-tau-simulator.service
 install -m 0644 deploy/systemd/gpu45-responses-proxy.service /etc/systemd/system/gpu45-responses-proxy.service
 install -m 0644 deploy/systemd/llama-openai.service /etc/systemd/system/llama-openai.service
@@ -197,6 +198,7 @@ install -m 0644 deploy/systemd/gpu45-whisper-api.service /etc/systemd/system/gpu
 install -m 0644 deploy/systemd/wan2-video-api.service /etc/systemd/system/wan2-video-api.service
 install -m 0644 deploy/systemd/hunyuan-video-comfy.service /etc/systemd/system/hunyuan-video-comfy.service
 install -m 0755 scripts/configure-service-user.sh /usr/local/sbin/gpu45-configure-service-user
+install -m 0755 scripts/install-codex-reference.sh /usr/local/sbin/gpu45-install-codex-reference
 /usr/local/sbin/gpu45-configure-service-user
 install -m 0755 deploy/usr/local/bin/gpu45-responses-proxy /usr/local/bin/gpu45-responses-proxy
 install -m 0755 scripts/gpu45-llm-server /usr/local/bin/gpu45-llm-server
@@ -207,9 +209,10 @@ cp -a services/pocket-tts-api/pocket_tts_api/. /opt/pocket-tts/pocket_tts_api/
 cp -a services/image-api/image_api/. /opt/gpu45-image-api/image_api/
 cp -a services/whisper-api/whisper_api/. /opt/gpu45-whisper-api/whisper_api/
 mkdir -p /opt/gpu45-agentic-benchmark /var/lib/gpu45/benchmarks/artifacts /models/benchmark-cache
-rm -rf /opt/gpu45-agentic-benchmark/agentic_benchmark /opt/gpu45-agentic-benchmark/suite-manifests
+rm -rf /opt/gpu45-agentic-benchmark/agentic_benchmark /opt/gpu45-agentic-benchmark/suite-manifests /opt/gpu45-agentic-benchmark/reference-profiles
 cp -a services/agentic-benchmark/agentic_benchmark /opt/gpu45-agentic-benchmark/
 cp -a services/agentic-benchmark/suite-manifests /opt/gpu45-agentic-benchmark/
+cp -a services/agentic-benchmark/reference-profiles /opt/gpu45-agentic-benchmark/
 install -m 0644 services/agentic-benchmark/schema.sql /opt/gpu45-agentic-benchmark/schema.sql
 install -m 0644 services/agentic-benchmark/harness-lock.json /opt/gpu45-agentic-benchmark/harness-lock.json
 chown -R gpu45-benchmark:gpu45-benchmark /opt/gpu45-agentic-benchmark /var/lib/gpu45/benchmarks
@@ -252,6 +255,7 @@ systemctl enable gpu45-pocket-tts-api.service
 systemctl restart gpu45-pocket-tts-api.service
 systemctl enable gpu45-resource-manager.service
 systemctl enable gpu45-agentic-benchmark.service
+systemctl enable gpu45-codex-reference-proxy.service
 systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer gpu45-storage-retention.timer
 systemctl enable "gpu45-provider-appliance@$target_port.service"
 systemctl restart "gpu45-provider-appliance@$target_port.service"
@@ -289,6 +293,9 @@ ln -sfn "$release_dir" "$current_link"
 printf '%s\n' "$target_port" > "$active_port_file"
 chmod 0644 "$active_port_file"
 systemctl restart gpu45-resource-manager.service gpu45-responses-proxy.service gpu45-provider-appliance-worker.service gpu45-agentic-benchmark.service
+if command -v codex >/dev/null 2>&1; then
+  systemctl restart gpu45-codex-reference-proxy.service
+fi
 systemctl try-restart qwen3-tts-api.service gpu45-image-api.service gpu45-whisper-api.service wan2-video-api.service || true
 
 final_healthy=false

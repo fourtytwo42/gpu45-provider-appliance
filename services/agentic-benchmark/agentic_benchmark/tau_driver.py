@@ -13,10 +13,11 @@ TAU_USER_MAX_TOKENS = 256
 def build_llm_args(
     timeout: int,
     headers: dict[str, str],
+    target_base_url: str = "http://127.0.0.1:30001/v1",
 ) -> tuple[dict[str, object], dict[str, object]]:
     target_args: dict[str, object] = {
         "temperature": 0.0,
-        "api_base": "http://127.0.0.1:30001/v1",
+        "api_base": target_base_url,
         "api_key": "gpu45-benchmark",
         "timeout": timeout,
         "num_retries": 0,
@@ -44,6 +45,7 @@ def main() -> None:
     parser.add_argument("--domain")
     parser.add_argument("--task-id")
     parser.add_argument("--target-alias")
+    parser.add_argument("--target-base-url", default="http://127.0.0.1:30001/v1")
     parser.add_argument("--output")
     parser.add_argument("--timeout", type=int, default=1800)
     args = parser.parse_args()
@@ -63,6 +65,7 @@ def main() -> None:
     target_args, user_args = build_llm_args(
         args.timeout,
         json.loads(os.environ.get("GPU45_BENCHMARK_HEADERS", "{}")),
+        args.target_base_url,
     )
     config = TextRunConfig(
         domain=args.domain,

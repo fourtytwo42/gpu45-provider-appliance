@@ -7,6 +7,8 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import urllib.error
+import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -14,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .domain import load_suite_manifests
 from .model_catalog import discover_profiles
+from .reference_catalog import load_reference_profiles
 from .runner import BenchmarkRunner
 from .store import BenchmarkStore
 
@@ -28,6 +31,22 @@ PORT = int(os.environ.get("GPU45_AGENTIC_PORT", "8055"))
 MIN_FREE_BYTES = int(os.environ.get("GPU45_AGENTIC_MIN_FREE_GB", "100")) * 1024**3
 
 STORE = BenchmarkStore(DATABASE_PATH, PACKAGE_ROOT / "schema.sql")
+
+
+def reference_profiles() -> list[dict[str, object]]:
+    profiles = load_reference_profiles(PACKAGE_ROOT / "reference-profiles")
+    results: list[dict[str, object]] = []
+    for profile in profiles:
+        status: dict[str, object] = {"status": "offline", "authenticated": False}
+        try:
+            with urllib.request.urlopen(str(profile["endpointUrl"]) + "/health", timeout=2) as response:
+                payload = json.loads(response.read() or b"{}")
+                if isinstance(payload, dict):
+                    status = payload
+        except (OSError, urllib.error.URLError, json.JSONDecodeError):
+            pass
+        results.append({**profile, "runtime": status})
+    return results
 
 
 def docker_status() -> dict[str, object]:
@@ -119,6 +138,8 @@ class Handler(BaseHTTPRequestHandler):
                 STORE.sync_qualifications(profiles)
                 qualifications = {row["profile_name"]: row for row in STORE.list_qualifications()}
                 self._json(HTTPStatus.OK, {"models": [{**profile, "qualification": qualifications.get(profile["name"])} for profile in profiles]})
+            elif segments == ["v1", "reference-models"]:
+                self._json(HTTPStatus.OK, {"models": reference_profiles()})
             elif segments == ["v1", "suites"]:
                 self._json(HTTPStatus.OK, {"suites": load_suite_manifests(PACKAGE_ROOT / "suite-manifests")})
             elif segments == ["v1", "campaigns"]:
@@ -215,6 +236,15 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(
                         HTTPStatus.OK if efficiency_id else HTTPStatus.CONFLICT,
                         {"ok": bool(efficiency_id), "efficiencyCampaignId": efficiency_id},
+                    )
+                elif action == "reference":
+                    suites = load_suite_manifests(PACKAGE_ROOT / "suite-manifests")
+                    reference_id = STORE.create_reference_campaign(
+                        segments[2], load_reference_profiles(PACKAGE_ROOT / "reference-profiles"), suites,
+                    )
+                    self._json(
+                        HTTPStatus.OK if reference_id else HTTPStatus.CONFLICT,
+                        {"ok": bool(reference_id), "referenceCampaignId": reference_id},
                     )
                 else:
                     found = STORE.set_campaign_action(segments[2], action)

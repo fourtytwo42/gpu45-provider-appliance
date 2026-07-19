@@ -143,3 +143,27 @@ class TaskResourceSampler:
             "peak_ram_bytes": peak("ram_bytes"),
             "sample_count": len(self.samples),
         }
+
+
+class WallClockSampler:
+    """Measure elapsed time when the evaluated system's hardware is not local."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self.clock = clock
+        self.started_at = 0.0
+
+    def start(self) -> None:
+        self.started_at = self.clock()
+
+    def stop(self) -> dict[str, float | int | None]:
+        return {
+            "wall_duration_ms": max(0, int((self.clock() - self.started_at) * 1000)),
+            "idle_power_w": 0.0,
+            "gross_energy_wh": 0.0,
+            "incremental_energy_wh": 0.0,
+            "peak_power_w": None,
+            "peak_gpu_temp_c": None,
+            "peak_vram_bytes": None,
+            "peak_ram_bytes": None,
+            "sample_count": 0,
+        }

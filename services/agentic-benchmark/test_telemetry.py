@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agentic_benchmark.telemetry import HardwareReader, TaskResourceSampler, discover_gpu_card
+from agentic_benchmark.telemetry import HardwareReader, TaskResourceSampler, WallClockSampler, discover_gpu_card
 
 
 class TelemetryTests(unittest.TestCase):
@@ -50,6 +50,17 @@ class TelemetryTests(unittest.TestCase):
         self.assertAlmostEqual(100.0 / 3600.0, result["gross_energy_wh"], places=6)
         self.assertAlmostEqual(80.0 / 3600.0, result["incremental_energy_wh"], places=6)
         self.assertEqual(100.0, result["peak_power_w"])
+
+    def test_wall_clock_sampler_does_not_attribute_local_gpu_energy(self):
+        clock_values = iter((10.0, 12.5))
+        sampler = WallClockSampler(clock=lambda: next(clock_values))
+        sampler.start()
+
+        result = sampler.stop()
+
+        self.assertEqual(2500, result["wall_duration_ms"])
+        self.assertEqual(0, result["sample_count"])
+        self.assertIsNone(result["peak_power_w"])
 
 
 if __name__ == "__main__":

@@ -56,6 +56,15 @@ def stratified_sample(items: list[str], count: int) -> list[str]:
     return [items[index] for index in indices]
 
 
+def openai_base_url(endpoint_url: str | None = None) -> str:
+    return (endpoint_url or os.environ.get("GPU45_RESPONSES_URL", "http://127.0.0.1:30001")).rstrip("/") + "/v1"
+
+
+def container_openai_base_url(endpoint_url: str | None = None) -> str:
+    base = openai_base_url(endpoint_url)
+    return base.replace("http://127.0.0.1:", "http://host.docker.internal:").replace("http://localhost:", "http://host.docker.internal:")
+
+
 def run_interruptible(
     command: list[str],
     cwd: Path,
@@ -163,6 +172,7 @@ class BfclAdapter:
         ensure_active: Callable[[], None],
         control_state: Callable[[], str | None],
         validation_limit: int = 0,
+        endpoint_url: str | None = None,
     ) -> HarnessResult:
         root = self.artifact_root / campaign_id / run_id / task_id
         results = root / "results"
@@ -171,7 +181,7 @@ class BfclAdapter:
         env = os.environ.copy()
         env.update(
             OPENAI_API_KEY="gpu45-benchmark",
-            OPENAI_BASE_URL=os.environ.get("GPU45_RESPONSES_URL", "http://127.0.0.1:30001").rstrip("/") + "/v1",
+            OPENAI_BASE_URL=openai_base_url(endpoint_url),
             OPENAI_DEFAULT_HEADERS=json.dumps(
                 benchmark_headers(self.token, campaign_id, run_id, task_id, attempt),
                 separators=(",", ":"),
@@ -269,6 +279,7 @@ class TauAdapter:
         timeout_seconds: int,
         ensure_active: Callable[[], None],
         control_state: Callable[[], str | None],
+        endpoint_url: str | None = None,
     ) -> HarnessResult:
         parts = external_task_id.split(":", 2)
         domain, upstream_id = parts[:2]
@@ -279,6 +290,7 @@ class TauAdapter:
             str(self.python), "-m", "agentic_benchmark.tau_driver",
             "--domain", domain, "--task-id", upstream_id,
             "--target-alias", alias, "--output", str(output),
+            "--target-base-url", openai_base_url(endpoint_url),
             "--timeout", str(timeout_seconds),
         ]
         started = time.monotonic()
@@ -346,6 +358,7 @@ class SweBenchAdapter:
         timeout_seconds: int,
         ensure_active: Callable[[], None],
         control_state: Callable[[], str | None],
+        endpoint_url: str | None = None,
     ) -> HarnessResult:
         root = self.artifact_root / campaign_id / run_id / task_id
         agent_output = root / "agent"
@@ -367,7 +380,7 @@ class SweBenchAdapter:
             "    - --memory=8g\n"
             "model:\n"
             "  model_kwargs:\n"
-            "    api_base: http://127.0.0.1:30001/v1\n"
+            f"    api_base: {openai_base_url(endpoint_url)}\n"
             f"    api_key: {json.dumps(self.token)}\n"
             "    extra_headers:\n"
             f"{yaml_headers}"
@@ -460,6 +473,7 @@ class HarborAdapter:
         timeout_seconds: int,
         ensure_active: Callable[[], None],
         control_state: Callable[[], str | None],
+        endpoint_url: str | None = None,
     ) -> HarnessResult:
         root = self.artifact_root / campaign_id / run_id / task_id
         jobs = root / "jobs"
@@ -491,8 +505,8 @@ class HarborAdapter:
             "--allow-agent-host", "host.docker.internal",
             "--agent-env", f"MSWEA_API_KEY={self.token}",
             "--agent-env", f"OPENAI_API_KEY={self.token}",
-            "--agent-env", "OPENAI_API_BASE=http://host.docker.internal:30001/v1",
-            "--agent-env", "OPENAI_BASE_URL=http://host.docker.internal:30001/v1",
+            "--agent-env", f"OPENAI_API_BASE={container_openai_base_url(endpoint_url)}",
+            "--agent-env", f"OPENAI_BASE_URL={container_openai_base_url(endpoint_url)}",
             "--agent-env", f"OPENAI_DEFAULT_HEADERS={default_headers}",
             "--agent-kwarg", "max_tokens=4096",
         ]

@@ -12,6 +12,14 @@ from typing import Any
 from .domain import COMMON_WEIGHTS, configuration_hash, efficiency_rows, ranking_rows
 
 
+EFFICIENCY_SUITE_WEIGHTS = {
+    "bfcl-efficiency-v1": 0.20,
+    "tau-efficiency-v1": 0.15,
+    "swe-efficiency-v1": 0.35,
+    "terminal-efficiency-v1": 0.30,
+}
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -255,10 +263,143 @@ class BenchmarkStore:
             )
         return target_id
 
+    def create_reference_campaign(
+        self,
+        campaign_id: str,
+        profiles: list[dict[str, Any]],
+        suites: list[dict[str, Any]],
+    ) -> str | None:
+        source = self.campaign_detail(campaign_id)
+        if not source or source["campaign"]["preset"] != "common" or len(profiles) != 1:
+            return None
+        selected_suites = [suite for suite in suites if suite["id"] in EFFICIENCY_SUITE_WEIGHTS]
+        if {suite["id"] for suite in selected_suites} != set(EFFICIENCY_SUITE_WEIGHTS):
+            return None
+        with self.session() as db:
+            existing = db.execute(
+                "SELECT target_campaign_id FROM campaign_links WHERE source_campaign_id=? AND link_type='reference'",
+                (campaign_id,),
+            ).fetchone()
+            if existing:
+                return str(existing["target_campaign_id"])
+        profile = profiles[0]
+        target_id = self.create_campaign(
+            f"{profile.get('displayName') or profile['name']} reference for {source['campaign']['name']}",
+            "agent-system-reference-v1",
+            profiles,
+            selected_suites,
+        )
+        with self.session() as db:
+            db.execute("UPDATE runs SET track='reference' WHERE campaign_id=?", (target_id,))
+            db.execute(
+                "INSERT OR IGNORE INTO campaign_links(source_campaign_id,target_campaign_id,link_type,created_at) VALUES(?,?,?,?)",
+                (campaign_id, target_id, "reference", now()),
+            )
+            self._event(
+                db, campaign_id, None, None, "campaign.reference_queued",
+                "Queued Codex agent-system reference panel",
+                {"targetCampaignId": target_id, "profile": profile["name"]},
+            )
+        return target_id
+
+    def _reference_report(self, campaign_id: str) -> dict[str, Any]:
+        empty = {
+            "referenceCampaignId": None,
+            "referenceStatus": "not_started",
+            "referenceRows": [],
+        }
+        with self.session() as db:
+            link = db.execute(
+                "SELECT target_campaign_id FROM campaign_links WHERE source_campaign_id=? AND link_type='reference'",
+                (campaign_id,),
+            ).fetchone()
+            if not link:
+                return empty
+            target_id = str(link["target_campaign_id"])
+            campaign = db.execute("SELECT status FROM campaigns WHERE id=?", (target_id,)).fetchone()
+            run_rows = [dict(row) for row in db.execute(
+                """
+                SELECT r.profile_name,r.profile_snapshot_json,r.suite_id,r.status,r.score,r.expected_tasks,
+                       SUM(CASE WHEN t.status IN ('completed','failed') THEN 1 ELSE 0 END) completed_tasks,
+                       SUM(CASE WHEN t.status='completed' AND t.passed=1 THEN 1 ELSE 0 END) successes,
+                       COALESCE(SUM(t.prompt_tokens),0) prompt_tokens,
+                       COALESCE(SUM(t.completion_tokens),0) completion_tokens,
+                       COALESCE(SUM(m.active_inference_ms),0) active_inference_ms,
+                       COALESCE(SUM(m.wall_duration_ms),0) wall_duration_ms,
+                       COALESCE(SUM(m.response_calls),0) response_calls,
+                       COALESCE(SUM(m.tool_calls),0) tool_calls,
+                       COALESCE(SUM(m.invalid_calls),0) invalid_calls,
+                       SUM(CASE WHEN m.measurement_status='complete' THEN 1 ELSE 0 END) measured_tasks
+                FROM runs r
+                LEFT JOIN tasks t ON t.run_id=r.id
+                LEFT JOIN task_measurements m ON m.task_id=t.id AND m.attempt=t.attempt
+                WHERE r.campaign_id=?
+                GROUP BY r.id
+                ORDER BY r.created_at
+                """,
+                (target_id,),
+            )]
+        by_profile: dict[str, dict[str, Any]] = {}
+        for run in run_rows:
+            snapshot = json.loads(run["profile_snapshot_json"])
+            row = by_profile.setdefault(run["profile_name"], {
+                "profileName": run["profile_name"],
+                "displayName": snapshot.get("displayName") or run["profile_name"],
+                "systemType": "agent-system-reference",
+                "model": snapshot.get("model"),
+                "reasoningEffort": snapshot.get("reasoningEffort"),
+                "expectedTasks": 0,
+                "completedTasks": 0,
+                "successes": 0,
+                "promptTokens": 0,
+                "completionTokens": 0,
+                "activeInferenceMs": 0,
+                "wallDurationMs": 0,
+                "responseCalls": 0,
+                "toolCalls": 0,
+                "invalidCalls": 0,
+                "measuredTasks": 0,
+                "suiteScores": {},
+                "allRunsCompleted": True,
+                "energyAvailable": False,
+            })
+            for source_key, target_key in (
+                ("expected_tasks", "expectedTasks"), ("completed_tasks", "completedTasks"),
+                ("successes", "successes"), ("prompt_tokens", "promptTokens"),
+                ("completion_tokens", "completionTokens"), ("active_inference_ms", "activeInferenceMs"),
+                ("wall_duration_ms", "wallDurationMs"), ("response_calls", "responseCalls"),
+                ("tool_calls", "toolCalls"), ("invalid_calls", "invalidCalls"),
+                ("measured_tasks", "measuredTasks"),
+            ):
+                row[target_key] += int(run[source_key] or 0)
+            row["allRunsCompleted"] = row["allRunsCompleted"] and run["status"] == "completed"
+            if run["status"] == "completed" and run["score"] is not None:
+                row["suiteScores"][run["suite_id"]] = float(run["score"])
+        rows = []
+        for row in by_profile.values():
+            total_tokens = row["promptTokens"] + row["completionTokens"]
+            all_scores = set(row["suiteScores"]) == set(EFFICIENCY_SUITE_WEIGHTS)
+            panel_score = round(sum(row["suiteScores"][suite] * weight for suite, weight in EFFICIENCY_SUITE_WEIGHTS.items()), 6) if all_scores else None
+            successes = row["successes"]
+            row.update(
+                panelScore=panel_score,
+                totalTokens=total_tokens,
+                timePerSolveMs=row["activeInferenceMs"] / successes if successes else None,
+                tokensPerSolve=total_tokens / successes if successes else None,
+                measurementComplete=row["completedTasks"] > 0 and row["completedTasks"] == row["expectedTasks"] and row["measuredTasks"] == row["completedTasks"],
+            )
+            rows.append(row)
+        return {
+            "referenceCampaignId": target_id,
+            "referenceStatus": str(campaign["status"]) if campaign else "missing",
+            "referenceRows": rows,
+        }
+
     def efficiency_report(self, campaign_id: str) -> dict[str, Any] | None:
         source = self.campaign_detail(campaign_id)
         if not source:
             return None
+        reference = self._reference_report(campaign_id)
         with self.session() as db:
             link = db.execute(
                 "SELECT target_campaign_id FROM campaign_links WHERE source_campaign_id=? AND link_type='efficiency'",
@@ -272,6 +413,7 @@ class BenchmarkStore:
                     "rows": [],
                     "tie": False,
                     "confirmationRecommended": False,
+                    **reference,
                 }
             target_id = str(link["target_campaign_id"])
             target = db.execute("SELECT * FROM campaigns WHERE id=?", (target_id,)).fetchone()
@@ -304,15 +446,26 @@ class BenchmarkStore:
                 """,
                 (target_id,),
             )]
+            panel_runs = [dict(row) for row in db.execute(
+                "SELECT profile_name,suite_id,status,score FROM runs WHERE campaign_id=?",
+                (target_id,),
+            )]
         quality = {row["profileName"]: row.get("compositeScore") for row in source["ranking"]}
+        panel_scores: dict[str, dict[str, float]] = {}
+        for panel_run in panel_runs:
+            if panel_run["status"] == "completed" and panel_run["score"] is not None:
+                panel_scores.setdefault(panel_run["profile_name"], {})[panel_run["suite_id"]] = float(panel_run["score"])
         rows = []
         for aggregate in aggregates:
             completed = int(aggregate["completed_tasks"] or 0)
             prompt_tokens = int(aggregate["prompt_tokens"] or 0)
             completion_tokens = int(aggregate["completion_tokens"] or 0)
+            profile_scores = panel_scores.get(aggregate["profile_name"], {})
+            panel_score = round(sum(profile_scores[suite] * weight for suite, weight in EFFICIENCY_SUITE_WEIGHTS.items()), 6) if set(profile_scores) == set(EFFICIENCY_SUITE_WEIGHTS) else None
             rows.append({
                 "profileName": aggregate["profile_name"],
                 "qualityScore": quality.get(aggregate["profile_name"]),
+                "panelScore": panel_score,
                 "expectedTasks": int(aggregate["expected_tasks"] or 0),
                 "completedTasks": completed,
                 "successes": int(aggregate["successes"] or 0),
@@ -337,6 +490,7 @@ class BenchmarkStore:
             "sourceCampaignId": campaign_id,
             "campaignId": target_id,
             "status": str(target["status"]) if target else "missing",
+            **reference,
             **report,
         }
 
@@ -560,7 +714,15 @@ class BenchmarkStore:
                 FROM runs r JOIN campaigns c ON c.id=r.campaign_id
                 WHERE c.status='queued' AND c.pause_requested=0 AND c.cancel_requested=0
                   AND r.status IN ('queued','interrupted')
-                ORDER BY c.created_at,CASE WHEN r.status='interrupted' THEN 0 ELSE 1 END,r.created_at LIMIT 1
+                ORDER BY
+                  CASE c.preset
+                    WHEN 'agent-system-reference-v1' THEN 0
+                    ELSE 1
+                  END,
+                  c.created_at,
+                  CASE WHEN r.status='interrupted' THEN 0 ELSE 1 END,
+                  r.created_at
+                LIMIT 1
                 """
             ).fetchone()
         return dict(row) if row else None

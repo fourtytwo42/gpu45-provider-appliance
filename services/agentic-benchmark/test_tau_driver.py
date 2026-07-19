@@ -26,6 +26,11 @@ class TauDriverConfigTests(unittest.TestCase):
         )
         self.assertEqual("http://127.0.0.1:30002/v1", user["api_base"])
 
+    def test_target_endpoint_can_be_overridden_for_a_reference_system(self):
+        target, _ = build_llm_args(1800, {}, "http://127.0.0.1:30003/v1")
+
+        self.assertEqual("http://127.0.0.1:30003/v1", target["api_base"])
+
 
 if __name__ == "__main__":
     unittest.main()

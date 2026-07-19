@@ -17,7 +17,7 @@ from .domain import load_suite_manifests
 from .harnesses import BfclAdapter, HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter
 from .model_catalog import discover_profiles
 from .store import BenchmarkStore
-from .telemetry import HardwareReader, TaskResourceSampler, measure_idle_power
+from .telemetry import HardwareReader, TaskResourceSampler, WallClockSampler, measure_idle_power
 
 
 class ResourcePreempted(RuntimeError):
@@ -26,6 +26,23 @@ class ResourcePreempted(RuntimeError):
 
 class CampaignControlled(RuntimeError):
     pass
+
+
+def is_external_profile(profile: dict[str, Any]) -> bool:
+    return profile.get("executionMode") == "external-openai"
+
+
+class ExternalBenchmarkLease:
+    """No-op lease for a remote reference system that does not own GPU45 resources."""
+
+    def __init__(self) -> None:
+        self.lost = threading.Event()
+
+    def ensure_active(self) -> None:
+        return
+
+    def release(self) -> None:
+        return
 
 
 def request_json(url: str, payload: dict[str, Any] | None = None, headers: dict[str, str] | None = None, timeout: int = 30) -> tuple[int, dict[str, Any]]:
@@ -372,17 +389,22 @@ class BenchmarkRunner:
             tasks = self.harbor.tasks(suite)
         else:
             tasks = [str(item) for item in suite.get("tasks", [])]
-        previous = self._active_profile()
+        profile = json.loads(runnable["profile_snapshot_json"])
+        external = is_external_profile(profile)
+        endpoint_url = str(profile.get("endpointUrl") or "").rstrip("/") or None
+        previous = None if external else self._active_profile()
         run = self.store.begin_run(runnable["id"], previous)
         self.store.ensure_tasks(run["id"], tasks)
-        lease: BenchmarkLease | None = None
+        lease: BenchmarkLease | ExternalBenchmarkLease | None = None
         try:
-            lease = self.resources.acquire(f"agentic-{run['id']}")
-            self.resources.activate(str(run["profile_name"]))
-            profile = json.loads(run["profile_snapshot_json"])
+            if external:
+                lease = ExternalBenchmarkLease()
+            else:
+                lease = self.resources.acquire(f"agentic-{run['id']}")
+                self.resources.activate(str(run["profile_name"]))
             alias = str(profile.get("servedAlias") or profile["name"])
             baseline = self.store.run_baseline(run["id"])
-            if str(runnable.get("campaign_preset") or "").startswith("efficiency") and not baseline:
+            if not external and str(runnable.get("campaign_preset") or "").startswith("efficiency") and not baseline:
                 baseline = measure_idle_power(
                     self.hardware,
                     float(os.environ.get("GPU45_AGENTIC_IDLE_BASELINE_SECONDS", "30")),
@@ -399,7 +421,7 @@ class BenchmarkRunner:
                 lease.ensure_active()
                 task = self.store.begin_task(task["id"])
                 started = time.monotonic()
-                sampler = TaskResourceSampler(self.hardware, idle_power_w)
+                sampler = WallClockSampler() if external else TaskResourceSampler(self.hardware, idle_power_w)
                 sampler.start()
                 try:
                     if suite.get("adapter") == "bfcl":
@@ -408,6 +430,7 @@ class BenchmarkRunner:
                             int(suite.get("timeoutSeconds") or 900), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
                             int(suite.get("validationLimit") or 0),
+                            endpoint_url,
                         )
                         self._finish_harness_result(run, task, result, "harness_failure")
                     elif suite.get("adapter") == "tau":
@@ -415,6 +438,7 @@ class BenchmarkRunner:
                             run["campaign_id"], run["id"], task["id"], int(task["attempt"]), task["external_task_id"], alias,
                             int(suite.get("timeoutSeconds") or 1800), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
+                            endpoint_url,
                         )
                         self._finish_harness_result(run, task, result, "model_failure")
                     elif suite.get("adapter") == "swebench":
@@ -422,6 +446,7 @@ class BenchmarkRunner:
                             run["campaign_id"], run["id"], task["id"], int(task["attempt"]), task["external_task_id"], alias,
                             int(suite.get("timeoutSeconds") or 7200), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
+                            endpoint_url,
                         )
                         self._finish_harness_result(run, task, result, "model_failure")
                     elif suite.get("adapter") == "harbor":
@@ -429,6 +454,7 @@ class BenchmarkRunner:
                             run["campaign_id"], run["id"], task["id"], int(task["attempt"]), task["external_task_id"], alias,
                             int(suite.get("timeoutSeconds") or 7200), lease.ensure_active,
                             lambda: self._control_request(run["campaign_id"]),
+                            endpoint_url,
                         )
                         self._finish_harness_result(run, task, result, "model_failure")
                     else:
@@ -465,15 +491,16 @@ class BenchmarkRunner:
                         self.resources.simulator("stop")
                     except Exception as exc:
                         print(f"agentic-runner: tau simulator stop failed: {exc!r}", flush=True)
-                keep_profile_warm = self.store.has_pending_profile_runs(
-                    run["campaign_id"], run["profile_name"], run["id"],
-                )
-                restore_profile = self.store.campaign_previous_profile(run["campaign_id"]) or previous
-                if restore_profile and not keep_profile_warm and not lease.lost.is_set():
-                    try:
-                        self.resources.activate(restore_profile)
-                    except Exception as exc:
-                        print(f"agentic-runner: previous profile restore failed: {exc!r}", flush=True)
+                if not external:
+                    keep_profile_warm = self.store.has_pending_profile_runs(
+                        run["campaign_id"], run["profile_name"], run["id"],
+                    )
+                    restore_profile = self.store.campaign_previous_profile(run["campaign_id"]) or previous
+                    if restore_profile and not keep_profile_warm and not lease.lost.is_set():
+                        try:
+                            self.resources.activate(restore_profile)
+                        except Exception as exc:
+                            print(f"agentic-runner: previous profile restore failed: {exc!r}", flush=True)
                 lease.release()
             time.sleep(60 if lease and lease.lost.is_set() else 1)
 

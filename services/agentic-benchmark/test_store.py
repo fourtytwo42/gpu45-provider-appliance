@@ -104,6 +104,28 @@ class StoreTests(unittest.TestCase):
 
         self.assertEqual(2, restarted["attempt"])
 
+    def test_reference_campaign_runs_before_older_local_work(self):
+        local_profile = {"name": "model-a", "profileHash": "hash-a"}
+        local_suite = {"id": "suite-a", "manifestHash": "suite-a", "taskCount": 1}
+        self.store.create_campaign("Older local work", "smoke", [local_profile], [local_suite])
+        reference_profile = {
+            "name": "reference-codex",
+            "profileHash": "reference-hash",
+            "executionMode": "external-openai",
+        }
+        reference_suite = {"id": "suite-reference", "manifestHash": "suite-reference", "taskCount": 1}
+        reference_id = self.store.create_campaign(
+            "Codex reference",
+            "agent-system-reference-v1",
+            [reference_profile],
+            [reference_suite],
+        )
+
+        runnable = self.store.next_runnable()
+
+        self.assertIsNotNone(runnable)
+        self.assertEqual(reference_id, runnable["campaign_id"])
+
     def test_request_metrics_are_correlated_and_deduplicated(self):
         profile = {"name": "model-a", "profileHash": "hash-a"}
         suite = {"id": "suite-a", "manifestHash": "suite-hash", "taskCount": 1}
@@ -204,6 +226,52 @@ class StoreTests(unittest.TestCase):
         self.assertEqual("efficiency-v1", panel["campaign"]["preset"])
         self.assertEqual(12, len(panel["runs"]))
         self.assertEqual({"model-0", "model-1", "model-2"}, {run["profile_name"] for run in panel["runs"]})
+
+    def test_reference_campaign_uses_fixed_panel_without_entering_local_ranking(self):
+        local_profile = {"name": "local", "profileHash": "local-hash"}
+        common_ids = ["bfcl-v4-local", "tau-text-base", "swe-verified-mini50", "terminal-bench-2"]
+        common_suites = [{"id": item, "manifestHash": f"hash-{item}", "taskCount": 1} for item in common_ids]
+        source_id = self.store.create_campaign("Common", "common", [local_profile], common_suites)
+        reference = {
+            "name": "reference-codex",
+            "displayName": "Codex GPT-5.6 Sol Medium",
+            "profileHash": "reference-hash",
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "executionMode": "external-openai",
+            "endpointUrl": "http://127.0.0.1:30003",
+        }
+        suite_ids = list(("bfcl-efficiency-v1", "tau-efficiency-v1", "swe-efficiency-v1", "terminal-efficiency-v1"))
+        suites = [{"id": item, "manifestHash": f"hash-{item}", "taskCount": count} for item, count in zip(suite_ids, (4, 3, 2, 2))]
+
+        reference_id = self.store.create_reference_campaign(source_id, [reference], suites)
+        duplicate_id = self.store.create_reference_campaign(source_id, [reference], suites)
+
+        self.assertEqual(reference_id, duplicate_id)
+        detail = self.store.campaign_detail(str(reference_id))
+        self.assertEqual("agent-system-reference-v1", detail["campaign"]["preset"])
+        self.assertEqual([], detail["ranking"])
+        self.assertEqual({"reference"}, {run["track"] for run in detail["runs"]})
+        with self.store.session() as db:
+            for run in db.execute("SELECT id,suite_id FROM runs WHERE campaign_id=?", (reference_id,)):
+                db.execute("UPDATE runs SET status='completed',score=1.0,expected_tasks=1,completed_tasks=1,passed_tasks=1 WHERE id=?", (run["id"],))
+                task_id = f"task-{run['suite_id']}"
+                db.execute(
+                    "INSERT INTO tasks(id,run_id,external_task_id,status,passed,prompt_tokens,completion_tokens,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (task_id, run["id"], "case", "completed", 1, 100, 20, now(), now()),
+                )
+                db.execute(
+                    "INSERT INTO task_measurements(task_id,attempt,wall_duration_ms,active_inference_ms,response_calls,tool_calls,prompt_tokens,completion_tokens,measurement_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (task_id, 1, 1000, 800, 1, 1, 100, 20, "complete", now(), now()),
+                )
+            db.execute("UPDATE campaigns SET status='completed' WHERE id=?", (reference_id,))
+
+        report = self.store.efficiency_report(source_id)
+        row = report["referenceRows"][0]
+        self.assertEqual(1.0, row["panelScore"])
+        self.assertEqual(4, row["successes"])
+        self.assertEqual(120.0, row["tokensPerSolve"])
+        self.assertFalse(row["energyAvailable"])
 
     def test_task_measurement_aggregates_only_its_attempt(self):
         profile = {"name": "model-a", "profileHash": "hash-a"}

@@ -1,0 +1,38 @@
+[Unit]
+Description=GPU45 Codex reference benchmark proxy
+After=network-online.target gpu45-agentic-benchmark.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gpu45-benchmark
+Group=gpu45-benchmark
+EnvironmentFile=/etc/gpu45/agentic-benchmark.env
+Environment=PYTHONPATH=/opt/gpu45-agentic-benchmark
+Environment=CODEX_HOME=/var/lib/gpu45-benchmark/.codex
+Environment=GPU45_CODEX_HOME=/var/lib/gpu45-benchmark/.codex
+Environment=GPU45_CODEX_WORK_ROOT=/var/lib/gpu45-benchmark/codex-reference
+Environment=GPU45_CODEX_MODEL=gpt-5.6-sol
+Environment=GPU45_CODEX_REASONING_EFFORT=medium
+ExecStart=/usr/bin/python3 -m agentic_benchmark.codex_reference_proxy
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/gpu45-benchmark
+MemoryHigh=2G
+MemoryMax=4G
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

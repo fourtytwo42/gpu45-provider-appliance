@@ -53,6 +53,7 @@ export type AgenticEfficiencyRow = {
   profileName: string;
   rank: number | null;
   qualityScore: number | null;
+  panelScore?: number | null;
   expectedTasks: number;
   completedTasks: number;
   successes: number;
@@ -81,6 +82,30 @@ export type AgenticEfficiencyRow = {
   efficiencyIndex?: number | null;
 };
 
+export type AgenticReferenceRow = {
+  profileName: string;
+  displayName: string;
+  systemType: "agent-system-reference";
+  model?: string | null;
+  reasoningEffort?: string | null;
+  expectedTasks: number;
+  completedTasks: number;
+  successes: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  activeInferenceMs: number;
+  wallDurationMs: number;
+  responseCalls: number;
+  toolCalls: number;
+  invalidCalls: number;
+  panelScore?: number | null;
+  timePerSolveMs?: number | null;
+  tokensPerSolve?: number | null;
+  measurementComplete: boolean;
+  energyAvailable: false;
+};
+
 export type AgenticEfficiencyReport = {
   sourceCampaignId: string;
   campaignId: string | null;
@@ -90,6 +115,9 @@ export type AgenticEfficiencyReport = {
   qualityLeaderScore?: number | null;
   tie: boolean;
   confirmationRecommended: boolean;
+  referenceCampaignId: string | null;
+  referenceStatus: string;
+  referenceRows: AgenticReferenceRow[];
 };
 
 async function agenticFetch(path: string, init?: RequestInit): Promise<unknown> {
@@ -142,8 +170,8 @@ export async function getAgenticCampaign(id: string): Promise<AgenticCampaignDet
   return (await agenticFetch(`/v1/campaigns/${encodeURIComponent(id)}`)) as AgenticCampaignDetail;
 }
 
-export async function agenticCampaignAction(id: string, action: string): Promise<{ ok: boolean; retried?: number; qualificationCampaignId?: string; efficiencyCampaignId?: string }> {
-  return (await agenticFetch(`/v1/campaigns/${encodeURIComponent(id)}/action`, { method: "POST", body: JSON.stringify({ action }) })) as { ok: boolean; retried?: number; qualificationCampaignId?: string; efficiencyCampaignId?: string };
+export async function agenticCampaignAction(id: string, action: string): Promise<{ ok: boolean; retried?: number; qualificationCampaignId?: string; efficiencyCampaignId?: string; referenceCampaignId?: string }> {
+  return (await agenticFetch(`/v1/campaigns/${encodeURIComponent(id)}/action`, { method: "POST", body: JSON.stringify({ action }) })) as { ok: boolean; retried?: number; qualificationCampaignId?: string; efficiencyCampaignId?: string; referenceCampaignId?: string };
 }
 
 export async function getAgenticEfficiency(id: string): Promise<AgenticEfficiencyReport> {

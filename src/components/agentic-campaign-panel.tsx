@@ -218,14 +218,18 @@ function EfficiencyPanel({ report, error, models, sourceStatus, busy, onAction }
 }) {
   if (error) return <div className="mt-5 border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-200">{error}</div>;
   if (!report) return <div className="mt-5 flex items-center gap-2 text-sm text-slate-400"><LoaderCircle className="h-4 w-4 animate-spin" />Loading efficiency state</div>;
-  if (!report.campaignId) return <div className="mt-5 bg-[#121a26] p-5">
-    <h3 className="font-medium text-white">Finalist panel has not started</h3>
-    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">The three capability leaders will run the same 11 difficult tasks. Failed tasks still consume resources, and only verified solves contribute to efficiency.</p>
-    <button type="button" disabled={busy || sourceStatus !== "completed"} onClick={() => void onAction("efficiency")} className="mt-4 inline-flex h-10 items-center gap-2 bg-cyan-400 px-4 text-sm font-semibold text-[#071018] disabled:opacity-40"><Zap className="h-4 w-4" />Run finalist panel</button>
-    {sourceStatus !== "completed" && <p className="mt-2 text-xs text-amber-300">Capability testing must finish first.</p>}
+  if (!report.campaignId) return <div className="mt-5 space-y-4">
+    <ReferenceBaseline report={report} busy={busy} onAction={onAction} />
+    <div className="bg-[#121a26] p-5">
+      <h3 className="font-medium text-white">Finalist panel has not started</h3>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">The three capability leaders will run the same 11 difficult tasks. Failed tasks still consume resources, and only verified solves contribute to efficiency.</p>
+      <button type="button" disabled={busy || sourceStatus !== "completed"} onClick={() => void onAction("efficiency")} className="mt-4 inline-flex h-10 items-center gap-2 bg-cyan-400 px-4 text-sm font-semibold text-[#071018] disabled:opacity-40"><Zap className="h-4 w-4" />Run finalist panel</button>
+      {sourceStatus !== "completed" && <p className="mt-2 text-xs text-amber-300">Capability testing must finish first.</p>}
+    </div>
   </div>;
 
   return <div className="mt-5 space-y-4">
+    <ReferenceBaseline report={report} busy={busy} onAction={onAction} />
     <div className="flex flex-wrap items-center justify-between gap-3 bg-[#121a26] p-4">
       <div><div className="text-xs uppercase text-slate-500">Panel status</div><div className="mt-1 flex items-center gap-2"><span className={`border px-2 py-1 text-[10px] uppercase ${statusClass(report.status)}`}>{report.status}</span><span className="text-sm text-slate-300">{report.rows.reduce((total, row) => total + row.completedTasks, 0)} / {report.rows.reduce((total, row) => total + row.expectedTasks, 0)} tasks</span></div></div>
       <div className="flex gap-2">
@@ -235,11 +239,12 @@ function EfficiencyPanel({ report, error, models, sourceStatus, busy, onAction }
     </div>
     <div className="overflow-x-auto border-y border-white/8">
       <table className="w-full min-w-[1180px] text-left text-sm">
-        <thead className="bg-[#121a26] text-[11px] uppercase text-slate-500"><tr><th className="px-3 py-3">Rank</th><th className="px-3 py-3">Model</th><th className="px-3 py-3">Quality</th><th className="px-3 py-3">Verified solves</th><th className="px-3 py-3">Inference / solve</th><th className="px-3 py-3">Tokens / solve</th><th className="px-3 py-3">Energy / solve</th><th className="px-3 py-3">Peak</th><th className="px-3 py-3 text-right">Efficiency</th></tr></thead>
+        <thead className="bg-[#121a26] text-[11px] uppercase text-slate-500"><tr><th className="px-3 py-3">Rank</th><th className="px-3 py-3">Model</th><th className="px-3 py-3">Capability</th><th className="px-3 py-3">11-task score</th><th className="px-3 py-3">Verified solves</th><th className="px-3 py-3">Inference / solve</th><th className="px-3 py-3">Tokens / solve</th><th className="px-3 py-3">Energy / solve</th><th className="px-3 py-3">Peak</th><th className="px-3 py-3 text-right">Efficiency</th></tr></thead>
         <tbody className="divide-y divide-white/8">{report.rows.map((row) => <tr key={row.profileName} className="hover:bg-white/[0.025]">
           <td className="px-3 py-3 font-mono text-slate-400">{row.rank ? `#${row.rank}` : "-"}</td>
           <td className="max-w-72 px-3 py-3"><span className="block truncate font-medium text-white">{modelLabel(models, row.profileName)}</span><span className={`mt-1 inline-block text-[10px] uppercase ${row.eligible ? "text-emerald-300" : "text-amber-300"}`}>{row.eligible ? "eligible" : !row.qualityEligible ? "outside quality gate" : !row.solveEligible ? "solve gate missed" : "measurement incomplete"}</span></td>
           <td className="px-3 py-3 font-mono text-white">{percent(row.qualityScore)}</td>
+          <td className="px-3 py-3 font-mono text-white">{percent(row.panelScore)}</td>
           <td className="px-3 py-3 font-mono text-white">{row.successes} / {row.expectedTasks}</td>
           <td className="px-3 py-3 font-mono text-slate-200">{duration(row.timePerSolveMs)}</td>
           <td className="px-3 py-3 font-mono text-slate-200">{compactNumber(row.tokensPerSolve)}</td>
@@ -250,6 +255,38 @@ function EfficiencyPanel({ report, error, models, sourceStatus, busy, onAction }
       </table>
     </div>
   </div>;
+}
+
+function ReferenceBaseline({ report, busy, onAction }: {
+  report: AgenticEfficiencyReport;
+  busy: boolean;
+  onAction: (action: string) => Promise<void>;
+}) {
+  const row = report.referenceRows?.[0];
+  if (!report.referenceCampaignId) return <div className="border border-violet-400/20 bg-violet-400/[0.06] p-5">
+    <div className="text-xs uppercase text-violet-300">External reference</div>
+    <h3 className="mt-1 font-medium text-white">Codex GPT-5.6 Sol Medium</h3>
+    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">Runs the same fixed 11 tasks and official verifiers as the local finalists. Quality, time, and token cost are comparable; cloud energy is unavailable and does not enter the GPU45 efficiency rank.</p>
+    <button type="button" disabled={busy} onClick={() => void onAction("reference")} className="mt-4 inline-flex h-10 items-center gap-2 border border-violet-300/30 px-4 text-sm font-medium text-violet-100 disabled:opacity-40"><Scale className="h-4 w-4" />Run Codex baseline</button>
+  </div>;
+  return <div className="border border-violet-400/20 bg-violet-400/[0.06] p-4">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div><div className="text-xs uppercase text-violet-300">Agent-system reference</div><div className="mt-1 font-medium text-white">{row?.displayName || "Codex GPT-5.6 Sol Medium"}</div></div>
+      <span className={`border px-2 py-1 text-[10px] uppercase ${statusClass(report.referenceStatus)}`}>{report.referenceStatus}</span>
+    </div>
+    {row ? <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+      <ReferenceMetric label="Panel quality" value={percent(row.panelScore)} />
+      <ReferenceMetric label="Verified solves" value={`${row.successes} / ${row.expectedTasks}`} />
+      <ReferenceMetric label="Inference / solve" value={duration(row.timePerSolveMs)} />
+      <ReferenceMetric label="Tokens / solve" value={compactNumber(row.tokensPerSolve)} />
+      <ReferenceMetric label="Energy / solve" value="Cloud n/a" />
+      <ReferenceMetric label="Progress" value={`${row.completedTasks} / ${row.expectedTasks}`} />
+    </div> : <div className="mt-3 flex items-center gap-2 text-sm text-slate-400"><LoaderCircle className="h-4 w-4 animate-spin" />Waiting for the reference runner</div>}
+  </div>;
+}
+
+function ReferenceMetric({ label, value }: { label: string; value: string }) {
+  return <div className="bg-black/15 p-3"><div className="text-[10px] uppercase text-slate-500">{label}</div><div className="mt-1 font-mono text-sm text-slate-100">{value}</div></div>;
 }
 
 function ComparePanel({ leaderboard, report, models }: {
@@ -264,10 +301,15 @@ function ComparePanel({ leaderboard, report, models }: {
       const efficient = efficiencyByModel.get(quality.profileName);
       return <div key={quality.profileName} className="grid gap-3 bg-[#121a26] p-3 md:grid-cols-[minmax(220px,1fr)_minmax(180px,.8fr)_minmax(180px,.8fr)] md:items-center">
         <div className="min-w-0"><div className="truncate text-sm font-medium text-white">{modelLabel(models, quality.profileName)}</div><div className="mt-1 truncate font-mono text-[10px] text-slate-600">{quality.profileName}</div></div>
-        <div><div className="flex justify-between font-mono text-xs"><span className="text-slate-500">Capability</span><span className="text-white">{percent(quality.compositeScore)}</span></div><div className="mt-2 h-2 overflow-hidden bg-white/8"><div className="h-full bg-emerald-400" style={{ width: `${Math.max(0, Math.min(100, Number(quality.compositeScore || 0) * 100))}%` }} /></div></div>
+        <div><div className="flex justify-between font-mono text-xs"><span className="text-slate-500">Capability</span><span className="text-white">{percent(quality.compositeScore)}</span></div><div className="mt-2 h-2 overflow-hidden bg-white/8"><div className="h-full bg-emerald-400" style={{ width: `${Math.max(0, Math.min(100, Number(quality.compositeScore || 0) * 100))}%` }} /></div><div className="mt-1 text-[10px] text-slate-500">11-task panel {percent(efficient?.panelScore)}</div></div>
         <div><div className="flex justify-between font-mono text-xs"><span className="text-slate-500">Efficiency</span><span className="text-white">{efficient?.efficiencyIndex == null ? "pending" : efficient.efficiencyIndex.toFixed(1)}</span></div><div className="mt-2 h-2 overflow-hidden bg-white/8"><div className="h-full bg-cyan-400" style={{ width: `${Math.max(0, Math.min(100, efficient?.efficiencyIndex || 0))}%` }} /></div></div>
       </div>;
     })}
+    {(report?.referenceRows || []).map((reference) => <div key={reference.profileName} className="grid gap-3 border border-violet-400/20 bg-violet-400/[0.06] p-3 md:grid-cols-[minmax(220px,1fr)_minmax(180px,.8fr)_minmax(180px,.8fr)] md:items-center">
+      <div className="min-w-0"><div className="truncate text-sm font-medium text-white">{reference.displayName}</div><div className="mt-1 text-[10px] uppercase text-violet-300">Agent-system reference</div></div>
+      <div><div className="flex justify-between font-mono text-xs"><span className="text-slate-500">11-task panel</span><span className="text-white">{percent(reference.panelScore)}</span></div><div className="mt-2 h-2 overflow-hidden bg-white/8"><div className="h-full bg-violet-400" style={{ width: `${Math.max(0, Math.min(100, Number(reference.panelScore || 0) * 100))}%` }} /></div></div>
+      <div><div className="flex justify-between font-mono text-xs"><span className="text-slate-500">Local GPU efficiency</span><span className="text-slate-400">not comparable</span></div><div className="mt-2 text-xs text-slate-500">Cloud power telemetry is unavailable.</div></div>
+    </div>)}
     {!report?.campaignId && <div className="p-4 text-sm text-slate-500">Efficiency bars appear after the capability campaign finishes and the finalist panel runs.</div>}
   </div>;
 }

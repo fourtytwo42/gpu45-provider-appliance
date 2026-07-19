@@ -7,7 +7,19 @@ from pathlib import Path
 
 from unittest import mock
 
-from agentic_benchmark.harnesses import BfclAdapter, HarborAdapter, HarnessInterrupted, SweBenchAdapter, TauAdapter, benchmark_headers, bfcl_case_passed, run_interruptible, stratified_sample
+from agentic_benchmark.harnesses import (
+    BfclAdapter,
+    HarborAdapter,
+    HarnessInterrupted,
+    SweBenchAdapter,
+    TauAdapter,
+    benchmark_headers,
+    bfcl_case_passed,
+    container_openai_base_url,
+    openai_base_url,
+    run_interruptible,
+    stratified_sample,
+)
 
 
 class HarnessProcessTests(unittest.TestCase):
@@ -30,6 +42,13 @@ class HarnessProcessTests(unittest.TestCase):
                 "X-GPU45-Benchmark-Attempt": "2",
             },
             benchmark_headers("secret", "campaign", "run", "task", 2),
+        )
+
+    def test_reference_endpoint_is_normalized_for_host_and_container_harnesses(self):
+        self.assertEqual("http://127.0.0.1:30003/v1", openai_base_url("http://127.0.0.1:30003/"))
+        self.assertEqual(
+            "http://host.docker.internal:30003/v1",
+            container_openai_base_url("http://127.0.0.1:30003"),
         )
 
     def setUp(self):

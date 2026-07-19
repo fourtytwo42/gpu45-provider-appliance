@@ -1,0 +1,14 @@
+{
+  "name": "reference-codex-gpt-5.6-sol-medium",
+  "displayName": "Codex GPT-5.6 Sol Medium",
+  "description": "OpenAI Codex agent-system reference baseline using GPT-5.6 Sol at medium reasoning effort.",
+  "servedAlias": "codex-gpt-5.6-sol-medium",
+  "backend": "codex-cli",
+  "executionMode": "external-openai",
+  "endpointUrl": "http://127.0.0.1:30003",
+  "model": "gpt-5.6-sol",
+  "reasoningEffort": "medium",
+  "agentVersion": "codex-cli-0.144.6",
+  "energyScope": "unavailable",
+  "comparisonScope": "agent-system-reference"
+}

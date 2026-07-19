@@ -11,3 +11,17 @@ Runtime paths:
 - Harnesses: `/opt/gpu45/benchmark-harnesses`
 - Container and dataset cache: `/models/benchmark-cache`
 - API: `http://127.0.0.1:8055`
+
+## Codex reference baseline
+
+The optional `gpu45-codex-reference-proxy.service` runs the same fixed 11-task finalist panel through a pinned Codex CLI using `gpt-5.6-sol` with medium reasoning effort. It is an agent-system reference, not a raw-model leaderboard entry. The coordinator records verifier outcomes, wall time, and Codex-reported tokens, but leaves energy unavailable because the evaluated hardware is not GPU45.
+
+Install and authenticate it once:
+
+```bash
+sudo gpu45-install-codex-reference
+sudo -u gpu45-benchmark env CODEX_HOME=/var/lib/gpu45-benchmark/.codex codex login --device-auth
+sudo systemctl restart gpu45-codex-reference-proxy.service
+```
+
+Reference campaigns use the same BFCL, tau, SWE-bench, and Terminal-Bench adapters and task IDs as the local finalist efficiency panel. Their results appear beside local models without changing local-model promotion or GPU efficiency ranking.
