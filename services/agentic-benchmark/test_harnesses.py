@@ -116,12 +116,15 @@ class HarnessProcessTests(unittest.TestCase):
     def test_swebench_caps_each_agent_turn(self, _run_interruptible):
         adapter = SweBenchAdapter(self.root / "harnesses", self.root / "artifacts", "token")
         adapter.run(
-            "campaign", "run", "task", 1, "django__django-11790", "model", 60,
+            "campaign", "run", "task", 1, "django__django-11790", "model", 7200,
             lambda: None, lambda: None,
         )
 
         generated = self.root / "artifacts" / "campaign" / "run" / "task" / "attempt-1" / "gpu45-swebench.yaml"
-        self.assertIn("    max_tokens: 4096\n", generated.read_text(encoding="utf-8"))
+        generated_text = generated.read_text(encoding="utf-8")
+        self.assertIn("  step_limit: 75\n", generated_text)
+        self.assertIn("    max_tokens: 4096\n", generated_text)
+        self.assertEqual(3600, _run_interruptible.call_args.args[4])
 
     def test_harbor_discovers_pinned_terminal_bench_tasks(self):
         cache = self.root / "cache"

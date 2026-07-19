@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Callable
 
 
+SWE_AGENT_STEP_LIMIT = 75
+SWE_AGENT_TIMEOUT_SECONDS = 3600
+
+
 class HarnessInterrupted(RuntimeError):
     pass
 
@@ -422,6 +426,8 @@ class SweBenchAdapter:
         headers = benchmark_headers(self.token, campaign_id, run_id, task_id, attempt)
         yaml_headers = "".join(f"      {name}: {json.dumps(value)}\n" for name, value in headers.items())
         generated_config.write_text(
+            "agent:\n"
+            f"  step_limit: {SWE_AGENT_STEP_LIMIT}\n"
             "environment:\n"
             "  run_args:\n"
             "    - --rm\n"
@@ -459,7 +465,7 @@ class SweBenchAdapter:
         )
         agent_code = run_interruptible(
             agent_command, self.mini_source, agent_env, agent_log,
-            timeout_seconds, ensure_active, control_state,
+            min(timeout_seconds, SWE_AGENT_TIMEOUT_SECONDS), ensure_active, control_state,
         )
         predictions = agent_output / "preds.json"
         artifacts: list[tuple[str, Path]] = [("agent-log", agent_log), ("configuration", generated_config)]
