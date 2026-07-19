@@ -433,7 +433,7 @@ class BenchmarkRunner:
                             endpoint_url,
                             str(profile.get("benchmarkTransport") or "responses"),
                         )
-                        self._finish_harness_result(run, task, result, "harness_failure")
+                        self._finish_harness_result(run, task, result, "model_failure")
                     elif suite.get("adapter") == "tau":
                         result = self.tau.run(
                             run["campaign_id"], run["id"], task["id"], int(task["attempt"]), task["external_task_id"], alias,

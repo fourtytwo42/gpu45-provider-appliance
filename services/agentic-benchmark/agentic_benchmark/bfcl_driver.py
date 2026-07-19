@@ -48,7 +48,10 @@ def register_model(registry_name: str, alias: str, transport: str = "responses")
         input_price=None,
         output_price=None,
         is_fc_model=True,
-        underscore_to_dot=False,
+        # OpenAI-compatible tool schemas cannot carry BFCL's dotted function
+        # names, so BFCL compiles them with underscores. Restore the dots in
+        # the verifier before comparing the model call with the gold answer.
+        underscore_to_dot=True,
     )
 
 
