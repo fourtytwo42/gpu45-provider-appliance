@@ -173,6 +173,7 @@ class BfclAdapter:
         control_state: Callable[[], str | None],
         validation_limit: int = 0,
         endpoint_url: str | None = None,
+        transport: str = "responses",
     ) -> HarnessResult:
         root = self.artifact_root / campaign_id / run_id / task_id
         results = root / "results"
@@ -192,6 +193,7 @@ class BfclAdapter:
             str(self.python), "-m", "agentic_benchmark.bfcl_driver",
             "--alias", alias, "--category", category,
             "--result-root", str(results), "--score-root", str(scores),
+            "--transport", transport,
         ]
         if separator:
             command.extend(["--case-id", case_id])
@@ -203,7 +205,15 @@ class BfclAdapter:
         text = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
         marker = next((line[len("GPU45_RESULT="):] for line in reversed(text.splitlines()) if line.startswith("GPU45_RESULT=")), None)
         if code or not marker:
-            return HarnessResult(False, 0.0, duration_ms, "BFCL harness failed", text[-4000:], [("log", log)])
+            return HarnessResult(
+                False, 0.0, duration_ms, "BFCL harness failed", text[-4000:], [("log", log)],
+                error_class="infrastructure_failure",
+            )
+        if "Error occurred during inference" in text or "openai.NotFoundError" in text:
+            return HarnessResult(
+                False, 0.0, duration_ms, "BFCL inference transport failed", text[-4000:], [("log", log)],
+                error_class="infrastructure_failure",
+            )
         payload = json.loads(marker)
         reward = float(payload["accuracy"])
         artifacts = [("log", log)]

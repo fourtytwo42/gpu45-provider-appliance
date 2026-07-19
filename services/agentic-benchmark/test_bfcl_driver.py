@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agentic_benchmark.bfcl_driver import configure_lock_root, is_single_case_run, select_entries
+from agentic_benchmark.bfcl_driver import configure_lock_root, is_single_case_run, model_handler, select_entries
 
 
 class BfclDriverTests(unittest.TestCase):
@@ -41,6 +41,10 @@ class BfclDriverTests(unittest.TestCase):
         self.assertTrue(is_single_case_run("simple_python_0", 0))
         self.assertTrue(is_single_case_run(None, 1))
         self.assertFalse(is_single_case_run(None, 0))
+
+    def test_rejects_unknown_transport(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported BFCL transport"):
+            model_handler("unknown")
 
 
 if __name__ == "__main__":

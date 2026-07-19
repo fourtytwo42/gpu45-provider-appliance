@@ -431,6 +431,7 @@ class BenchmarkRunner:
                             lambda: self._control_request(run["campaign_id"]),
                             int(suite.get("validationLimit") or 0),
                             endpoint_url,
+                            str(profile.get("benchmarkTransport") or "responses"),
                         )
                         self._finish_harness_result(run, task, result, "harness_failure")
                     elif suite.get("adapter") == "tau":

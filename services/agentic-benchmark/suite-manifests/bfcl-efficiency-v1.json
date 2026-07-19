@@ -10,6 +10,6 @@
   "timeoutSeconds": 900,
   "requiresDocker": false,
   "requiresUserSimulator": false,
-  "categories": ["multiple", "parallel_multiple", "multi_turn_long_context", "format_sensitivity"],
+  "categories": ["multiple", "parallel_multiple", "irrelevance", "multi_turn_long_context"],
   "perCategoryLimit": 1
 }

@@ -6,6 +6,7 @@
   "backend": "codex-cli",
   "executionMode": "external-openai",
   "endpointUrl": "http://127.0.0.1:30003",
+  "benchmarkTransport": "chat-completions",
   "model": "gpt-5.6-sol",
   "reasoningEffort": "medium",
   "agentVersion": "codex-cli-0.144.6",

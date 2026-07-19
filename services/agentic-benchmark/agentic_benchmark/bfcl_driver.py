@@ -8,12 +8,28 @@ import time
 from pathlib import Path
 
 
-def register_model(registry_name: str, alias: str) -> None:
+def model_handler(transport: str):
+    if transport == "chat-completions":
+        from bfcl_eval.model_handler.api_inference.openai_completion import OpenAICompletionsHandler
+
+        return OpenAICompletionsHandler
+    if transport != "responses":
+        raise ValueError(f"Unsupported BFCL transport: {transport}")
     from bfcl_eval.constants.model_config import MODEL_CONFIG_MAPPING, ModelConfig
     from bfcl_eval.model_handler.api_inference.openai_response import OpenAIResponsesHandler
 
-    class GPU45ResponsesHandler(OpenAIResponsesHandler):
+    return OpenAIResponsesHandler
+
+
+def register_model(registry_name: str, alias: str, transport: str = "responses") -> None:
+    from bfcl_eval.constants.model_config import MODEL_CONFIG_MAPPING, ModelConfig
+
+    handler = model_handler(transport)
+
+    class GPU45Handler(handler):
         def generate_with_backoff(self, **kwargs):
+            if transport == "chat-completions":
+                return super().generate_with_backoff(**kwargs)
             started = time.monotonic()
             kwargs["stream"] = True
             stream = self.client.responses.create(**kwargs)
@@ -28,7 +44,7 @@ def register_model(registry_name: str, alias: str) -> None:
         url="http://127.0.0.1:30001",
         org="GPU45",
         license="local-profile",
-        model_handler=GPU45ResponsesHandler,
+        model_handler=GPU45Handler,
         input_price=None,
         output_price=None,
         is_fc_model=True,
@@ -88,6 +104,7 @@ def main() -> None:
     parser.add_argument("--result-root")
     parser.add_argument("--score-root")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--transport", choices=("responses", "chat-completions"), default="responses")
     args = parser.parse_args()
 
     from bfcl_eval import _llm_response_generation as generation
@@ -121,7 +138,7 @@ def main() -> None:
     from bfcl_eval.eval_checker import eval_runner
 
     registry_name = "gpu45-bfcl-model"
-    register_model(registry_name, args.alias)
+    register_model(registry_name, args.alias, args.transport)
 
     if args.case_id or args.limit > 0:
         original = generation.get_involved_test_entries
