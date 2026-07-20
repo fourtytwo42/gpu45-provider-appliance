@@ -21,13 +21,15 @@ Environment=GPU45_ACE_CHECKPOINTS=/models/music/ace-step/checkpoints
 Environment=ACESTEP_CHECKPOINTS_DIR=/models/music/ace-step/checkpoints
 Environment=ACESTEP_ROCM_DTYPE=bfloat16
 Environment=GPU45_ACE_LM_BACKEND=pt
+Environment=ACESTEP_INIT_LLM=true
 Environment=GPU45_LEVO_ROOT=/opt/levo2-amd
 Environment=GPU45_LEVO_PYTHON=/opt/levo2-venv/bin/python
 Environment=GPU45_LEVO_MODEL_ROOT=/models/music/levo2
 Environment=HSA_OVERRIDE_GFX_VERSION=10.3.0
 Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 Environment=PYTORCH_ALLOC_CONF=expandable_segments:True
-Environment=MIOPEN_FIND_MODE=2
+Environment=MIOPEN_FIND_MODE=FAST
+Environment=TOKENIZERS_PARALLELISM=false
 EnvironmentFile=/etc/gpu45/resource-manager.env
 Environment=PYTHONPATH=/opt/gpu45/current/services/common:/opt/gpu45-music-api
 ExecStart=/opt/gpu45-music-api-venv/bin/python -m music_api
