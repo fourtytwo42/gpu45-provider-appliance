@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import statistics
 import threading
 import uuid
 from contextlib import contextmanager
@@ -118,6 +119,37 @@ class MusicStore:
         with self.lock, self.connect() as db:
             row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
             return self._decode(row) if row else None
+
+    def estimate_seconds(self, profile_id: str, task_type: str, duration: float) -> int | None:
+        samples: list[tuple[float, float]] = []
+        for job in self.list_jobs(250, status="completed"):
+            if job["profile_id"] != profile_id or job["task_type"] != task_type:
+                continue
+            generation_seconds = job["metrics"].get("generationSeconds")
+            sample_duration = job["payload"].get("duration")
+            try:
+                generation_seconds = float(generation_seconds)
+                sample_duration = float(sample_duration)
+            except (TypeError, ValueError):
+                continue
+            if generation_seconds > 0 and sample_duration > 0:
+                samples.append((sample_duration, generation_seconds))
+        if not samples:
+            return None
+        samples = sorted(samples[:12])
+        exact = [seconds for sample_duration, seconds in samples if abs(sample_duration - duration) < 0.01]
+        if exact:
+            return max(1, round(statistics.median(exact)))
+        lower = [sample for sample in samples if sample[0] < duration]
+        upper = [sample for sample in samples if sample[0] > duration]
+        if lower and upper:
+            left_duration, left_seconds = lower[-1]
+            right_duration, right_seconds = upper[0]
+            fraction = (duration - left_duration) / (right_duration - left_duration)
+            return max(1, round(left_seconds + (right_seconds - left_seconds) * fraction))
+        sample_duration, generation_seconds = min(samples, key=lambda sample: abs(sample[0] - duration))
+        ratio = duration / sample_duration
+        return max(1, round(generation_seconds * (0.75 + 0.25 * ratio)))
 
     def update(self, job_id: str, **values: object) -> dict[str, object]:
         allowed = {

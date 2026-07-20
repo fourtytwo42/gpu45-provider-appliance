@@ -37,6 +37,15 @@ class MusicStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.delete(str(job["id"]))
 
+    def test_eta_estimate_uses_completed_runtime_per_output_second(self):
+        first = self.store.create_job("levo2-large-amd", "reference", "reference", {"duration": 10})
+        second = self.store.create_job("levo2-large-amd", "reference", "reference", {"duration": 20})
+        self.store.update(str(first["id"]), status="completed", metrics_json='{"generationSeconds":700}')
+        self.store.update(str(second["id"]), status="completed", metrics_json='{"generationSeconds":1200}')
+        self.assertEqual(self.store.estimate_seconds("levo2-large-amd", "reference", 10), 700)
+        self.assertEqual(self.store.estimate_seconds("levo2-large-amd", "reference", 15), 950)
+        self.assertIsNone(self.store.estimate_seconds("ace-xl-base-4b", "cover", 10))
+
 
 if __name__ == "__main__":
     unittest.main()

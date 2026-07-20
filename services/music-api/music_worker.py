@@ -245,6 +245,33 @@ def run_phase(
         raise RuntimeError(f"LeVo phase failed ({stage}) with status {result.returncode}.")
 
 
+def phase_artifact_ready(marker: Path, artifact: Path, minimum_bytes: int = 1024) -> bool:
+    try:
+        return marker.is_file() and artifact.is_file() and artifact.stat().st_size >= minimum_bytes
+    except OSError:
+        return False
+
+
+def run_resumable_phase(
+    command: list[str],
+    cwd: Path,
+    progress_path: Path,
+    value: float,
+    stage: str,
+    environment: dict[str, str],
+    marker: Path,
+    artifact: Path,
+    minimum_bytes: int = 1024,
+) -> None:
+    if phase_artifact_ready(marker, artifact, minimum_bytes):
+        progress(progress_path, value, f"{stage}-restored")
+        return
+    run_phase(command, cwd, progress_path, value, stage, environment)
+    if not artifact.is_file() or artifact.stat().st_size < minimum_bytes:
+        raise RuntimeError(f"LeVo phase {stage} completed without a valid artifact.")
+    atomic_json(marker, {"stage": stage, "artifact": str(artifact), "size": artifact.stat().st_size})
+
+
 def run_levo(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, str], dict[str, object]]:
     if str(spec["job"].get("task_type")) == "separate":
         return run_levo_separation(spec, progress_path)
@@ -301,10 +328,21 @@ def run_levo(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, st
         PYTHONPATH=flow_vae + os.pathsep + environment.get("PYTHONPATH", ""),
     )
 
-    run_phase([python, "jsonl2conditions.py", "--jsonl", str(input_path)], work_root, progress_path, 5, "levo-conditioning", environment)
-    run_phase([python, "conditions2cb0tokens.py", "--batch", batch], work_root, progress_path, 20, "levo-main-tokens", environment)
-    run_phase([python, "cb0tokens2tokens.py", "--batch", batch], work_root, progress_path, 58, "levo-sub-tokens", environment)
-    run_phase([python, "tokens2audio.py", "--batch", batch], work_root, progress_path, 82, "levo-audio-synthesis", environment)
+    phase_root = output_dir.parent / "levo-phases"
+    phase_root.mkdir(parents=True, exist_ok=True)
+    out_root = work_root / "out"
+    song_root = out_root / batch
+    phases = [
+        ([python, "jsonl2conditions.py", "--jsonl", str(input_path)], 5, "levo-conditioning", out_root / f"{batch}.cond.pt", 1024),
+        ([python, "conditions2cb0tokens.py", "--batch", batch], 20, "levo-main-tokens", song_root / "master.pt.zst", 1024),
+        ([python, "cb0tokens2tokens.py", "--batch", batch], 58, "levo-sub-tokens", song_root / "master.pt", 1024),
+        ([python, "tokens2audio.py", "--batch", batch], 82, "levo-audio-synthesis", song_root / "master.wav", 4096),
+    ]
+    for command, value, stage, artifact, minimum_bytes in phases:
+        run_resumable_phase(
+            command, work_root, progress_path, value, stage, environment,
+            phase_root / f"{stage}.json", artifact, minimum_bytes,
+        )
 
     source = work_root / "out" / batch / "master.wav"
     if not source.is_file():

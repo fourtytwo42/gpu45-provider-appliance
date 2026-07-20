@@ -1,7 +1,10 @@
 import inspect
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
-from music_worker import ace_instruction, run_levo_separation
+from music_worker import ace_instruction, phase_artifact_ready, run_levo_separation, run_resumable_phase
 
 
 class WorkerTests(unittest.TestCase):
@@ -18,6 +21,31 @@ class WorkerTests(unittest.TestCase):
         source = inspect.getsource(run_levo_separation)
         self.assertNotIn("torchaudio.load", source)
         self.assertNotIn("torchaudio.save", source)
+
+    def test_phase_checkpoint_requires_marker_and_nonempty_artifact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            marker = root / "phase.json"
+            artifact = root / "artifact.pt"
+            marker.write_text("{}", encoding="utf-8")
+            artifact.write_bytes(b"x" * 2048)
+            self.assertTrue(phase_artifact_ready(marker, artifact))
+            artifact.write_bytes(b"short")
+            self.assertFalse(phase_artifact_ready(marker, artifact))
+
+    def test_resumable_phase_skips_verified_artifact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            marker = root / "phase.json"
+            artifact = root / "artifact.pt"
+            progress = root / "progress.json"
+            marker.write_text("{}", encoding="utf-8")
+            artifact.write_bytes(b"x" * 2048)
+            run_resumable_phase(
+                ["command-that-must-not-run"], root, progress, 58, "levo-sub-tokens",
+                os.environ.copy(), marker, artifact,
+            )
+            self.assertIn("levo-sub-tokens-restored", progress.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

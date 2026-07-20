@@ -110,10 +110,24 @@ class MusicRunner:
             "dataRoot": str(self.data_root),
         }
         _atomic_json(spec_path, spec)
-        self.store.update(job_id,status="waiting",stage="waiting-for-gpu",progress=1,error=None,started_at=now_iso())
+        duration = float(job["payload"].get("duration") or profile["duration"]["default"])
+        estimated_total = self.store.estimate_seconds(str(job["profile_id"]), str(job["task_type"]), duration)
+        if estimated_total is None:
+            if profile["backend"] == "levo":
+                estimated_total = 30 if str(job["task_type"]) == "separate" else 720
+            elif str(job["task_type"]) in {"complete", "lego", "text2music"}:
+                estimated_total = 180
+            else:
+                estimated_total = 75
+        self.store.update(
+            job_id,status="waiting",stage="waiting-for-gpu",progress=1,error=None,
+            eta_seconds=estimated_total,started_at=now_iso(),
+        )
         lease = acquire_lease(job_id, "music", 70, False, "ACE restarts; LeVo resumes at a verified phase boundary", timeout=1800)
         started = time.monotonic()
         peak_vram = 0
+        peak_ram = 0
+        peak_power: float | None = None
         peak_junction: float | None = None
         try:
             self.store.update(job_id,status="running",stage="loading",progress=2)
@@ -126,21 +140,32 @@ class MusicRunner:
                 self.processes[job_id] = process
                 self.store.update(job_id,process_pid=process.pid)
                 last_progress: dict[str, object] = {}
+                last_eta_write = 0.0
                 while process.poll() is None:
                     current = self.store.get_job(job_id) or {}
                     if current.get("cancel_requested"):
                         self._terminate(process)
                         break
                     progress = _read_json(progress_path)
-                    if progress and progress != last_progress:
-                        last_progress = progress
+                    now = time.monotonic()
+                    if progress and (progress != last_progress or now - last_eta_write >= 5):
+                        if progress != last_progress:
+                            last_progress = progress
+                        worker_eta = progress.get("etaSeconds")
+                        elapsed = now - started
+                        eta = int(worker_eta) if worker_eta is not None else max(1, round(estimated_total - elapsed))
                         self.store.update(
                             job_id,stage=str(progress.get("stage") or "generating"),
                             progress=float(progress.get("progress") or 0),
-                            eta_seconds=progress.get("etaSeconds"),
+                            eta_seconds=eta,
                         )
+                        last_eta_write = now
                     metrics = self._gpu_metrics()
                     peak_vram = max(peak_vram, int(metrics.get("vramBytes") or 0))
+                    peak_ram = max(peak_ram, self._ram_used_bytes())
+                    power = metrics.get("powerWatts")
+                    if power is not None:
+                        peak_power = max(peak_power or float(power), float(power))
                     junction = metrics.get("junctionC")
                     if junction is not None:
                         peak_junction = max(peak_junction or float(junction), float(junction))
@@ -150,6 +175,8 @@ class MusicRunner:
             metrics = {
                 "generationSeconds": round(time.monotonic() - started, 2),
                 "peakVramBytes": peak_vram or None,
+                "peakRamBytes": peak_ram or None,
+                "peakPowerWatts": peak_power,
                 "peakJunctionC": peak_junction,
             }
             if current.get("cancel_requested"):
@@ -174,17 +201,29 @@ class MusicRunner:
     def _gpu_metrics() -> dict[str, object]:
         try:
             result = subprocess.run(
-                ["/opt/rocm/bin/rocm-smi", "--showmeminfo", "vram", "--showtemp", "--json"],
+                ["/opt/rocm/bin/rocm-smi", "--showmeminfo", "vram", "--showtemp", "--showpower", "--json"],
                 capture_output=True,text=True,timeout=8,check=False,
             )
             data = json.loads(result.stdout or "{}")
             gpu = next(iter(data.values()))
             return {
                 "vramBytes": int(float(gpu.get("VRAM Total Used Memory (B)") or 0)),
+                "powerWatts": float(gpu.get("Average Graphics Package Power (W)")) if gpu.get("Average Graphics Package Power (W)") is not None else None,
                 "junctionC": float(gpu.get("Temperature (Sensor junction) (C)")) if gpu.get("Temperature (Sensor junction) (C)") is not None else None,
             }
         except (OSError, ValueError, json.JSONDecodeError, StopIteration, subprocess.SubprocessError):
             return {}
+
+    @staticmethod
+    def _ram_used_bytes() -> int:
+        try:
+            values: dict[str, int] = {}
+            for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+                name, raw = line.split(":", 1)
+                values[name] = int(raw.strip().split()[0]) * 1024
+            return max(0, values["MemTotal"] - values["MemAvailable"])
+        except (OSError, KeyError, ValueError):
+            return 0
 
 
 def remove_job_files(data_root: Path, job: dict[str, object]) -> None:
