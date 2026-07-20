@@ -7,7 +7,7 @@ const studioLinks = [
   { href: "/studio/speech", label: "Speech" }, { href: "/studio/audiobooks", label: "Audiobooks" },
   { href: "/studio/presentations", label: "Presentations" }, { href: "/studio/voices", label: "Voice Library" },
   { href: "/studio/training", label: "Training" }, { href: "/whisper", label: "Transcription" },
-  { href: "/images", label: "Images" }, { href: "/video", label: "Video" }, { href: "/research", label: "Research" },
+  { href: "/studio/music", label: "Music" }, { href: "/images", label: "Images" }, { href: "/video", label: "Video" }, { href: "/research", label: "Research" },
 ];
 
 export function StudioShell({ title, eyebrow, description, icon: Icon, accent = "#21d4fd", noticeTone = "info", noticeTitle, noticeBody, activeHref, children }: { title: string; eyebrow: string; description: string; icon: LucideIcon; accent?: string; noticeTone?: NoticeTone; noticeTitle: string; noticeBody: string; activeHref?: string; children: React.ReactNode }) {

@@ -1,6 +1,6 @@
 "use client";
 
-export type ApplianceEventTopic = "telemetry" | "resources" | "operational-jobs" | "tts" | "pocket-tts" | "images" | "video" | "whisper";
+export type ApplianceEventTopic = "telemetry" | "resources" | "operational-jobs" | "tts" | "pocket-tts" | "images" | "video" | "whisper" | "music";
 type EventHandler = (payload: unknown) => void;
 type ConnectionHandler = (connected: boolean) => void;
 

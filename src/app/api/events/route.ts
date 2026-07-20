@@ -6,13 +6,14 @@ import { getResourceState } from "@/lib/resource-manager";
 import { getTtsSnapshot } from "@/lib/tts";
 import { getVideoSnapshot } from "@/lib/video";
 import { getWhisperSnapshot } from "@/lib/whisper";
+import { getMusicSnapshot } from "@/lib/music";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-type Topic = "telemetry" | "provider" | "resources" | "jobs" | "operational-jobs" | "tts" | "pocket-tts" | "images" | "video" | "whisper";
+type Topic = "telemetry" | "provider" | "resources" | "jobs" | "operational-jobs" | "tts" | "pocket-tts" | "images" | "video" | "whisper" | "music";
 const DEFAULT_TOPICS: Topic[] = ["telemetry", "resources", "operational-jobs"];
-const VALID_TOPICS = new Set<Topic>([...DEFAULT_TOPICS, "provider", "operational-jobs", "tts", "pocket-tts", "images", "video", "whisper"]);
+const VALID_TOPICS = new Set<Topic>([...DEFAULT_TOPICS, "provider", "operational-jobs", "tts", "pocket-tts", "images", "video", "whisper", "music"]);
 
 function requestedTopics(request: Request): Topic[] {
   const values = new URL(request.url).searchParams.get("topics")?.split(",") ?? DEFAULT_TOPICS;
@@ -30,6 +31,7 @@ async function readTopic(topic: Topic): Promise<unknown> {
   if (topic === "pocket-tts") return getPocketTtsSnapshot();
   if (topic === "images") return getImageSnapshot();
   if (topic === "video") return getVideoSnapshot();
+  if (topic === "music") return getMusicSnapshot();
   return getWhisperSnapshot();
 }
 

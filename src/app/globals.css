@@ -43,3 +43,8 @@ button, input, select, textarea { font: inherit; }
 .appliance-panel { border: 1px solid color-mix(in srgb, var(--appliance-border) 85%, transparent); background: color-mix(in srgb, var(--appliance-surface) 92%, black); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22); }
 .appliance-raised { border: 1px solid color-mix(in srgb, var(--appliance-border) 88%, transparent); background: linear-gradient(180deg, rgba(18, 26, 38, 0.96), rgba(13, 19, 28, 0.96)); }
 .appliance-focus { outline: 2px solid rgba(33, 212, 253, 0.35); outline-offset: 2px; }
+.input-control { min-height: 2.5rem; border: 1px solid var(--appliance-border); border-radius: 0.375rem; background: #0a1018; padding: 0.625rem 0.75rem; color: var(--foreground); outline: none; }
+.input-control:focus { border-color: color-mix(in srgb, var(--appliance-violet) 75%, white); box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.16); }
+.input-control::placeholder { color: #617083; }
+.icon-button { display: inline-flex; width: 2.25rem; height: 2.25rem; align-items: center; justify-content: center; border-radius: 0.375rem; color: #8a98aa; transition: color 150ms ease, background 150ms ease; }
+.icon-button:hover { background: #182231; color: white; }

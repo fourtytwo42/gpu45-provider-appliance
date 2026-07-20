@@ -10,6 +10,7 @@ const envSchema = z.object({
   GPU45_VIDEO_URL: z.string().default("http://127.0.0.1:8010"),
   GPU45_WHISPER_URL: z.string().default("http://127.0.0.1:8020"),
   GPU45_IMAGE_URL: z.string().default("http://127.0.0.1:8030"),
+  GPU45_MUSIC_URL: z.string().default("http://127.0.0.1:8060"),
   GPU45_SEARXNG_URL: z.string().default("http://127.0.0.1:8888"),
   GPU45_RESOURCE_MANAGER_URL: z.string().default("http://127.0.0.1:8040"),
   GPU45_RESOURCE_MANAGER_TOKEN: z.string().optional(),
@@ -51,6 +52,7 @@ export type ApplianceConfig = {
   videoUrl: string;
   whisperUrl: string;
   imageUrl: string;
+  musicUrl: string;
   searxngUrl: string;
   resourceManagerUrl: string;
   resourceManagerToken?: string;
@@ -90,6 +92,7 @@ export function getConfig(): ApplianceConfig {
     videoUrl: parsedEnv.GPU45_VIDEO_URL,
     whisperUrl: parsedEnv.GPU45_WHISPER_URL,
     imageUrl: parsedEnv.GPU45_IMAGE_URL,
+    musicUrl: parsedEnv.GPU45_MUSIC_URL,
     searxngUrl: parsedEnv.GPU45_SEARXNG_URL,
     resourceManagerUrl: parsedEnv.GPU45_RESOURCE_MANAGER_URL,
     resourceManagerToken: parsedEnv.GPU45_RESOURCE_MANAGER_TOKEN,

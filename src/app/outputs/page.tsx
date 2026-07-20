@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Download, FileAudio, FileText, Film, ImageIcon, Library, TerminalSquare } from "lucide-react";
+import { Download, FileAudio, FileText, Film, ImageIcon, Library, Music2, TerminalSquare } from "lucide-react";
 import { MetricTile } from "@/components/metric-tile";
 import { StatusBadge } from "@/components/status-badge";
 import { getOutputs } from "@/lib/outputs";
@@ -7,7 +7,7 @@ import type { OutputKind } from "@/lib/outputs";
 
 export const dynamic = "force-dynamic";
 
-const icons = { audio: FileAudio, audiobook: FileAudio, transcript: FileText, image: ImageIcon, video: Film, benchmark: TerminalSquare, download: Download, presentation: FileAudio };
+const icons = { audio: FileAudio, audiobook: FileAudio, transcript: FileText, image: ImageIcon, video: Film, music: Music2, benchmark: TerminalSquare, download: Download, presentation: FileAudio };
 
 function labelDate(value?: string | null): string {
   if (!value) return "";

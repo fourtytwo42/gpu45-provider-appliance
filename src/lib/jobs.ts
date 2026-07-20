@@ -7,9 +7,10 @@ import { deleteWhisperJob } from "./whisper";
 import { deletePocketTtsJob } from "./pocket-tts";
 import { readStoredJobHistory } from "./job-history";
 import { agenticCampaignAction, listAgenticCampaigns } from "./agentic-benchmarks";
+import { deleteMusicJob, getMusicSnapshot, musicJobAction } from "./music";
 
 export type UnifiedJobStatus = "queued" | "waiting" | "running" | "paused" | "restoring" | "unknown" | "completed" | "failed" | "cancelled" | "stopped" | "needs_review";
-export type UnifiedJobKind = "download" | "benchmark" | "agentic-benchmark" | "tts" | "pocket-tts" | "audiobook" | "whisper" | "image" | "video" | "model-training" | "voice" | "presentation";
+export type UnifiedJobKind = "download" | "benchmark" | "agentic-benchmark" | "tts" | "pocket-tts" | "audiobook" | "whisper" | "image" | "video" | "music" | "model-training" | "voice" | "presentation";
 export type UnifiedJobAction = "cancel" | "delete" | "retry" | "download";
 
 export type UnifiedJob = {
@@ -50,6 +51,7 @@ export type JobsSummary = { total: number; active: number; queued: number; faile
 export function normalizeStatus(status: string): UnifiedJobStatus {
   if (status === "complete" || status === "ready") return "completed";
   if (status === "training") return "running";
+  if (status === "preparing") return "waiting";
   if (["queued", "waiting", "running", "paused", "restoring", "completed", "failed", "cancelled", "stopped", "needs_review"].includes(status)) return status as UnifiedJobStatus;
   return "unknown";
 }
@@ -63,8 +65,10 @@ function actionsFor(kind: UnifiedJobKind, status: UnifiedJobStatus, hasOutput = 
   if (kind === "audiobook" && (status === "running" || status === "queued")) actions.push("cancel");
   if (kind === "presentation" && (status === "running" || status === "queued")) actions.push("cancel");
   if (kind === "video" && (status === "running" || status === "queued")) actions.push("cancel");
+  if (kind === "music" && ["queued", "waiting", "running", "restoring"].includes(status)) actions.push("cancel");
+  if (kind === "music" && ["failed", "cancelled"].includes(status)) actions.push("retry");
   if (kind === "agentic-benchmark" && ["queued", "waiting", "running", "paused", "restoring"].includes(status)) actions.push("cancel");
-  if (["download", "tts", "pocket-tts", "audiobook", "presentation", "whisper", "image", "video", "model-training", "voice"].includes(kind) && !["running", "unknown"].includes(status)) actions.push("delete");
+  if (["download", "tts", "pocket-tts", "audiobook", "presentation", "whisper", "image", "video", "music", "model-training", "voice"].includes(kind) && !["running", "waiting", "restoring", "unknown"].includes(status)) actions.push("delete");
   return actions;
 }
 
@@ -79,10 +83,11 @@ function withActions(job: UnifiedJob): UnifiedJob {
 
 export async function getUnifiedJobs(): Promise<{ jobs: UnifiedJob[]; summary: JobsSummary }> {
   const jobs: UnifiedJob[] = [];
-  const [downloads, benchmarks, agenticCampaigns] = await Promise.all([
+  const [downloads, benchmarks, agenticCampaigns, music] = await Promise.all([
     prisma.downloadJob.findMany({ orderBy: { updatedAt: "desc" }, take: 50 }).catch(() => []),
     prisma.benchmarkRun.findMany({ orderBy: { createdAt: "desc" }, take: 30 }).catch(() => []),
     listAgenticCampaigns().catch(() => []),
+    getMusicSnapshot(),
   ]);
   const stored = readStoredJobHistory();
   const tts = stored.tts;
@@ -131,6 +136,21 @@ export async function getUnifiedJobs(): Promise<{ jobs: UnifiedJob[]; summary: J
   }
   if (images) for (const job of images.jobs) { const status = normalizeStatus(job.status); jobs.push({ id: `image:${job.id}`, sourceId: job.id, kind: "image", title: job.profile_name ?? job.profile, subtitle: job.prompt, status, progressPercent: job.progress_percent ?? (status === "completed" ? 100 : null), progressLabel: job.progress_label ?? (job.progress_step && job.progress_total ? `${job.progress_step}/${job.progress_total} steps` : null), etaSeconds: job.eta_seconds, createdAt: job.created_at, updatedAt: job.updated_at ?? job.completed_at ?? job.started_at ?? job.created_at, startedAt: job.started_at, finishedAt: job.completed_at, outputUrl: status === "completed" ? `/api/images/output?id=${encodeURIComponent(job.id)}` : null, error: job.error, model: job.profile_name ?? job.profile }); }
   if (videos) for (const job of videos.jobs) { const status = normalizeStatus(job.status); jobs.push({ id: `video:${job.id}`, sourceId: job.id, kind: "video", title: job.profile_name ?? job.profile ?? "Video generation", subtitle: job.prompt, status, progressPercent: job.progress_percent ?? (status === "completed" ? 100 : null), progressLabel: job.progress_label ?? job.progress_stage, createdAt: job.created_at, updatedAt: job.completed_at ?? job.started_at ?? job.created_at, startedAt: job.started_at, finishedAt: job.completed_at, outputUrl: status === "completed" ? `/api/video/output?id=${encodeURIComponent(job.id)}` : null, error: job.error, model: job.profile_name ?? job.profile }); }
+  for (const job of music.jobs) {
+    const status = normalizeStatus(job.status);
+    const caption = String(job.payload.caption ?? "").trim();
+    jobs.push({
+      id: `music:${job.id}`, sourceId: job.id, kind: "music", title: job.profile_name ?? job.profile_id,
+      subtitle: caption || `${job.mode} - ${job.task_type}`, status, stage: job.stage,
+      progressPercent: job.progress, progressLabel: job.stage.replaceAll("-", " "), etaSeconds: job.eta_seconds,
+      createdAt: job.created_at, updatedAt: job.updated_at, startedAt: job.started_at, finishedAt: job.completed_at,
+      outputUrl: status === "completed" ? `/api/music/jobs/${encodeURIComponent(job.id)}/output?asset=master` : null,
+      error: job.error, model: job.profile_name ?? job.profile_id,
+      resourceImpact: "Exclusive GPU music generation; the prior LLM is restored after release.",
+      preemptible: job.profile_id.startsWith("levo") ? true : false,
+      resumePolicy: job.profile_id.startsWith("levo") ? "Resumes from the last completed phase." : "Restarts atomically after interruption.",
+    });
+  }
   if (whisper) for (const job of whisper.jobs) { const status = normalizeStatus(job.status); jobs.push({ id: `whisper:${job.id}`, sourceId: job.id, kind: "whisper", title: `Transcript: ${job.filename}`, subtitle: `${job.model} - ${job.task}`, status, progressPercent: job.progress_percent ?? (status === "completed" ? 100 : null), progressLabel: job.progress_label, etaSeconds: job.eta_seconds, createdAt: job.created_at, updatedAt: job.completed_at ?? job.started_at ?? job.created_at, startedAt: job.started_at, finishedAt: job.completed_at, outputUrl: status === "completed" ? `/api/whisper/output?id=${encodeURIComponent(job.id)}&download=1` : null, error: job.error, model: job.model }); }
 
   const normalizedJobs = jobs.map(withActions);
@@ -188,6 +208,9 @@ export async function performUnifiedJobAction(id: string, action: UnifiedJobActi
   if (kind === "image" && action === "delete") { await deleteImageJob(sourceId); return { ok: true, message: "Image job deleted." }; }
   if (kind === "video" && action === "cancel") { await cancelVideoJob(sourceId); return { ok: true, message: "Video cancellation requested." }; }
   if (kind === "video" && action === "delete") { await deleteVideoJob(sourceId); return { ok: true, message: "Video job deleted." }; }
+  if (kind === "music" && action === "cancel") { await musicJobAction(sourceId, "cancel"); return { ok: true, message: "Music cancellation requested." }; }
+  if (kind === "music" && action === "retry") { await musicJobAction(sourceId, "retry"); return { ok: true, message: "Music job queued for retry." }; }
+  if (kind === "music" && action === "delete") { await deleteMusicJob(sourceId); return { ok: true, message: "Music job and associated files deleted." }; }
   if (kind === "agentic-benchmark" && action === "cancel") {
     const result = await agenticCampaignAction(sourceId, "cancel");
     return { ok: result.ok, message: result.ok ? "Benchmark cancellation requested." : "Benchmark campaign was not found." };

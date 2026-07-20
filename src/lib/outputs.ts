@@ -1,7 +1,7 @@
 import { getUnifiedJobs } from "./jobs";
 import type { UnifiedJobKind } from "./jobs";
 
-export type OutputKind = "audio" | "audiobook" | "presentation" | "transcript" | "image" | "video" | "benchmark" | "download";
+export type OutputKind = "audio" | "audiobook" | "presentation" | "transcript" | "image" | "video" | "music" | "benchmark" | "download";
 
 export type OutputRecord = {
   id: string;
@@ -23,6 +23,7 @@ function outputKind(kind: UnifiedJobKind): OutputKind | null {
   if (kind === "whisper") return "transcript";
   if (kind === "image") return "image";
   if (kind === "video") return "video";
+  if (kind === "music") return "music";
   if (kind === "benchmark") return "benchmark";
   if (kind === "agentic-benchmark") return "benchmark";
   if (kind === "download") return "download";

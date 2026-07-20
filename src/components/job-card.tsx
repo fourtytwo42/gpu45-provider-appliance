@@ -1,12 +1,12 @@
 "use client";
 
-import { Download, ExternalLink, FileAudio, FileText, Film, ImageIcon, LoaderCircle, Mic2, PackageCheck, RotateCcw, Square, TerminalSquare, Trash2, TriangleAlert } from "lucide-react";
+import { Download, ExternalLink, FileAudio, FileText, Film, ImageIcon, LoaderCircle, Mic2, Music2, PackageCheck, RotateCcw, Square, TerminalSquare, Trash2, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/cn";
 import type { UnifiedJob, UnifiedJobAction } from "@/lib/jobs";
 import { StatusBadge } from "./status-badge";
 
-const iconMap = { download: Download, benchmark: TerminalSquare, "agentic-benchmark": TerminalSquare, tts: Mic2, "pocket-tts": Mic2, audiobook: FileAudio, whisper: FileText, image: ImageIcon, video: Film, "model-training": PackageCheck, voice: Mic2, presentation: FileAudio };
+const iconMap = { download: Download, benchmark: TerminalSquare, "agentic-benchmark": TerminalSquare, tts: Mic2, "pocket-tts": Mic2, audiobook: FileAudio, whisper: FileText, image: ImageIcon, video: Film, music: Music2, "model-training": PackageCheck, voice: Mic2, presentation: FileAudio };
 const toneMap = { queued: "info", waiting: "info", running: "success", paused: "warning", restoring: "info", unknown: "neutral", completed: "success", failed: "danger", cancelled: "warning", stopped: "warning", needs_review: "warning" } as const;
 const actionIcons = { cancel: Square, delete: Trash2, retry: RotateCcw, download: ExternalLink };
 

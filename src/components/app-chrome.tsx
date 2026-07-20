@@ -32,7 +32,7 @@ const contextLinks: Record<string, Array<{ href: string; label: string }>> = {
   Home: [{ href: "/", label: "Command center" }],
   Work: [{ href: "/jobs", label: "Jobs" }, { href: "/outputs", label: "Outputs" }],
   Models: [{ href: "/models", label: "Library" }, { href: "/benchmarks", label: "Benchmarks" }, { href: "/keys", label: "API access" }],
-  Studio: [{ href: "/studio/speech", label: "Speech" }, { href: "/studio/audiobooks", label: "Audiobooks" }, { href: "/studio/presentations", label: "Presentations" }, { href: "/studio/voices", label: "Voice Library" }, { href: "/studio/training", label: "Training" }, { href: "/whisper", label: "Transcription" }, { href: "/images", label: "Images" }, { href: "/video", label: "Video" }, { href: "/research", label: "Research" }],
+  Studio: [{ href: "/studio/speech", label: "Speech" }, { href: "/studio/audiobooks", label: "Audiobooks" }, { href: "/studio/presentations", label: "Presentations" }, { href: "/studio/voices", label: "Voice Library" }, { href: "/studio/training", label: "Training" }, { href: "/whisper", label: "Transcription" }, { href: "/studio/music", label: "Music" }, { href: "/images", label: "Images" }, { href: "/video", label: "Video" }, { href: "/research", label: "Research" }],
   System: [{ href: "/settings", label: "Health & controls" }, { href: "/system/metrics", label: "Metrics" }, { href: "/timeline", label: "Timeline" }, { href: "/logs", label: "Logs" }],
 };
 
