@@ -297,10 +297,6 @@ def run_transcription(job_id: str, input_path: str) -> None:
 
 
 def run_outline(job_id: str) -> None:
-    with _outline_lock:
-        if job_id in _active_outline_jobs:
-            return
-        _active_outline_jobs.add(job_id)
     started = time.time()
     lease = None
     previous_profile = None
@@ -309,7 +305,22 @@ def run_outline(job_id: str) -> None:
     outline_model = OUTLINE_MODEL
     heartbeat = WorkerHeartbeat("whisper")
     heartbeat.start()
+    claimed_outline_slot = False
     try:
+        while True:
+            with _outline_lock:
+                if job_id not in _active_outline_jobs:
+                    _active_outline_jobs.add(job_id)
+                    claimed_outline_slot = True
+                    break
+            update_job(
+                job_id,
+                outline_status="queued",
+                outline_progress_percent=0.0,
+                outline_progress_label="Waiting for the current outline job to finish",
+                outline_eta_seconds=None,
+            )
+            time.sleep(1)
         job = update_job(
             job_id,
             outline_status="running",
@@ -385,8 +396,9 @@ def run_outline(job_id: str) -> None:
                 pass
             lease.release()
         heartbeat.stop()
-        with _outline_lock:
-            _active_outline_jobs.discard(job_id)
+        if claimed_outline_slot:
+            with _outline_lock:
+                _active_outline_jobs.discard(job_id)
 
 
 @app.get("/")
