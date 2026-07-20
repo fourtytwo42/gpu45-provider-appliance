@@ -4,7 +4,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock, Thread
 from typing import Literal
 
 from contextlib import asynccontextmanager
@@ -12,13 +12,15 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadF
 from fastapi.responses import FileResponse
 from faster_whisper import WhisperModel
 from pydantic import BaseModel
-from gpu45_resource import acquire_lease
+from gpu45_resource import acquire_lease, activate_profile, resource_state, touch_worker, unload_provider
 from .job_store import JobStore
+from .outline import OUTLINE_MODEL, OUTLINE_PROFILE, OutlineGenerator, render_outline
 
 MODEL_NAMES = ["tiny", "base", "small", "medium", "large-v3", "turbo"]
 DATA_DIR = Path(os.environ.get("WHISPER_API_DATA", "/models/whisper"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 TRANSCRIPT_DIR = DATA_DIR / "transcripts"
+OUTLINE_DIR = DATA_DIR / "outlines"
 JOBS_PATH = DATA_DIR / "jobs.json"
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
@@ -26,6 +28,8 @@ GPU_ENABLED = DEVICE.lower() != "cpu"
 
 _jobs_lock = Lock()
 _model_lock = Lock()
+_outline_lock = Lock()
+_active_outline_jobs: set[str] = set()
 _model_cache: dict[str, WhisperModel] = {}
 _job_store = JobStore(JOBS_PATH)
 
@@ -49,6 +53,42 @@ class Job(BaseModel):
     progress_label: str = "Queued"
     eta_seconds: float | None = None
     error: str | None = None
+    generate_outline: bool = False
+    outline_status: Literal["not_requested", "queued", "running", "completed", "failed"] = "not_requested"
+    outline_path: str | None = None
+    outline_name: str | None = None
+    outline_model: str | None = None
+    outline_started_at: str | None = None
+    outline_completed_at: str | None = None
+    outline_progress_percent: float = 0.0
+    outline_progress_label: str | None = None
+    outline_eta_seconds: float | None = None
+    outline_error: str | None = None
+
+
+class WorkerHeartbeat:
+    def __init__(self, kind: str):
+        self.kind = kind
+        self.stop_event = Event()
+        self.thread = Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        try:
+            touch_worker(self.kind)
+        except Exception:
+            pass
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self.thread.join(timeout=2)
+
+    def _run(self) -> None:
+        while not self.stop_event.wait(30):
+            try:
+                touch_worker(self.kind)
+            except Exception:
+                pass
 
 
 def now_iso() -> str:
@@ -59,12 +99,24 @@ def now_iso() -> str:
 async def lifespan(_app: FastAPI):
     jobs = load_jobs()
     changed = False
+    recover_outlines = []
     for job in jobs:
         if job.get("status") in {"queued", "running"}:
             job.update(status="failed", progress_label="Interrupted", error="Whisper service restarted before this job finished.", completed_at=now_iso())
             changed = True
+        if job.get("outline_status") in {"queued", "running"} and job.get("transcript_path") and Path(job["transcript_path"]).is_file():
+            job.update(
+                outline_status="queued",
+                outline_progress_label="Recovering outline generation",
+                outline_eta_seconds=None,
+                outline_error=None,
+            )
+            recover_outlines.append(job["id"])
+            changed = True
     if changed:
         save_jobs(jobs)
+    for job_id in recover_outlines:
+        Thread(target=run_outline, args=(job_id,), daemon=True).start()
     yield
 
 
@@ -74,6 +126,7 @@ app = FastAPI(title="GPU45 Whisper API", lifespan=lifespan)
 def ensure_dirs() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
+    OUTLINE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_jobs() -> list[dict]:
@@ -87,12 +140,13 @@ def save_jobs(jobs: list[dict]) -> None:
 
 
 def update_job(job_id: str, **updates) -> dict:
-    jobs = load_jobs()
-    for job in jobs:
-        if job["id"] == job_id:
-            job.update(updates)
-            save_jobs(jobs)
-            return job
+    with _jobs_lock:
+        jobs = load_jobs()
+        for job in jobs:
+            if job["id"] == job_id:
+                job.update(updates)
+                save_jobs(jobs)
+                return job
     raise KeyError(job_id)
 
 
@@ -145,6 +199,9 @@ def write_markdown(job: dict, segments, info) -> Path:
 def run_transcription(job_id: str, input_path: str) -> None:
     started = time.time()
     lease = None
+    should_outline = False
+    heartbeat = WorkerHeartbeat("whisper")
+    heartbeat.start()
     try:
         job = update_job(job_id, status="running", started_at=now_iso(), progress_percent=1.0, progress_label="Waiting for compute", eta_seconds=None)
         if GPU_ENABLED:
@@ -203,11 +260,122 @@ def run_transcription(job_id: str, input_path: str) -> None:
             eta_seconds=0.0,
             error=None,
         )
+        should_outline = bool(job.get("generate_outline"))
     except Exception as exc:
-        update_job(job_id, status="failed", completed_at=now_iso(), duration_seconds=round(time.time() - started, 2), progress_percent=100.0, progress_label="Failed", eta_seconds=0.0, error=str(exc))
+        failure_updates = {
+            "status": "failed",
+            "completed_at": now_iso(),
+            "duration_seconds": round(time.time() - started, 2),
+            "progress_percent": 100.0,
+            "progress_label": "Failed",
+            "eta_seconds": 0.0,
+            "error": str(exc),
+        }
+        if "job" in locals() and job.get("generate_outline"):
+            failure_updates.update(
+                outline_status="failed",
+                outline_progress_percent=100.0,
+                outline_progress_label="Transcript failed before outline generation",
+                outline_eta_seconds=0.0,
+                outline_error="Transcript must complete before an outline can be created.",
+            )
+        update_job(job_id, **failure_updates)
     finally:
         if lease is not None:
             lease.release()
+        heartbeat.stop()
+    if should_outline:
+        run_outline(job_id)
+
+
+def run_outline(job_id: str) -> None:
+    with _outline_lock:
+        if job_id in _active_outline_jobs:
+            return
+        _active_outline_jobs.add(job_id)
+    started = time.time()
+    lease = None
+    previous_profile = None
+    previous_llm_running = False
+    heartbeat = WorkerHeartbeat("whisper")
+    heartbeat.start()
+    try:
+        job = update_job(
+            job_id,
+            outline_status="running",
+            outline_started_at=now_iso(),
+            outline_completed_at=None,
+            outline_progress_percent=1.0,
+            outline_progress_label="Waiting for outline model",
+            outline_eta_seconds=None,
+            outline_error=None,
+        )
+        transcript_path = Path(str(job.get("transcript_path") or ""))
+        if not transcript_path.is_file():
+            raise RuntimeError("Transcript file is missing")
+
+        lease = acquire_lease(f"outline-{job_id}", "llm", 70, False, "restore-profile", timeout=1800)
+        state = resource_state()
+        provider = state.get("provider") or {}
+        previous_profile = provider.get("profileName")
+        previous_llm_running = (state.get("services") or {}).get("llm") in {"active", "activating"}
+        update_job(job_id, outline_progress_percent=3.0, outline_progress_label="Loading outline model")
+        activate_profile(OUTLINE_PROFILE)
+
+        markdown = transcript_path.read_text(encoding="utf-8")
+        generator = OutlineGenerator()
+
+        def on_progress(step: int, total: int, label: str) -> None:
+            progress = 5.0 + ((step / max(1, total)) * 90.0)
+            update_job(
+                job_id,
+                outline_progress_percent=round(progress, 1),
+                outline_progress_label=label,
+                outline_eta_seconds=round(estimate_eta(time.time() - started, progress) or 0.0, 1),
+            )
+
+        content = generator.generate(markdown, job["filename"], on_progress)
+        outline_name = f"{Path(job['filename']).stem}-{job_id}-outline.md"
+        outline_path = OUTLINE_DIR / outline_name
+        temporary = outline_path.with_suffix(".md.tmp")
+        temporary.write_text(render_outline(job["filename"], OUTLINE_MODEL, content), encoding="utf-8")
+        temporary.replace(outline_path)
+        update_job(
+            job_id,
+            generate_outline=True,
+            outline_status="completed",
+            outline_path=str(outline_path),
+            outline_name=outline_name,
+            outline_model=OUTLINE_MODEL,
+            outline_completed_at=now_iso(),
+            outline_progress_percent=100.0,
+            outline_progress_label="Outline ready",
+            outline_eta_seconds=0.0,
+            outline_error=None,
+        )
+    except Exception as exc:
+        update_job(
+            job_id,
+            outline_status="failed",
+            outline_completed_at=now_iso(),
+            outline_progress_percent=100.0,
+            outline_progress_label="Outline failed",
+            outline_eta_seconds=0.0,
+            outline_error=str(exc),
+        )
+    finally:
+        if lease is not None:
+            try:
+                if previous_profile and previous_profile != OUTLINE_PROFILE:
+                    activate_profile(str(previous_profile))
+                if not previous_llm_running:
+                    unload_provider()
+            except Exception:
+                pass
+            lease.release()
+        heartbeat.stop()
+        with _outline_lock:
+            _active_outline_jobs.discard(job_id)
 
 
 @app.get("/")
@@ -217,7 +385,14 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "models": MODEL_NAMES, "device": DEVICE, "compute_type": COMPUTE_TYPE}
+    return {
+        "status": "ok",
+        "models": MODEL_NAMES,
+        "device": DEVICE,
+        "compute_type": COMPUTE_TYPE,
+        "outline_model": OUTLINE_MODEL,
+        "outline_profile": OUTLINE_PROFILE,
+    }
 
 
 @app.get("/jobs")
@@ -232,6 +407,7 @@ async def create_job(
     model: str = Form("small"),
     task: Literal["transcribe", "translate"] = Form("transcribe"),
     language: str | None = Form(None),
+    generate_outline: bool = Form(False),
 ):
     if model not in MODEL_NAMES:
         raise HTTPException(status_code=400, detail=f"Unknown model: {model}")
@@ -249,6 +425,9 @@ async def create_job(
         language=(language or "").strip() or None,
         status="queued",
         created_at=now_iso(),
+        generate_outline=generate_outline,
+        outline_status="queued" if generate_outline else "not_requested",
+        outline_progress_label="Waiting for transcript" if generate_outline else None,
     ).model_dump()
     jobs = load_jobs()
     jobs.append(job)
@@ -273,6 +452,47 @@ def get_transcript(job_id: str):
     )
 
 
+@app.post("/jobs/{job_id}/outline", status_code=202)
+def create_outline(job_id: str, background_tasks: BackgroundTasks):
+    job = next((item for item in load_jobs() if item["id"] == job_id), None)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    transcript_path = Path(str(job.get("transcript_path") or ""))
+    if job.get("status") != "completed" or not transcript_path.is_file():
+        raise HTTPException(status_code=409, detail="Transcript is not ready")
+    if job.get("outline_status") in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail="Outline generation is already running")
+    queued = update_job(
+        job_id,
+        generate_outline=True,
+        outline_status="queued",
+        outline_started_at=None,
+        outline_completed_at=None,
+        outline_progress_percent=0.0,
+        outline_progress_label="Queued",
+        outline_eta_seconds=None,
+        outline_error=None,
+    )
+    background_tasks.add_task(run_outline, job_id)
+    return queued
+
+
+@app.get("/jobs/{job_id}/outline")
+def get_outline(job_id: str):
+    job = next((item for item in load_jobs() if item["id"] == job_id), None)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    outline_path = Path(str(job.get("outline_path") or ""))
+    if not outline_path.is_file():
+        raise HTTPException(status_code=409, detail="Outline is not ready")
+    return FileResponse(
+        outline_path,
+        media_type="text/markdown",
+        filename=job.get("outline_name") or f"{job_id}-outline.md",
+        headers={"x-outline-name": job.get("outline_name") or f"{job_id}-outline.md"},
+    )
+
+
 @app.delete("/jobs/{job_id}")
 def delete_job(job_id: str):
     jobs = load_jobs()
@@ -285,7 +505,7 @@ def delete_job(job_id: str):
             kept.append(job)
     if deleted is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    for folder in (UPLOAD_DIR, TRANSCRIPT_DIR):
+    for folder in (UPLOAD_DIR, TRANSCRIPT_DIR, OUTLINE_DIR):
         for path in folder.glob(f"*{job_id}*"):
             if path.is_file():
                 path.unlink()

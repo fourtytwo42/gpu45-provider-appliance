@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Download, FileAudio, FileText, RefreshCw, Trash2, Upload } from "lucide-react";
+import { Download, FileAudio, FileText, ListTree, RefreshCw, Trash2, Upload } from "lucide-react";
 import { SectionCard } from "./section-card";
 import { cn } from "@/lib/cn";
 import type { WhisperJob, WhisperSnapshot } from "@/lib/whisper";
-import { WHISPER_MODELS, whisperTranscriptUrl } from "@/lib/whisper";
+import { WHISPER_MODELS, whisperOutlineUrl, whisperTranscriptUrl } from "@/lib/whisper";
 import { subscribeApplianceEvent } from "@/lib/appliance-events";
 
 type Status = "idle" | "working" | "error";
@@ -37,6 +37,10 @@ function formatDuration(seconds: number | null | undefined): string {
 function progressPercent(job: WhisperJob): number {
   if (job.status === "completed" || job.status === "failed") return 100;
   return Math.max(0, Math.min(100, job.progress_percent ?? (job.status === "running" ? 2 : 0)));
+}
+
+function outlineIsActive(job: WhisperJob): boolean {
+  return job.outline_status === "queued" || job.outline_status === "running";
 }
 
 export function WhisperConsole({ initialSnapshot }: { initialSnapshot: WhisperSnapshot }) {
@@ -89,6 +93,25 @@ export function WhisperConsole({ initialSnapshot }: { initialSnapshot: WhisperSn
     }
   }
 
+  async function createOutline(id: string, refreshExisting: boolean): Promise<void> {
+    setStatus("working");
+    setMessage(refreshExisting ? "Refreshing the Markdown outline." : "Queueing a Markdown outline.");
+    try {
+      const response = await fetch("/api/whisper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "createOutline", id }),
+      });
+      await parseJson(response);
+      setStatus("idle");
+      setMessage("Outline generation queued. The previous provider model will be restored afterward.");
+      await refresh();
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Outline generation failed");
+    }
+  }
+
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(420px,0.8fr)_minmax(0,1.2fr)]">
       <section className="xl:col-span-2">
@@ -120,7 +143,7 @@ export function WhisperConsole({ initialSnapshot }: { initialSnapshot: WhisperSn
         {!snapshot.healthy && snapshot.error ? <div className="mt-3 border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{snapshot.error}</div> : null}
       </section>
 
-      <SectionCard title="New Transcript" description="Upload audio or video. Output is saved as a Markdown transcript.">
+      <SectionCard title="New Transcript" description="Upload audio or video. Save a Markdown transcript and optionally create an outline with the appliance's fastest outline model.">
         <form action={(formData) => void submit(formData)} className="grid gap-3">
           <label className="grid gap-2 text-sm text-slate-300">
             Media file
@@ -131,6 +154,20 @@ export function WhisperConsole({ initialSnapshot }: { initialSnapshot: WhisperSn
               accept="audio/*,video/*,.m4a,.mp3,.wav,.flac,.ogg,.mp4,.mov,.mkv,.webm"
               className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white file:mr-3 file:border-0 file:bg-cyan-400/10 file:px-3 file:py-1.5 file:text-cyan-100"
             />
+          </label>
+          <label className="flex items-start gap-3 border border-white/10 bg-white/[0.03] px-3 py-3 text-sm text-slate-200">
+            <input
+              name="generate_outline"
+              type="checkbox"
+              value="true"
+              className="mt-0.5 h-4 w-4 accent-cyan-400"
+            />
+            <span>
+              <span className="block font-medium text-white">Generate outline after transcription</span>
+              <span className="mt-1 block text-xs text-slate-400">
+                Creates a separate Markdown outline with {snapshot.outlineModel ?? "the fast appliance LLM"}.
+              </span>
+            </span>
           </label>
           <label className="grid gap-2 text-sm text-slate-300">
             Model size
@@ -197,12 +234,43 @@ export function WhisperConsole({ initialSnapshot }: { initialSnapshot: WhisperSn
                   <div className="border border-white/10 bg-white/[0.03] px-2 py-1">Media {formatDuration(job.media_duration_seconds)}</div>
                 </div>
               ) : null}
+              {outlineIsActive(job) ? (
+                <div className="mt-3 grid gap-2 border border-violet-400/20 bg-violet-400/[0.06] p-2">
+                  <div className="flex items-center justify-between gap-3 text-xs text-violet-100">
+                    <span>{job.outline_progress_label ?? "Creating outline"}</span>
+                    <span>{Math.round(job.outline_progress_percent ?? 0)}%</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden bg-black/40">
+                    <div className="h-full bg-violet-400 transition-all" style={{ width: `${Math.max(0, Math.min(100, job.outline_progress_percent ?? 0))}%` }} />
+                  </div>
+                  <span className="text-[11px] text-slate-500">ETA {formatDuration(job.outline_eta_seconds)}</span>
+                </div>
+              ) : null}
+              {job.outline_status === "failed" && job.outline_error ? (
+                <p className="mt-3 border border-red-400/20 bg-red-400/[0.06] px-2 py-2 text-xs text-red-200">Outline failed: {job.outline_error}</p>
+              ) : null}
               <div className="mt-3 flex flex-wrap gap-2">
                 {job.status === "completed" ? (
                   <a className="inline-flex items-center gap-2 border border-cyan-400/30 px-3 py-1.5 text-sm text-cyan-100 hover:bg-cyan-400/10" href={whisperTranscriptUrl(job.id)}>
                     <Download className="h-4 w-4" />
-                    Markdown
+                    Transcript
                   </a>
+                ) : null}
+                {job.outline_path ? (
+                  <a className="inline-flex items-center gap-2 border border-violet-400/30 px-3 py-1.5 text-sm text-violet-100 hover:bg-violet-400/10" href={whisperOutlineUrl(job.id)}>
+                    <Download className="h-4 w-4" />
+                    Outline
+                  </a>
+                ) : null}
+                {job.status === "completed" ? (
+                  <button
+                    disabled={outlineIsActive(job) || status === "working"}
+                    className="inline-flex items-center gap-2 border border-violet-400/30 px-3 py-1.5 text-sm text-violet-100 hover:bg-violet-400/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => void createOutline(job.id, Boolean(job.outline_path))}
+                  >
+                    {job.outline_path ? <RefreshCw className="h-4 w-4" /> : <ListTree className="h-4 w-4" />}
+                    {outlineIsActive(job) ? "Outline queued" : job.outline_path ? "Refresh outline" : "Create outline"}
+                  </button>
                 ) : null}
                 <button className="inline-flex items-center gap-2 border border-red-400/30 px-3 py-1.5 text-sm text-red-100 hover:bg-red-400/10" onClick={() => void deleteJob(job.id)}>
                   <Trash2 className="h-4 w-4" />

@@ -8,11 +8,15 @@ Type=simple
 User=hendo420
 Group=hendo420
 WorkingDirectory=/opt/gpu45-whisper-api
+EnvironmentFile=/etc/gpu45/resource-manager.env
 Environment=WHISPER_API_HOST=127.0.0.1
 Environment=WHISPER_API_PORT=8020
 Environment=WHISPER_API_DATA=/models/whisper
 Environment=WHISPER_DEVICE=cpu
 Environment=WHISPER_COMPUTE_TYPE=int8
+Environment=WHISPER_OUTLINE_PROFILE=gpu45-ornith-1-0-35b-q5-k-m-688b8d0a
+Environment=WHISPER_OUTLINE_MODEL=ornith-1.0-35b-Q5_K_M-688b8d0a
+Environment=WHISPER_OUTLINE_BACKEND_URL=http://127.0.0.1:30000
 Environment=PYTHONPATH=/opt/gpu45/current/services/common
 ExecStart=/opt/gpu45-whisper-venv/bin/python -m whisper_api
 Restart=on-failure

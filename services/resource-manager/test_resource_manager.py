@@ -117,6 +117,18 @@ class ResourceManagerTests(unittest.TestCase):
             [("stop", "llama-openai.service"), ("start", "llama-openai.service")],
         )
 
+    def test_provider_activation_uses_nonblocking_systemd_start(self):
+        with mock.patch.object(rm, "service_active", return_value=True), mock.patch.object(
+            rm, "service_action"
+        ) as service_action, mock.patch.object(rm.subprocess, "run") as run:
+            rm.restart_provider_service()
+        service_action.assert_called_once_with("stop", "llama-openai.service")
+        run.assert_called_once_with(
+            ["systemctl", "start", "--no-block", "llama-openai.service"],
+            check=True,
+            timeout=10,
+        )
+
     def test_provider_readiness_fails_fast_after_service_exit(self):
         with mock.patch.object(rm, "backend_ready", return_value=False), mock.patch.object(
             rm, "service_status", return_value="inactive"
@@ -175,6 +187,32 @@ class ResourceManagerTests(unittest.TestCase):
         finally:
             rm.service_active, rm.service_action = original_active, original_action
         self.assertEqual(stopped, [])
+
+    def test_active_provider_profile_returns_safe_catalog_fields(self):
+        appliance_db = Path(self.temp.name) / "appliance.db"
+        with rm.sqlite3.connect(appliance_db) as db:
+            db.executescript(
+                """
+                CREATE TABLE LaunchProfile(name TEXT, backend TEXT, ctxSize INTEGER, modelPath TEXT, active INTEGER);
+                CREATE TABLE ModelAsset(path TEXT, servedAlias TEXT);
+                INSERT INTO LaunchProfile VALUES('fast-profile','rocm',262144,'/models/fast.gguf',1);
+                INSERT INTO ModelAsset VALUES('/models/fast.gguf','fast-alias');
+                """
+            )
+        original = rm.APPLIANCE_DB_PATH
+        rm.APPLIANCE_DB_PATH = appliance_db
+        try:
+            self.assertEqual(
+                rm.active_provider_profile(),
+                {
+                    "profileName": "fast-profile",
+                    "servedAlias": "fast-alias",
+                    "backend": "rocm",
+                    "contextTokens": 262144,
+                },
+            )
+        finally:
+            rm.APPLIANCE_DB_PATH = original
 
 
 if __name__ == "__main__":

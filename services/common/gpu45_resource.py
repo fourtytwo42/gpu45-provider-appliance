@@ -52,3 +52,33 @@ def acquire_lease(job_id: str, kind: str, priority: int, preemptible: bool, resu
         time.sleep(1)
     _request(f"/v1/leases/{lease_id}/release", {})
     raise TimeoutError("Timed out waiting for GPU ownership")
+
+
+def resource_state() -> dict:
+    status, response = _request("/v1/state")
+    if status != 200:
+        raise RuntimeError(response.get("error", "resource manager unavailable"))
+    return response
+
+
+def activate_profile(profile_name: str, timeout: int = 900) -> dict:
+    status, response = _request(
+        "/v1/provider/activate",
+        {"profileName": profile_name},
+        timeout=timeout,
+    )
+    if status != 200:
+        raise RuntimeError(response.get("error", "profile activation failed"))
+    return response
+
+
+def unload_provider() -> None:
+    status, response = _request("/v1/provider/unload", {}, timeout=120)
+    if status != 200:
+        raise RuntimeError(response.get("error", "provider unload failed"))
+
+
+def touch_worker(kind: str) -> None:
+    status, response = _request(f"/v1/workers/{kind}/touch", {})
+    if status != 200:
+        raise RuntimeError(response.get("error", f"could not keep {kind} worker active"))

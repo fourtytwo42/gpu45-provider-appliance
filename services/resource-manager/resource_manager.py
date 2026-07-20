@@ -237,6 +237,16 @@ def restart_service(service: str) -> None:
     service_action("start", service)
 
 
+def restart_provider_service() -> None:
+    if service_active("llama-openai.service"):
+        service_action("stop", "llama-openai.service")
+    subprocess.run(
+        ["systemctl", "start", "--no-block", "llama-openai.service"],
+        check=True,
+        timeout=10,
+    )
+
+
 def wait_backend_ready(timeout: int = 600, startup_grace: int = 5) -> None:
     started = time.monotonic()
     deadline = started + timeout
@@ -305,7 +315,7 @@ def activate_profile(profile_name: str) -> dict[str, object]:
         appliance_db.execute("UPDATE LaunchProfile SET active=CASE WHEN name=? THEN 1 ELSE 0 END", (profile_name,))
         appliance_db.commit()
 
-    restart_service("llama-openai.service")
+    restart_provider_service()
     wait_backend_ready()
     return {"ok": True, "profileName": profile_name, "modelPath": str(model_path)}
 
@@ -418,6 +428,34 @@ def read_vram() -> dict[str, int | None]:
     return {"usedBytes": None, "totalBytes": None, "freeBytes": None}
 
 
+def active_provider_profile() -> dict[str, object] | None:
+    if not APPLIANCE_DB_PATH.is_file():
+        return None
+    try:
+        with sqlite3.connect(APPLIANCE_DB_PATH, timeout=5) as appliance_db:
+            appliance_db.row_factory = sqlite3.Row
+            row = appliance_db.execute(
+                """
+                SELECT p.name AS profile_name, p.backend, p.ctxSize,
+                       m.servedAlias AS served_alias
+                FROM LaunchProfile p
+                LEFT JOIN ModelAsset m ON m.path = p.modelPath
+                WHERE p.active = 1
+                LIMIT 1
+                """
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "profileName": row["profile_name"],
+            "servedAlias": row["served_alias"],
+            "backend": row["backend"],
+            "contextTokens": row["ctxSize"],
+        }
+    except (OSError, sqlite3.Error):
+        return None
+
+
 def state() -> dict[str, object]:
     with locked_db(1) as db:
         reclaim_expired(db)
@@ -444,6 +482,7 @@ def state() -> dict[str, object]:
             "vram": read_vram(),
             "recovery": {"reclaimedLeases": reclaimed, "lastEvent": last[0] if last else None},
             "transition": {"status": transition, "startedAt": transition_started[0]} if transition and transition_started else None,
+            "provider": active_provider_profile(),
             "services": {
                 "llm": service_status("llama-openai.service"),
                 "tts": service_status("qwen3-tts-api.service"),
@@ -534,6 +573,15 @@ class Handler(BaseHTTPRequestHandler):
                     event(db, "provider.profile_activated", active["lease_id"], active["job_id"], profileName=result["profileName"])
                     set_transition(db, None)
                     self.send_json(HTTPStatus.OK, result); return
+                if path == "/v1/provider/unload":
+                    active = db.execute("SELECT * FROM leases WHERE status='active'").fetchone()
+                    if not active or active["kind"] not in {"benchmark", "llm"}:
+                        self.send_json(HTTPStatus.CONFLICT, {"error": "an active LLM or benchmark lease is required"}); return
+                    refresh_active_lease(db, str(active["lease_id"]))
+                    service_action("stop", "llama-openai.service")
+                    set_transition(db, None)
+                    event(db, "provider.unloaded", active["lease_id"], active["job_id"])
+                    self.send_json(HTTPStatus.OK, {"ok": True}); return
                 if path in {"/v1/benchmark/simulator/start", "/v1/benchmark/simulator/stop"}:
                     active = db.execute("SELECT * FROM leases WHERE status='active'").fetchone()
                     if not active or active["kind"] != "benchmark":

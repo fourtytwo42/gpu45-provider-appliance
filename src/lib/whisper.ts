@@ -26,6 +26,17 @@ export type WhisperJob = {
   progress_label?: string | null;
   eta_seconds?: number | null;
   error?: string | null;
+  generate_outline?: boolean;
+  outline_status?: "not_requested" | "queued" | "running" | "completed" | "failed";
+  outline_path?: string | null;
+  outline_name?: string | null;
+  outline_model?: string | null;
+  outline_started_at?: string | null;
+  outline_completed_at?: string | null;
+  outline_progress_percent?: number | null;
+  outline_progress_label?: string | null;
+  outline_eta_seconds?: number | null;
+  outline_error?: string | null;
 };
 
 export type WhisperSnapshot = {
@@ -33,6 +44,7 @@ export type WhisperSnapshot = {
   serviceUrl: string;
   models: readonly WhisperModel[];
   jobs: WhisperJob[];
+  outlineModel?: string | null;
   sleeping?: boolean;
   error?: string;
 };
@@ -55,7 +67,7 @@ export async function getWhisperSnapshot(): Promise<WhisperSnapshot> {
   const serviceUrl = getConfig().whisperUrl;
   try {
     const [health, jobs] = await Promise.all([
-      fetchJson<{ status: string; models?: WhisperModel[] }>("/health", undefined, false),
+      fetchJson<{ status: string; models?: WhisperModel[]; outline_model?: string | null }>("/health", undefined, false),
       fetchJson<WhisperJob[]>("/jobs", undefined, false),
     ]);
     const snapshot = {
@@ -63,15 +75,16 @@ export async function getWhisperSnapshot(): Promise<WhisperSnapshot> {
       serviceUrl,
       models: health.models ?? WHISPER_MODELS,
       jobs,
+      outlineModel: health.outline_model ?? null,
     };
     lastSnapshot = snapshot;
     return snapshot;
   } catch (error) {
     if (lastSnapshot) return { ...lastSnapshot, sleeping: true };
     try {
-      const health = await fetchJson<{ status: string; models?: WhisperModel[] }>("/health", undefined, true);
+      const health = await fetchJson<{ status: string; models?: WhisperModel[]; outline_model?: string | null }>("/health", undefined, true);
       const jobs = await fetchJson<WhisperJob[]>("/jobs", undefined, false);
-      const snapshot = { healthy: health.status === "ok", sleeping: false, serviceUrl, models: health.models ?? WHISPER_MODELS, jobs };
+      const snapshot = { healthy: health.status === "ok", sleeping: false, serviceUrl, models: health.models ?? WHISPER_MODELS, jobs, outlineModel: health.outline_model ?? null };
       lastSnapshot = snapshot;
       return snapshot;
     } catch {
@@ -98,12 +111,26 @@ export async function deleteWhisperJob(id: string): Promise<Record<string, unkno
   return await fetchJson<Record<string, unknown>>(`/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export async function createWhisperOutline(id: string): Promise<WhisperJob> {
+  return await fetchJson<WhisperJob>(`/jobs/${encodeURIComponent(id)}/outline`, { method: "POST" });
+}
+
 export async function fetchWhisperTranscript(id: string): Promise<Response> {
   const response = await managedServiceFetch("whisper", whisperUrl(`/jobs/${encodeURIComponent(id)}/transcript`), undefined, { wake: true });
   if (!response.ok) throw new Error(await response.text());
   return response;
 }
 
+export async function fetchWhisperOutline(id: string): Promise<Response> {
+  const response = await managedServiceFetch("whisper", whisperUrl(`/jobs/${encodeURIComponent(id)}/outline`), undefined, { wake: true });
+  if (!response.ok) throw new Error(await response.text());
+  return response;
+}
+
 export function whisperTranscriptUrl(id: string): string {
   return `/api/whisper/output?id=${encodeURIComponent(id)}`;
+}
+
+export function whisperOutlineUrl(id: string): string {
+  return `/api/whisper/output?id=${encodeURIComponent(id)}&asset=outline`;
 }

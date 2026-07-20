@@ -34,11 +34,16 @@ Type=simple
 User=hendo420
 Group=hendo420
 WorkingDirectory=$WHISPER_ROOT
-Environment=WHISPER_API_HOST=0.0.0.0
+EnvironmentFile=/etc/gpu45/resource-manager.env
+Environment=WHISPER_API_HOST=127.0.0.1
 Environment=WHISPER_API_PORT=$PORT
 Environment=WHISPER_API_DATA=$DATA_DIR
 Environment=WHISPER_DEVICE=cpu
 Environment=WHISPER_COMPUTE_TYPE=int8
+Environment=WHISPER_OUTLINE_PROFILE=gpu45-ornith-1-0-35b-q5-k-m-688b8d0a
+Environment=WHISPER_OUTLINE_MODEL=ornith-1.0-35b-Q5_K_M-688b8d0a
+Environment=WHISPER_OUTLINE_BACKEND_URL=http://127.0.0.1:30000
+Environment=PYTHONPATH=/opt/gpu45/current/services/common
 ExecStart=$VENV_DIR/bin/python -m whisper_api
 Restart=on-failure
 RestartSec=5
@@ -48,6 +53,6 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable gpu45-whisper-api.service
-systemctl restart gpu45-whisper-api.service
-systemctl --no-pager --full status gpu45-whisper-api.service
+systemctl disable gpu45-whisper-api.service || true
+systemctl stop gpu45-whisper-api.service || true
+systemctl --no-pager --full status gpu45-whisper-api.service || true

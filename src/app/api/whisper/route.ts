@@ -1,4 +1,4 @@
-import { createWhisperJob, deleteWhisperJob, getWhisperSnapshot } from "@/lib/whisper";
+import { createWhisperJob, createWhisperOutline, deleteWhisperJob, getWhisperSnapshot } from "@/lib/whisper";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +19,9 @@ export async function POST(request: Request): Promise<Response> {
     const action = String(body.action ?? "");
     if (action === "deleteJob") {
       return Response.json(await deleteWhisperJob(String(body.id ?? "")));
+    }
+    if (action === "createOutline") {
+      return Response.json({ ok: true, job: await createWhisperOutline(String(body.id ?? "")) }, { status: 202 });
     }
     return Response.json({ error: "Unknown Whisper action." }, { status: 400 });
   } catch (error) {

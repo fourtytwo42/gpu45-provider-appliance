@@ -30,6 +30,12 @@ export type ResourceState = {
   vram: { usedBytes: number | null; totalBytes: number | null; freeBytes: number | null };
   recovery: { reclaimedLeases: number; lastEvent: string | null };
   transition: { status: "releasing" | "restoring" | "starting"; startedAt: string } | null;
+  provider?: {
+    profileName: string;
+    servedAlias: string | null;
+    backend: string | null;
+    contextTokens: number | null;
+  } | null;
   services: Record<string, "active" | "activating" | "deactivating" | "inactive" | "failed" | "unknown">;
   workers: Record<string, ResourceWorkerState>;
 };
@@ -65,6 +71,7 @@ export async function getResourceState(): Promise<ResourceState> {
       vram: { usedBytes: null, totalBytes: null, freeBytes: null },
       recovery: { reclaimedLeases: 0, lastEvent: null },
       transition: null,
+      provider: null,
       services: {},
       workers: {},
     };
