@@ -49,6 +49,7 @@ backup_repo() {
     sqlite3 "$database" ".backup '$staging/$name'"
   done < <(find /var/lib/gpu45 /models/qwen3-tts/api_data -maxdepth 2 -type f -name '*.db' -print0 2>/dev/null)
   local paths=(/var/lib/gpu45 /etc/gpu45 /opt/gpu45-provider-appliance/deploy)
+  [[ -d /models/music ]] && paths+=(/models/music)
   [[ -d /models/qwen3-tts/api_data/voices ]] && paths+=(/models/qwen3-tts/api_data/voices)
   while IFS= read -r -d '' metadata; do paths+=("$metadata"); done < <(find /models/qwen3-tts/api_data -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null)
   if [[ -d /models/qwen3-tts/api_data/models ]]; then
@@ -63,6 +64,8 @@ backup_repo() {
   fi
   restic -r "$repo" backup --one-file-system --tag gpu45-appliance \
     --exclude '/var/lib/gpu45/*.db' --exclude '/var/lib/gpu45/*.db-wal' --exclude '/var/lib/gpu45/*.db-shm' \
+    --exclude '/models/music/ace-step/checkpoints' --exclude '/models/music/levo2/SongGeneration-v2-large' \
+    --exclude '/models/music/jobs/*/outputs' --exclude '/models/music/jobs/*/inputs' \
     "${paths[@]}"
   restic -r "$repo" forget --prune --keep-daily 7 --keep-weekly 4 --keep-monthly 6
 }

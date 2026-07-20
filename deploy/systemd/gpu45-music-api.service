@@ -1,0 +1,55 @@
+[Unit]
+Description=GPU45 Music Studio API
+After=network-online.target gpu45-resource-manager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gpu45-music
+Group=gpu45-music
+SupplementaryGroups=video render
+WorkingDirectory=/opt/gpu45-music-api
+Environment=GPU45_MUSIC_HOST=127.0.0.1
+Environment=GPU45_MUSIC_PORT=8060
+Environment=GPU45_MUSIC_DB=/var/lib/gpu45/music/music.db
+Environment=GPU45_MUSIC_DATA_ROOT=/models/music
+Environment=GPU45_MUSIC_MODEL_ROOT=/models/music
+Environment=GPU45_MUSIC_SERVICE_ROOT=/opt/gpu45-music-api
+Environment=GPU45_ACE_ROOT=/opt/ace-step-1.5
+Environment=GPU45_ACE_PYTHON=/opt/ace-step-venv/bin/python
+Environment=GPU45_ACE_CHECKPOINTS=/models/music/ace-step/checkpoints
+Environment=ACESTEP_CHECKPOINTS_DIR=/models/music/ace-step/checkpoints
+Environment=ACESTEP_ROCM_DTYPE=bfloat16
+Environment=GPU45_ACE_LM_BACKEND=pt
+Environment=GPU45_LEVO_ROOT=/opt/levo2-amd
+Environment=GPU45_LEVO_PYTHON=/opt/levo2-venv/bin/python
+Environment=GPU45_LEVO_MODEL_ROOT=/models/music/levo2
+Environment=HSA_OVERRIDE_GFX_VERSION=10.3.0
+Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+Environment=PYTORCH_ALLOC_CONF=expandable_segments:True
+Environment=MIOPEN_FIND_MODE=2
+EnvironmentFile=/etc/gpu45/resource-manager.env
+Environment=PYTHONPATH=/opt/gpu45/current/services/common:/opt/gpu45-music-api
+ExecStart=/opt/gpu45-music-api-venv/bin/python -m music_api
+Restart=always
+RestartSec=3
+TimeoutStopSec=45
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/gpu45/music /models/music /opt/levo2-amd/out /opt/levo2-amd/gpu45-inputs
+MemoryHigh=26G
+MemoryMax=29G
+TasksMax=1024
+
+[Install]
+WantedBy=multi-user.target
+

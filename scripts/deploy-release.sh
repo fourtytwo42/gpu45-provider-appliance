@@ -196,6 +196,7 @@ install -m 0644 deploy/systemd/gpu45-pocket-tts-api.service /etc/systemd/system/
 install -m 0644 deploy/systemd/gpu45-image-api.service /etc/systemd/system/gpu45-image-api.service
 install -m 0644 deploy/systemd/gpu45-whisper-api.service /etc/systemd/system/gpu45-whisper-api.service
 install -m 0644 deploy/systemd/wan2-video-api.service /etc/systemd/system/wan2-video-api.service
+install -m 0644 deploy/systemd/gpu45-music-api.service /etc/systemd/system/gpu45-music-api.service
 install -m 0644 deploy/systemd/hunyuan-video-comfy.service /etc/systemd/system/hunyuan-video-comfy.service
 install -m 0755 scripts/configure-service-user.sh /usr/local/sbin/gpu45-configure-service-user
 install -m 0755 scripts/install-codex-reference.sh /usr/local/sbin/gpu45-install-codex-reference
@@ -208,6 +209,10 @@ mkdir -p /opt/pocket-tts/pocket_tts_api
 cp -a services/pocket-tts-api/pocket_tts_api/. /opt/pocket-tts/pocket_tts_api/
 cp -a services/image-api/image_api/. /opt/gpu45-image-api/image_api/
 cp -a services/whisper-api/whisper_api/. /opt/gpu45-whisper-api/whisper_api/
+mkdir -p /opt/gpu45-music-api/music_api /var/lib/gpu45/music /models/music /opt/levo2-amd/out /opt/levo2-amd/gpu45-inputs
+rm -rf /opt/gpu45-music-api/music_api/*
+cp -a services/music-api/music_api/. /opt/gpu45-music-api/music_api/
+install -m 0755 services/music-api/music_worker.py /opt/gpu45-music-api/music_worker.py
 mkdir -p /opt/gpu45-agentic-benchmark /var/lib/gpu45/benchmarks/artifacts /models/benchmark-cache
 rm -rf /opt/gpu45-agentic-benchmark/agentic_benchmark /opt/gpu45-agentic-benchmark/suite-manifests /opt/gpu45-agentic-benchmark/reference-profiles
 cp -a services/agentic-benchmark/agentic_benchmark /opt/gpu45-agentic-benchmark/
@@ -228,6 +233,15 @@ mkdir -p /opt/gpu45-video-api/wan_api
 rm -rf /opt/gpu45-video-api/wan_api/*
 cp -a services/wan2-video-api/wan_api/. /opt/gpu45-video-api/wan_api/
 chown -R hendo420:hendo420 /opt/gpu45-video-api /opt/gpu45-video-api-venv
+if [[ ! -x /opt/gpu45-music-api-venv/bin/python ]]; then
+  python3 -m venv /opt/gpu45-music-api-venv
+fi
+music_requirements_hash="$(sha256sum services/music-api/requirements-controller.txt | cut -d' ' -f1)"
+if [[ ! -f /opt/gpu45-music-api-venv/.requirements-hash ]] || [[ "$(cat /opt/gpu45-music-api-venv/.requirements-hash)" != "$music_requirements_hash" ]]; then
+  /opt/gpu45-music-api-venv/bin/pip install -r services/music-api/requirements-controller.txt
+  printf '%s\n' "$music_requirements_hash" > /opt/gpu45-music-api-venv/.requirements-hash
+fi
+chown -R gpu45-music:gpu45-music /opt/gpu45-music-api /var/lib/gpu45/music /models/music /opt/levo2-amd/out /opt/levo2-amd/gpu45-inputs
 for service_db in \
   /models/qwen3-tts/api_data/jobs.db* \
   /models/image-gen/jobs.db* \
@@ -256,6 +270,8 @@ systemctl restart gpu45-pocket-tts-api.service
 systemctl enable gpu45-resource-manager.service
 systemctl enable gpu45-agentic-benchmark.service
 systemctl enable gpu45-codex-reference-proxy.service
+systemctl enable gpu45-music-api.service
+systemctl restart gpu45-music-api.service
 systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restore-drill.timer gpu45-storage-retention.timer
 systemctl enable "gpu45-provider-appliance@$target_port.service"
 systemctl restart "gpu45-provider-appliance@$target_port.service"
@@ -297,6 +313,7 @@ if command -v codex >/dev/null 2>&1; then
   systemctl restart gpu45-codex-reference-proxy.service
 fi
 systemctl try-restart qwen3-tts-api.service gpu45-image-api.service gpu45-whisper-api.service wan2-video-api.service || true
+systemctl try-restart gpu45-music-api.service || true
 
 final_healthy=false
 for _ in $(seq 1 20); do

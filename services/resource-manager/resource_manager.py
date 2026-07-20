@@ -450,6 +450,7 @@ def state() -> dict[str, object]:
                 "image": service_status("gpu45-image-api.service"),
                 "video": service_status("wan2-video-api.service"),
                 "whisper": service_status("gpu45-whisper-api.service"),
+                "music": service_status("gpu45-music-api.service"),
             },
             "workers": {kind: worker_snapshot(db, kind) for kind in WORKER_SERVICES},
         }
