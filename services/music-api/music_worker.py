@@ -169,11 +169,27 @@ def run_levo(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, st
     payload = job["payload"]
     output_dir = Path(str(spec["outputDir"]))
     output_dir.mkdir(parents=True, exist_ok=True)
+    work_root = output_dir.parent / "levo-work"
+    if not work_root.is_dir():
+        shutil.copytree(
+            root,
+            work_root,
+            symlinks=True,
+            ignore=shutil.ignore_patterns(".git", "out", "gpu45-inputs", "__pycache__", "*.pyc"),
+        )
     batch = f"gpu45-{job['id']}"
-    input_dir = root / "gpu45-inputs"
+    input_dir = work_root / "gpu45-inputs"
     input_dir.mkdir(parents=True, exist_ok=True)
     input_path = input_dir / f"{batch}.jsonl"
     requested_duration = max(10, min(280, int(float(payload.get("duration") or 60))))
+    from omegaconf import OmegaConf
+
+    config_path = work_root / "ckpt" / "songgeneration" / "config.yaml"
+    config = OmegaConf.load(config_path)
+    config.lyric_processor.max_dur = requested_duration
+    config.lyric_processor.min_dur = min(30, requested_duration)
+    config.lyric_processor.pad_to_max = True
+    OmegaConf.save(config, config_path)
     lyric = str(payload.get("lyrics") or "").strip()
     if not lyric:
         sections = max(1, round((requested_duration - 10) / 25))
@@ -186,7 +202,7 @@ def run_levo(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, st
     python = sys.executable
     started = time.monotonic()
     environment = os.environ.copy()
-    flow_vae = str(root / "codeclm" / "tokenizer" / "Flow1dVAE")
+    flow_vae = str(work_root / "codeclm" / "tokenizer" / "Flow1dVAE")
     environment.update(
         TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL="1",
         TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS="ATEN",
@@ -201,12 +217,12 @@ def run_levo(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, st
         PYTHONPATH=flow_vae + os.pathsep + environment.get("PYTHONPATH", ""),
     )
 
-    run_phase([python, "jsonl2conditions.py", "--jsonl", str(input_path)], root, progress_path, 5, "levo-conditioning", environment)
-    run_phase([python, "conditions2cb0tokens.py", "--batch", batch], root, progress_path, 20, "levo-main-tokens", environment)
-    run_phase([python, "cb0tokens2tokens.py", "--batch", batch], root, progress_path, 58, "levo-sub-tokens", environment)
-    run_phase([python, "tokens2audio.py", "--batch", batch], root, progress_path, 82, "levo-audio-synthesis", environment)
+    run_phase([python, "jsonl2conditions.py", "--jsonl", str(input_path)], work_root, progress_path, 5, "levo-conditioning", environment)
+    run_phase([python, "conditions2cb0tokens.py", "--batch", batch], work_root, progress_path, 20, "levo-main-tokens", environment)
+    run_phase([python, "cb0tokens2tokens.py", "--batch", batch], work_root, progress_path, 58, "levo-sub-tokens", environment)
+    run_phase([python, "tokens2audio.py", "--batch", batch], work_root, progress_path, 82, "levo-audio-synthesis", environment)
 
-    source = root / "out" / batch / "master.wav"
+    source = work_root / "out" / batch / "master.wav"
     if not source.is_file():
         raise RuntimeError("LeVo completed without producing master.wav.")
     master = output_dir / "master.wav"
