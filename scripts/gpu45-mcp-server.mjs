@@ -44,6 +44,75 @@ const tools = [
     },
   },
   {
+    name: "gpu45_music_generate",
+    description: "Generate a song or instrumental with a ready GPU45 ACE-Step or LeVo profile. GPU ownership and LLM restoration are automatic.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", minLength: 1 },
+        lyrics: { type: "string" },
+        profile_id: { type: "string", default: "ace-xl-turbo-4b" },
+        duration: { type: "number", minimum: 10, maximum: 600, default: 60 },
+        instrumental: { type: "boolean", default: false },
+        bpm: { type: "integer", minimum: 40, maximum: 240 },
+        key: { type: "string" },
+        time_signature: { type: "string" },
+        language: { type: "string", default: "en" },
+        seed: { type: "integer", default: -1 },
+        steps: { type: "integer", minimum: 1, maximum: 100 },
+        wait: { type: "boolean", default: false },
+        timeout_seconds: { type: "integer", minimum: 10, maximum: 7200, default: 1200 },
+      },
+      required: ["prompt"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "gpu45_music_edit",
+    description: "Run reference generation, repainting, completion, layer creation, or stem separation using a local audio or video file.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        file_path: { type: "string", minLength: 1 },
+        mode: { type: "string", enum: ["reference", "edit", "stems"] },
+        task_type: { type: "string", enum: ["cover", "repaint", "complete", "lego", "extract", "reference", "separate"] },
+        profile_id: { type: "string", default: "ace-xl-base-4b" },
+        prompt: { type: "string" },
+        lyrics: { type: "string" },
+        duration: { type: "number", minimum: 10, maximum: 600, default: 60 },
+        track_name: { type: "string" },
+        track_classes: { type: "string" },
+        repainting_start: { type: "number", minimum: 0 },
+        repainting_end: { type: "number", minimum: 0 },
+        reference_strength: { type: "number", minimum: 0.1, maximum: 1.5 },
+        wait: { type: "boolean", default: false },
+        timeout_seconds: { type: "integer", minimum: 10, maximum: 7200, default: 1200 },
+      },
+      required: ["file_path", "mode", "task_type"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "gpu45_music_get",
+    description: "Get current Music Studio job progress, ETA, metrics, and output or stem URLs.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", minLength: 1 } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "gpu45_music_cancel",
+    description: "Cancel an active Music Studio job. ACE stops atomically; LeVo retains completed phase artifacts for recovery.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", minLength: 1 } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "gpu45_tts_synthesize",
     description: "Synthesize speech with Qwen3-TTS. Returns a local MP3 path and metadata. GPU mode, if enabled by the service, gets exclusive GPU access.",
     inputSchema: {
@@ -126,7 +195,7 @@ const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        kind: { type: "string", enum: ["image", "tts", "whisper"] },
+        kind: { type: "string", enum: ["image", "tts", "whisper", "music"] },
         id: { type: "string", minLength: 1 },
       },
       required: ["kind", "id"],
@@ -219,6 +288,10 @@ export function summarizeJob(kind, job, baseUrl) {
   }
   if (kind === "whisper" && job?.id && status === "completed") {
     summary.url = artifactUrl(baseUrl, "/api/whisper/output", job.id);
+  }
+  if (kind === "music" && job?.id && status === "completed") {
+    summary.url = `${baseUrl.replace(/\/$/, "")}/api/music/jobs/${encodeURIComponent(job.id)}/output?asset=master`;
+    summary.assets = Object.fromEntries(Object.keys(job.assets || {}).map((asset) => [asset, `${baseUrl.replace(/\/$/, "")}/api/music/jobs/${encodeURIComponent(job.id)}/output?asset=${encodeURIComponent(asset)}`]));
   }
   return summary;
 }
@@ -317,6 +390,9 @@ async function getJob(baseUrl, kind, id) {
     const snapshot = await fetchJson(`${baseUrl}/api/whisper`);
     return snapshot.jobs?.find((job) => job.id === id) || null;
   }
+  if (kind === "music") {
+    return await fetchJson(`${baseUrl}/api/music/jobs/${encodeURIComponent(id)}`);
+  }
   throw new Error(`Unsupported job kind: ${kind}`);
 }
 
@@ -325,11 +401,12 @@ function textContent(value) {
 }
 
 async function toolStatus(baseUrl) {
-  const [live, images, tts, whisper] = await Promise.allSettled([
+  const [live, images, tts, whisper, music] = await Promise.allSettled([
     fetchFirstSseData(`${baseUrl}/api/live`),
     fetchJson(`${baseUrl}/api/images`),
     fetchJson(`${baseUrl}/api/tts`),
     fetchJson(`${baseUrl}/api/whisper`),
+    fetchJson(`${baseUrl}/api/music`),
   ]);
   return {
     appliance: baseUrl,
@@ -337,7 +414,63 @@ async function toolStatus(baseUrl) {
     images: images.status === "fulfilled" ? images.value : { error: images.reason.message },
     tts: tts.status === "fulfilled" ? tts.value : { error: tts.reason.message },
     whisper: whisper.status === "fulfilled" ? whisper.value : { error: whisper.reason.message },
+    music: music.status === "fulfilled" ? music.value : { error: music.reason.message },
   };
+}
+
+async function toolMusicGenerate(baseUrl, args) {
+  const created = await fetchJson(`${baseUrl}/api/music/jobs`, {
+    method: "POST",
+    body: JSON.stringify({
+      profile_id: args.profile_id || "ace-xl-turbo-4b",
+      mode: "create",
+      task_type: "text2music",
+      caption: args.prompt,
+      lyrics: args.lyrics || "",
+      duration: args.duration || 60,
+      instrumental: args.instrumental === true,
+      bpm: args.bpm,
+      key: args.key,
+      time_signature: args.time_signature,
+      language: args.language || "en",
+      seed: Number.isInteger(args.seed) ? args.seed : -1,
+      steps: args.steps,
+    }),
+  });
+  let job = created;
+  if (args.wait === true) {
+    job = await waitForJob({ baseUrl, kind: "music", id: job.id, terminalStatuses: ["completed", "failed", "cancelled"], timeoutSeconds: args.timeout_seconds || 1200 });
+  }
+  return summarizeJob("music", job, baseUrl);
+}
+
+async function toolMusicEdit(baseUrl, args) {
+  const bytes = await readFile(args.file_path);
+  const form = new FormData();
+  for (const [key, value] of Object.entries({
+    profile_id: args.profile_id || "ace-xl-base-4b", mode: args.mode, task_type: args.task_type,
+    caption: args.prompt, lyrics: args.lyrics, duration: args.duration || 60, track_name: args.track_name,
+    track_classes: args.track_classes, repainting_start: args.repainting_start,
+    repainting_end: args.repainting_end, reference_strength: args.reference_strength,
+  })) if (value !== undefined && value !== null && value !== "") form.set(key, String(value));
+  const role = args.mode === "reference" && String(args.profile_id || "").startsWith("levo") ? "reference_audio" : "source_audio";
+  form.set(role, new Blob([bytes]), basename(args.file_path));
+  const response = await fetch(`${baseUrl}/api/music/jobs`, { method: "POST", body: form, headers: authenticatedHeaders() });
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+  let job = await response.json();
+  if (args.wait === true) {
+    job = await waitForJob({ baseUrl, kind: "music", id: job.id, terminalStatuses: ["completed", "failed", "cancelled"], timeoutSeconds: args.timeout_seconds || 1200 });
+  }
+  return summarizeJob("music", job, baseUrl);
+}
+
+async function toolMusicGet(baseUrl, args) {
+  return summarizeJob("music", await getJob(baseUrl, "music", args.id), baseUrl);
+}
+
+async function toolMusicCancel(baseUrl, args) {
+  const result = await fetchJson(`${baseUrl}/api/music/jobs/${encodeURIComponent(args.id)}/action`, { method: "POST", body: JSON.stringify({ action: "cancel" }) });
+  return summarizeJob("music", result.job, baseUrl);
 }
 
 async function toolImageGenerate(baseUrl, args) {
@@ -540,6 +673,10 @@ async function saveArtifact(fileName, bytes) {
 async function callTool(name, args = {}, baseUrl = DEFAULT_BASE_URL) {
   if (name === "gpu45_status") return textContent(await toolStatus(baseUrl));
   if (name === "gpu45_image_generate") return await toolImageGenerate(baseUrl, args);
+  if (name === "gpu45_music_generate") return textContent(await toolMusicGenerate(baseUrl, args));
+  if (name === "gpu45_music_edit") return textContent(await toolMusicEdit(baseUrl, args));
+  if (name === "gpu45_music_get") return textContent(await toolMusicGet(baseUrl, args));
+  if (name === "gpu45_music_cancel") return textContent(await toolMusicCancel(baseUrl, args));
   if (name === "gpu45_video_generate") return await toolVideoGenerate(baseUrl, args);
   if (name === "gpu45_tts_synthesize") return await toolTtsSynthesize(baseUrl, args);
   if (name === "gpu45_tts_list_assets") return textContent((await fetchJson(`${baseUrl}/api/tts`)));
