@@ -149,6 +149,14 @@ async def create_job(request: Request) -> dict[str, object]:
     job_id: str | None = None
     try:
         _profile, normalized = _validate_payload(payload)
+        upload_roles = {role for role, _upload in uploads}
+        task_type = str(normalized["task_type"])
+        if task_type in {"cover", "repaint", "complete", "lego", "extract", "separate"} and not (
+            normalized.get("source_audio") or "source_audio" in upload_roles
+        ):
+            raise ValueError("The selected workflow requires source audio.")
+        if task_type == "reference" and not (normalized.get("reference_audio") or "reference_audio" in upload_roles):
+            raise ValueError("Reference generation requires reference audio.")
         job = STORE.create_job(
             str(normalized["profile_id"]),str(normalized["mode"]),str(normalized["task_type"]),normalized,
             status="preparing" if uploads else "queued",

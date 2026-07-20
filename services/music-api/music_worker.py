@@ -48,6 +48,23 @@ def probe_audio(path: Path) -> dict[str, object]:
     }
 
 
+def ace_instruction(task_type: str, payload: dict[str, object]) -> str:
+    explicit = str(payload.get("instruction") or "").strip()
+    if explicit:
+        return explicit
+    track_name = str(payload.get("track_name") or "vocals").strip()
+    track_classes = str(payload.get("track_classes") or "drums, bass, guitar").strip()
+    instructions = {
+        "text2music": "Fill the audio semantic mask based on the given conditions:",
+        "cover": "Fill the audio semantic mask based on the given conditions:",
+        "repaint": "Repaint the mask area based on the given conditions:",
+        "extract": f"Extract the {track_name} track from the audio:",
+        "lego": f"Generate the {track_name} track based on the audio context:",
+        "complete": f"Complete the input track with {track_classes}:",
+    }
+    return instructions.get(task_type, instructions["text2music"])
+
+
 def run_ace(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, str], dict[str, object]]:
     source_root = Path(os.environ.get("GPU45_ACE_ROOT", "/opt/ace-step-1.5"))
     checkpoints = Path(os.environ.get("ACESTEP_CHECKPOINTS_DIR", "/models/music/ace-step/checkpoints"))
@@ -105,7 +122,7 @@ def run_ace(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, str
     output_format = str(payload.get("output_format") or payload.get("outputFormat") or "flac")
     params = GenerationParams(
         task_type=task_type,
-        instruction=str(payload.get("instruction") or "Fill the audio semantic mask based on the given conditions:"),
+        instruction=ace_instruction(task_type, payload),
         reference_audio=str(payload.get("reference_audio") or "") or None,
         src_audio=str(payload.get("source_audio") or payload.get("src_audio") or "") or None,
         caption=str(payload.get("caption") or ""),
@@ -146,7 +163,57 @@ def run_ace(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, str
     metrics = probe_audio(master)
     metrics["backend"] = "ace-step-1.5"
     metrics["realTimeFactor"] = round((time.monotonic() - started) / float(metrics["durationSeconds"]), 4)
-    return {"master": str(master)}, metrics
+    assets = {"master": str(master)}
+    if task_type == "extract":
+        track_name = str(payload.get("track_name") or "vocals").lower()
+        assets["vocals" if "vocal" in track_name else "instrumental"] = str(master)
+    return assets, metrics
+
+
+def run_levo_separation(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, str], dict[str, object]]:
+    root = Path(os.environ.get("GPU45_LEVO_ROOT", "/opt/levo2-amd"))
+    job = spec["job"]
+    payload = job["payload"]
+    source = Path(str(payload.get("source_audio") or ""))
+    if not source.is_file():
+        raise RuntimeError("LeVo stem separation requires source audio.")
+    output_dir = Path(str(spec["outputDir"]))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    sys.path.insert(0, str(root))
+    os.environ.setdefault("HSA_OVERRIDE_GFX_VERSION", "10.3.0")
+    started = time.monotonic()
+    progress(progress_path, 8, "loading-levo-separator")
+
+    import torch
+    import torchaudio
+    from third_party.demucs.models.apply import apply_model
+    from third_party.demucs.models.pretrained import get_model_from_yaml
+
+    audio, sample_rate = torchaudio.load(str(source))
+    if sample_rate != 44100:
+        audio = torchaudio.functional.resample(audio, sample_rate, 44100)
+    if audio.shape[0] == 1:
+        audio = audio.repeat(2, 1)
+    progress(progress_path, 24, "separating-vocals-and-accompaniment")
+    model = get_model_from_yaml(
+        str(root / "ckpt" / "htdemucs" / "htdemucs.yaml"),
+        str(root / "ckpt" / "htdemucs" / "htdemucs.pth"),
+    ).eval().cuda()
+    with torch.inference_mode():
+        separated = apply_model(model, audio.cuda().unsqueeze(0), device="cuda", shifts=1, split=True, overlap=0.25, progress=False)[0]
+    vocals = separated[3].cpu()
+    accompaniment = (audio - vocals).cpu()
+    master = output_dir / "master.wav"
+    vocals_path = output_dir / "vocals.wav"
+    instrumental_path = output_dir / "instrumental.wav"
+    progress(progress_path, 90, "writing-stems")
+    torchaudio.save(str(master), audio, 44100)
+    torchaudio.save(str(vocals_path), vocals, 44100)
+    torchaudio.save(str(instrumental_path), accompaniment, 44100)
+    metrics = probe_audio(master)
+    metrics["backend"] = "levo2-demucs"
+    metrics["realTimeFactor"] = round((time.monotonic() - started) / float(metrics["durationSeconds"]), 4)
+    return {"master": str(master), "vocals": str(vocals_path), "instrumental": str(instrumental_path)}, metrics
 
 
 def run_phase(
@@ -164,6 +231,8 @@ def run_phase(
 
 
 def run_levo(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, str], dict[str, object]]:
+    if str(spec["job"].get("task_type")) == "separate":
+        return run_levo_separation(spec, progress_path)
     root = Path(os.environ.get("GPU45_LEVO_ROOT", "/opt/levo2-amd"))
     job = spec["job"]
     payload = job["payload"]
