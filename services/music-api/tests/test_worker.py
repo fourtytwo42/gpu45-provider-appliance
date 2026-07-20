@@ -1,6 +1,7 @@
+import inspect
 import unittest
 
-from music_worker import ace_instruction
+from music_worker import ace_instruction, run_levo_separation
 
 
 class WorkerTests(unittest.TestCase):
@@ -12,6 +13,11 @@ class WorkerTests(unittest.TestCase):
 
     def test_explicit_instruction_wins(self):
         self.assertEqual(ace_instruction("extract", {"instruction": "Custom"}), "Custom")
+
+    def test_levo_separation_does_not_require_torchcodec(self):
+        source = inspect.getsource(run_levo_separation)
+        self.assertNotIn("torchaudio.load", source)
+        self.assertNotIn("torchaudio.save", source)
 
 
 if __name__ == "__main__":

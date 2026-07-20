@@ -48,6 +48,21 @@ def probe_audio(path: Path) -> dict[str, object]:
     }
 
 
+def load_audio_tensor(path: Path):
+    import soundfile as sf
+    import torch
+
+    samples, sample_rate = sf.read(str(path), dtype="float32", always_2d=True)
+    return torch.from_numpy(samples.T.copy()), int(sample_rate)
+
+
+def save_audio_tensor(path: Path, audio, sample_rate: int) -> None:
+    import soundfile as sf
+
+    samples = audio.detach().cpu().float().transpose(0, 1).contiguous().numpy()
+    sf.write(str(path), samples, sample_rate, subtype="PCM_16")
+
+
 def ace_instruction(task_type: str, payload: dict[str, object]) -> str:
     explicit = str(payload.get("instruction") or "").strip()
     if explicit:
@@ -189,7 +204,7 @@ def run_levo_separation(spec: dict[str, object], progress_path: Path) -> tuple[d
     from third_party.demucs.models.apply import apply_model
     from third_party.demucs.models.pretrained import get_model_from_yaml
 
-    audio, sample_rate = torchaudio.load(str(source))
+    audio, sample_rate = load_audio_tensor(source)
     if sample_rate != 44100:
         audio = torchaudio.functional.resample(audio, sample_rate, 44100)
     if audio.shape[0] == 1:
@@ -207,9 +222,9 @@ def run_levo_separation(spec: dict[str, object], progress_path: Path) -> tuple[d
     vocals_path = output_dir / "vocals.wav"
     instrumental_path = output_dir / "instrumental.wav"
     progress(progress_path, 90, "writing-stems")
-    torchaudio.save(str(master), audio, 44100)
-    torchaudio.save(str(vocals_path), vocals, 44100)
-    torchaudio.save(str(instrumental_path), accompaniment, 44100)
+    save_audio_tensor(master, audio, 44100)
+    save_audio_tensor(vocals_path, vocals, 44100)
+    save_audio_tensor(instrumental_path, accompaniment, 44100)
     metrics = probe_audio(master)
     metrics["backend"] = "levo2-demucs"
     metrics["realTimeFactor"] = round((time.monotonic() - started) / float(metrics["durationSeconds"]), 4)
