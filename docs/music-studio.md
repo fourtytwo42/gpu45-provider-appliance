@@ -29,3 +29,15 @@ LeVo is experimental and restricted to academic, research, and educational use.
 It remains unavailable until the pinned AMD four-phase runtime passes a 60-second
 hardware validation on the V620. The console requires acceptance of the exact
 license hash before a LeVo job can be created.
+
+Install and validate it separately:
+
+```bash
+sudo /opt/gpu45-provider-appliance/scripts/install-levo2-music.sh --all
+sudo -u gpu45-music --preserve-env=GPU45_RESOURCE_MANAGER_TOKEN,GPU45_RESOURCE_MANAGER_URL \
+  /opt/gpu45-provider-appliance/scripts/validate-levo2-music.py
+```
+
+The validation runner acquires a real Music resource lease and only marks the
+profile ready after a valid approximately 60-second output finishes within the
+10-minute retention gate.
