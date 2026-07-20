@@ -21,6 +21,10 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue(levo["noncommercial"])
         self.assertFalse(levo["licenseAccepted"])
 
+    def test_inaccessible_model_directory_is_not_ready(self):
+        with patch.object(Path, "is_dir", side_effect=PermissionError):
+            self.assertFalse(profiles._contains_weights(Path("/restricted")))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -276,6 +276,20 @@ systemctl enable --now gpu45-backup.timer gpu45-backup-verify.timer gpu45-restor
 systemctl enable "gpu45-provider-appliance@$target_port.service"
 systemctl restart "gpu45-provider-appliance@$target_port.service"
 
+music_healthy=false
+for _ in $(seq 1 15); do
+  if curl -fsS --max-time 5 http://127.0.0.1:8060/health >/dev/null; then
+    music_healthy=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$music_healthy" != "true" ]]; then
+  echo "Music controller health check failed before traffic switch" >&2
+  systemctl stop "gpu45-provider-appliance@$target_port.service" || true
+  exit 1
+fi
+
 healthy=false
 for _ in $(seq 1 30); do
   if release_healthy "http://127.0.0.1:$target_port"; then

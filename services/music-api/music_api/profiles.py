@@ -94,10 +94,13 @@ PROFILES: tuple[dict[str, object], ...] = (
 
 
 def _contains_weights(path: Path) -> bool:
-    if not path.is_dir():
+    try:
+        if not path.is_dir():
+            return False
+        patterns = ("*.safetensors", "*.bin", "*.pt", "*.pth")
+        return any(next(path.rglob(pattern), None) is not None for pattern in patterns)
+    except OSError:
         return False
-    patterns = ("*.safetensors", "*.bin", "*.pt", "*.pth")
-    return any(next(path.rglob(pattern), None) is not None for pattern in patterns)
 
 
 def _validation() -> dict[str, object]:

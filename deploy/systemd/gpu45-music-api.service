@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=gpu45-music
 Group=gpu45-music
-SupplementaryGroups=video render
+SupplementaryGroups=gpu45 video render
 WorkingDirectory=/opt/gpu45-music-api
 Environment=GPU45_MUSIC_HOST=127.0.0.1
 Environment=GPU45_MUSIC_PORT=8060

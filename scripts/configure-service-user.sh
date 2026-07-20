@@ -9,7 +9,7 @@ usermod -a -G hendo420,video,render gpu45
 if ! id gpu45-music >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/gpu45/music --shell /usr/sbin/nologin --user-group gpu45-music
 fi
-usermod -a -G video,render gpu45-music
+usermod -a -G gpu45,video,render gpu45-music
 
 install -d -o gpu45 -g gpu45 -m 0750 /var/lib/gpu45
 chown -R gpu45:gpu45 /var/lib/gpu45
