@@ -37,6 +37,46 @@
   "levo2": {
     "source": "https://github.com/Siriusquirrel/SongGeneration.git",
     "revision": "cdeff00366d7a07abbcfe71b0156277eeca2855d",
-    "license": "academic-research-education-only"
+    "license": "academic-research-education-only",
+    "python": "3.12.11",
+    "uv": "0.8.22",
+    "torch": "2.9.1+rocm6.4",
+    "assets": [
+      {
+        "repo": "lglg666/SongGeneration-Runtime",
+        "revision": "cc258cc694a63114c61684cc26d0583b8ad777d0",
+        "file": "third_party/demucs/ckpt/htdemucs.pth",
+        "group": "runtime",
+        "target": "third_party/demucs/ckpt/htdemucs.pth"
+      },
+      {
+        "repo": "lglg666/SongGeneration-Runtime",
+        "revision": "cc258cc694a63114c61684cc26d0583b8ad777d0",
+        "file": "ckpt/vae/autoencoder_music_1320k.ckpt",
+        "group": "runtime",
+        "target": "ckpt/vae/autoencoder_music_1320k.ckpt"
+      },
+      {
+        "repo": "lglg666/SongGeneration-Runtime",
+        "revision": "cc258cc694a63114c61684cc26d0583b8ad777d0",
+        "file": "ckpt/model_1rvq/model_2_fixed.safetensors",
+        "group": "runtime",
+        "target": "ckpt/model_1rvq/model_1rvq.safetensors"
+      },
+      {
+        "repo": "lglg666/SongGeneration-Runtime",
+        "revision": "cc258cc694a63114c61684cc26d0583b8ad777d0",
+        "file": "ckpt/model_septoken/model_2.safetensors",
+        "group": "runtime",
+        "target": "ckpt/model_septoken/model_septoken.safetensors"
+      },
+      {
+        "repo": "lglg666/SongGeneration-v2-large",
+        "revision": "115805364ad74479fb3764fe65970c92faeb1a5a",
+        "file": "model.pt",
+        "group": "model",
+        "target": "model_v2_large_orig.pt"
+      }
+    ]
   }
 }

@@ -149,9 +149,16 @@ def run_ace(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, str
     return {"master": str(master)}, metrics
 
 
-def run_phase(command: list[str], cwd: Path, progress_path: Path, value: float, stage: str) -> None:
+def run_phase(
+    command: list[str],
+    cwd: Path,
+    progress_path: Path,
+    value: float,
+    stage: str,
+    environment: dict[str, str] | None = None,
+) -> None:
     progress(progress_path, value, stage)
-    result = subprocess.run(command, cwd=cwd, check=False)
+    result = subprocess.run(command, cwd=cwd, check=False, env=environment)
     if result.returncode != 0:
         raise RuntimeError(f"LeVo phase failed ({stage}) with status {result.returncode}.")
 
@@ -166,7 +173,11 @@ def run_levo(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, st
     input_dir = root / "gpu45-inputs"
     input_dir.mkdir(parents=True, exist_ok=True)
     input_path = input_dir / f"{batch}.jsonl"
-    lyric = str(payload.get("lyrics") or "[intro-short] ; [inst-medium] ; [outro-short]")
+    requested_duration = max(10, min(280, int(float(payload.get("duration") or 60))))
+    lyric = str(payload.get("lyrics") or "").strip()
+    if not lyric:
+        sections = max(1, round((requested_duration - 10) / 25))
+        lyric = " ; ".join(["[intro-short]", *(["[inst-medium]"] * sections), "[outro-short]"])
     item: dict[str, object] = {"idx": "master", "gt_lyric": lyric, "descriptions": str(payload.get("caption") or "")}
     reference = payload.get("reference_audio")
     if reference:
@@ -174,11 +185,25 @@ def run_levo(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, st
     input_path.write_text(json.dumps(item) + "\n", encoding="utf-8")
     python = sys.executable
     started = time.monotonic()
+    environment = os.environ.copy()
+    flow_vae = str(root / "codeclm" / "tokenizer" / "Flow1dVAE")
+    environment.update(
+        TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL="1",
+        TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS="CPP,ATEN",
+        FLASH_ATTENTION_TRITON_AMD_ENABLE="TRUE",
+        PYTORCH_TUNABLEOP_ENABLED="1",
+        PYTORCH_TUNABLEOP_TUNING_DURATION="short",
+        PYTORCH_ALLOC_CONF="expandable_segments:True",
+        MIOPEN_DEBUG_CONV_GEMM="1",
+        MIOPEN_FIND_MODE="2",
+        HSA_OVERRIDE_GFX_VERSION="10.3.0",
+        PYTHONPATH=flow_vae + os.pathsep + environment.get("PYTHONPATH", ""),
+    )
 
-    run_phase([python, "jsonl2conditions.py", "--jsonl", str(input_path)], root, progress_path, 5, "levo-conditioning")
-    run_phase([python, "conditions2cb0tokens.py", "--batch", batch], root, progress_path, 20, "levo-main-tokens")
-    run_phase([python, "cb0tokens2tokens.py", "--batch", batch], root, progress_path, 58, "levo-sub-tokens")
-    run_phase([python, "tokens2audio.py", "--batch", batch], root, progress_path, 82, "levo-audio-synthesis")
+    run_phase([python, "jsonl2conditions.py", "--jsonl", str(input_path)], root, progress_path, 5, "levo-conditioning", environment)
+    run_phase([python, "conditions2cb0tokens.py", "--batch", batch], root, progress_path, 20, "levo-main-tokens", environment)
+    run_phase([python, "cb0tokens2tokens.py", "--batch", batch], root, progress_path, 58, "levo-sub-tokens", environment)
+    run_phase([python, "tokens2audio.py", "--batch", batch], root, progress_path, 82, "levo-audio-synthesis", environment)
 
     source = root / "out" / batch / "master.wav"
     if not source.is_file():
