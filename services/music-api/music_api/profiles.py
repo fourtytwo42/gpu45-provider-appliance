@@ -77,7 +77,7 @@ PROFILES: tuple[dict[str, object], ...] = (
         "backend": "levo",
         "model": "SongGeneration-v2-large",
         "lmModel": None,
-        "description": "Experimental four-phase AMD profile with Q8 mu-law KV cache.",
+        "description": "Experimental four-phase AMD profile with Q8 mu-law KV cache; reference conditioning is substantially slower than ACE.",
         "recommended": False,
         "experimental": True,
         "noncommercial": True,

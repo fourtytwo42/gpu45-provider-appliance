@@ -31,6 +31,15 @@ def _read_json(path: Path) -> dict[str, object]:
         return {}
 
 
+def remaining_eta(estimated_total: int, learned: bool, worker_eta: object, elapsed: float) -> int:
+    if learned or worker_eta is None:
+        return max(1, round(estimated_total - elapsed))
+    try:
+        return max(1, int(worker_eta))
+    except (TypeError, ValueError):
+        return max(1, round(estimated_total - elapsed))
+
+
 class MusicRunner:
     def __init__(self, store: MusicStore, data_root: Path, service_root: Path):
         self.store = store
@@ -111,7 +120,8 @@ class MusicRunner:
         }
         _atomic_json(spec_path, spec)
         duration = float(job["payload"].get("duration") or profile["duration"]["default"])
-        estimated_total = self.store.estimate_seconds(str(job["profile_id"]), str(job["task_type"]), duration)
+        learned_total = self.store.estimate_seconds(str(job["profile_id"]), str(job["task_type"]), duration)
+        estimated_total = learned_total
         if estimated_total is None:
             if profile["backend"] == "levo":
                 estimated_total = 30 if str(job["task_type"]) == "separate" else 720
@@ -153,7 +163,7 @@ class MusicRunner:
                             last_progress = progress
                         worker_eta = progress.get("etaSeconds")
                         elapsed = now - started
-                        eta = int(worker_eta) if worker_eta is not None else max(1, round(estimated_total - elapsed))
+                        eta = remaining_eta(estimated_total, learned_total is not None, worker_eta, elapsed)
                         self.store.update(
                             job_id,stage=str(progress.get("stage") or "generating"),
                             progress=float(progress.get("progress") or 0),
