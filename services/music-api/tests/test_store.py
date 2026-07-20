@@ -31,6 +31,17 @@ class MusicStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_job(str(ace["id"]))["recovery_state"], "restart")
         self.assertEqual(self.store.get_job(str(levo["id"]))["recovery_state"], "resume-phase")
 
+    def test_orderly_shutdown_requeues_job_with_backend_policy(self):
+        ace = self.store.create_job("ace-xl-turbo-4b", "create", "text2music", {})
+        levo = self.store.create_job("levo2-large-amd", "reference", "reference", {})
+        self.store.update(str(ace["id"]), status="running", process_pid=123)
+        self.store.update(str(levo["id"]), status="running", process_pid=456)
+        recovered_ace = self.store.mark_interrupted(str(ace["id"]))
+        recovered_levo = self.store.mark_interrupted(str(levo["id"]))
+        self.assertEqual((recovered_ace["status"], recovered_ace["recovery_state"]), ("queued", "restart"))
+        self.assertEqual((recovered_levo["status"], recovered_levo["recovery_state"]), ("queued", "resume-phase"))
+        self.assertIsNone(recovered_ace["process_pid"])
+
     def test_active_job_cannot_be_deleted(self):
         job = self.store.create_job("ace-xl-turbo-4b", "create", "text2music", {})
         self.store.update(str(job["id"]), status="running")

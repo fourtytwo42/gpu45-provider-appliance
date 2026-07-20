@@ -175,6 +175,21 @@ class MusicStore:
             return self.update(job_id, status="cancelled", stage="cancelled", progress=100, cancel_requested=1, completed_at=now_iso())
         return self.update(job_id, cancel_requested=1, stage="cancelling")
 
+    def mark_interrupted(self, job_id: str) -> dict[str, object]:
+        job = self.get_job(job_id)
+        if not job:
+            raise KeyError(job_id)
+        policy = "restart" if str(job["profile_id"]).startswith("ace-") else "resume-phase"
+        stamp = now_iso()
+        with self.lock, self.connect() as db:
+            db.execute(
+                "UPDATE jobs SET status='queued',stage='recovered',progress=0,eta_seconds=NULL,"
+                "process_pid=NULL,recovery_state=?,updated_at=? WHERE id=?",
+                (policy, stamp, job_id),
+            )
+            self._event(db, job_id, "job.interrupted", {"policy": policy})
+        return self.get_job(job_id) or {}
+
     def retry(self, job_id: str) -> dict[str, object]:
         job = self.get_job(job_id)
         if not job:

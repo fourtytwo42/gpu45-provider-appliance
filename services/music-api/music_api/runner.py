@@ -189,6 +189,9 @@ class MusicRunner:
                 "peakPowerWatts": peak_power,
                 "peakJunctionC": peak_junction,
             }
+            if self.stop_event.is_set():
+                self.store.mark_interrupted(job_id)
+                return
             if current.get("cancel_requested"):
                 self.store.update(job_id,status="cancelled",stage="cancelled",progress=100,metrics_json=json.dumps(metrics),process_pid=None,completed_at=now_iso())
                 return
