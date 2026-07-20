@@ -12,7 +12,7 @@ fi
 usermod -a -G gpu45,video,render gpu45-music
 
 install -d -o gpu45 -g gpu45 -m 0750 /var/lib/gpu45
-chown -R gpu45:gpu45 /var/lib/gpu45
+chown gpu45:gpu45 /var/lib/gpu45
 install -d -o gpu45-music -g gpu45-music -m 0750 /var/lib/gpu45/music
 install -d -o gpu45-music -g gpu45-music -m 0750 /models/music
 chgrp gpu45 /etc/gpu45

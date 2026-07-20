@@ -220,7 +220,8 @@ cp -a services/agentic-benchmark/suite-manifests /opt/gpu45-agentic-benchmark/
 cp -a services/agentic-benchmark/reference-profiles /opt/gpu45-agentic-benchmark/
 install -m 0644 services/agentic-benchmark/schema.sql /opt/gpu45-agentic-benchmark/schema.sql
 install -m 0644 services/agentic-benchmark/harness-lock.json /opt/gpu45-agentic-benchmark/harness-lock.json
-chown -R gpu45-benchmark:gpu45-benchmark /opt/gpu45-agentic-benchmark /var/lib/gpu45/benchmarks
+chown -R gpu45-benchmark:gpu45-benchmark /opt/gpu45-agentic-benchmark
+chown gpu45-benchmark:gpu45-benchmark /var/lib/gpu45/benchmarks /var/lib/gpu45/benchmarks/artifacts
 if [[ ! -x /opt/gpu45-video-api-venv/bin/python ]]; then
   python3 -m venv /opt/gpu45-video-api-venv
 fi
@@ -241,7 +242,8 @@ if [[ ! -f /opt/gpu45-music-api-venv/.requirements-hash ]] || [[ "$(cat /opt/gpu
   /opt/gpu45-music-api-venv/bin/pip install -r services/music-api/requirements-controller.txt
   printf '%s\n' "$music_requirements_hash" > /opt/gpu45-music-api-venv/.requirements-hash
 fi
-chown -R gpu45-music:gpu45-music /opt/gpu45-music-api /var/lib/gpu45/music /models/music /opt/levo2-amd/out /opt/levo2-amd/gpu45-inputs
+chown -R gpu45-music:gpu45-music /opt/gpu45-music-api
+chown gpu45-music:gpu45-music /var/lib/gpu45/music /models/music /opt/levo2-amd/out /opt/levo2-amd/gpu45-inputs
 for service_db in \
   /models/qwen3-tts/api_data/jobs.db* \
   /models/image-gen/jobs.db* \
