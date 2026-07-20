@@ -1,6 +1,19 @@
 import unittest
 
-from whisper_api.outline import OutlineGenerator, clean_markdown, render_outline, response_text, split_transcript, transcript_body
+from whisper_api.outline import (
+    MAX_CHUNK_CHARS,
+    OUTLINE_LONG_MODEL,
+    OUTLINE_LONG_PROFILE,
+    OUTLINE_MODEL,
+    OUTLINE_PROFILE,
+    OutlineGenerator,
+    clean_markdown,
+    outline_target,
+    render_outline,
+    response_text,
+    split_transcript,
+    transcript_body,
+)
 
 
 class OutlineTests(unittest.TestCase):
@@ -12,6 +25,13 @@ class OutlineTests(unittest.TestCase):
         markdown = "## Transcript\n\nFirst paragraph.\n\nSecond paragraph.\n\nThird paragraph."
         chunks = split_transcript(markdown, max_chars=35)
         self.assertEqual(chunks, ["First paragraph.\n\nSecond paragraph.", "Third paragraph."])
+
+    def test_outline_target_uses_cold_start_model_for_single_pass(self):
+        self.assertEqual(outline_target("Short transcript"), (OUTLINE_PROFILE, OUTLINE_MODEL))
+
+    def test_outline_target_uses_fast_throughput_model_for_multi_pass(self):
+        markdown = "## Transcript\n\n" + ("A" * (MAX_CHUNK_CHARS + 1))
+        self.assertEqual(outline_target(markdown), (OUTLINE_LONG_PROFILE, OUTLINE_LONG_MODEL))
 
     def test_response_text_accepts_standard_chat_completion(self):
         payload = {"choices": [{"message": {"content": "```markdown\n## Overview\n\n- Item\n```"}}]}

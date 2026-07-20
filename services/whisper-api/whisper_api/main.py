@@ -14,7 +14,15 @@ from faster_whisper import WhisperModel
 from pydantic import BaseModel
 from gpu45_resource import acquire_lease, activate_profile, resource_state, touch_worker, unload_provider
 from .job_store import JobStore
-from .outline import OUTLINE_MODEL, OUTLINE_PROFILE, OutlineGenerator, render_outline
+from .outline import (
+    OUTLINE_LONG_MODEL,
+    OUTLINE_LONG_PROFILE,
+    OUTLINE_MODEL,
+    OUTLINE_PROFILE,
+    OutlineGenerator,
+    outline_target,
+    render_outline,
+)
 
 MODEL_NAMES = ["tiny", "base", "small", "medium", "large-v3", "turbo"]
 DATA_DIR = Path(os.environ.get("WHISPER_API_DATA", "/models/whisper"))
@@ -297,6 +305,8 @@ def run_outline(job_id: str) -> None:
     lease = None
     previous_profile = None
     previous_llm_running = False
+    outline_profile = OUTLINE_PROFILE
+    outline_model = OUTLINE_MODEL
     heartbeat = WorkerHeartbeat("whisper")
     heartbeat.start()
     try:
@@ -313,6 +323,8 @@ def run_outline(job_id: str) -> None:
         transcript_path = Path(str(job.get("transcript_path") or ""))
         if not transcript_path.is_file():
             raise RuntimeError("Transcript file is missing")
+        markdown = transcript_path.read_text(encoding="utf-8")
+        outline_profile, outline_model = outline_target(markdown)
 
         lease = acquire_lease(f"outline-{job_id}", "llm", 70, False, "restore-profile", timeout=1800)
         state = resource_state()
@@ -320,10 +332,9 @@ def run_outline(job_id: str) -> None:
         previous_profile = provider.get("profileName")
         previous_llm_running = (state.get("services") or {}).get("llm") in {"active", "activating"}
         update_job(job_id, outline_progress_percent=3.0, outline_progress_label="Loading outline model")
-        activate_profile(OUTLINE_PROFILE)
+        activate_profile(outline_profile)
 
-        markdown = transcript_path.read_text(encoding="utf-8")
-        generator = OutlineGenerator()
+        generator = OutlineGenerator(model=outline_model)
 
         def on_progress(step: int, total: int, label: str) -> None:
             progress = 5.0 + ((step / max(1, total)) * 90.0)
@@ -338,7 +349,7 @@ def run_outline(job_id: str) -> None:
         outline_name = f"{Path(job['filename']).stem}-{job_id}-outline.md"
         outline_path = OUTLINE_DIR / outline_name
         temporary = outline_path.with_suffix(".md.tmp")
-        temporary.write_text(render_outline(job["filename"], OUTLINE_MODEL, content), encoding="utf-8")
+        temporary.write_text(render_outline(job["filename"], outline_model, content), encoding="utf-8")
         temporary.replace(outline_path)
         update_job(
             job_id,
@@ -346,7 +357,7 @@ def run_outline(job_id: str) -> None:
             outline_status="completed",
             outline_path=str(outline_path),
             outline_name=outline_name,
-            outline_model=OUTLINE_MODEL,
+            outline_model=outline_model,
             outline_completed_at=now_iso(),
             outline_progress_percent=100.0,
             outline_progress_label="Outline ready",
@@ -366,7 +377,7 @@ def run_outline(job_id: str) -> None:
     finally:
         if lease is not None:
             try:
-                if previous_profile and previous_profile != OUTLINE_PROFILE:
+                if previous_profile and previous_profile != outline_profile:
                     activate_profile(str(previous_profile))
                 if not previous_llm_running:
                     unload_provider()
@@ -390,8 +401,9 @@ def health():
         "models": MODEL_NAMES,
         "device": DEVICE,
         "compute_type": COMPUTE_TYPE,
-        "outline_model": OUTLINE_MODEL,
+        "outline_model": f"Auto: {OUTLINE_MODEL} / {OUTLINE_LONG_MODEL}",
         "outline_profile": OUTLINE_PROFILE,
+        "outline_long_profile": OUTLINE_LONG_PROFILE,
     }
 
 

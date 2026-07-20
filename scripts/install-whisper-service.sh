@@ -40,8 +40,10 @@ Environment=WHISPER_API_PORT=$PORT
 Environment=WHISPER_API_DATA=$DATA_DIR
 Environment=WHISPER_DEVICE=cpu
 Environment=WHISPER_COMPUTE_TYPE=int8
-Environment=WHISPER_OUTLINE_PROFILE=gpu45-ornith-1-0-35b-q5-k-m-688b8d0a
-Environment=WHISPER_OUTLINE_MODEL=ornith-1.0-35b-Q5_K_M-688b8d0a
+Environment=WHISPER_OUTLINE_PROFILE=gpu45-m-shq8-mtp-opta-q5-k-m-69f462b8
+Environment=WHISPER_OUTLINE_MODEL=M-SHQ8-MTP-OptA-Q5_K_M-69f462b8
+Environment=WHISPER_OUTLINE_LONG_PROFILE=gpu45-qwen3-6-35b-a3b-ud-q4_k_xl-b420e923
+Environment=WHISPER_OUTLINE_LONG_MODEL=Qwen3.6-35B-A3B-UD-Q4_K_XL-b420e923
 Environment=WHISPER_OUTLINE_BACKEND_URL=http://127.0.0.1:30000
 Environment=PYTHONPATH=/opt/gpu45/current/services/common
 ExecStart=$VENV_DIR/bin/python -m whisper_api
