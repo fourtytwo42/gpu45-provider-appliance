@@ -189,10 +189,11 @@ def run_levo(spec: dict[str, object], progress_path: Path) -> tuple[dict[str, st
     flow_vae = str(root / "codeclm" / "tokenizer" / "Flow1dVAE")
     environment.update(
         TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL="1",
-        TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS="CPP,ATEN",
+        TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS="ATEN",
         FLASH_ATTENTION_TRITON_AMD_ENABLE="TRUE",
-        PYTORCH_TUNABLEOP_ENABLED="1",
-        PYTORCH_TUNABLEOP_TUNING_DURATION="short",
+        PYTORCH_TUNABLEOP_ENABLED="0",
+        PYTORCH_TUNABLEOP_HIPBLASLT_ENABLED="0",
+        TORCH_BLAS_PREFER_HIPBLASLT="0",
         PYTORCH_ALLOC_CONF="expandable_segments:True",
         MIOPEN_DEBUG_CONV_GEMM="1",
         MIOPEN_FIND_MODE="2",
