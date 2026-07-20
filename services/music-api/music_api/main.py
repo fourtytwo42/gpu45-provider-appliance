@@ -8,8 +8,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse
+from starlette.datastructures import FormData, UploadFile
 
 from .profiles import LEVO_LICENSE_HASH, LEVO_LICENSE_TEXT, get_profile, snapshots
 from .runner import MusicRunner, remove_job_files
@@ -93,6 +94,18 @@ def _normalize_upload(job_id: str, upload: UploadFile, role: str) -> str:
     return str(normalized_path)
 
 
+def _split_multipart(form: FormData) -> tuple[dict[str, object], list[tuple[str, UploadFile]]]:
+    payload: dict[str, object] = {}
+    uploads: list[tuple[str, UploadFile]] = []
+    for key, value in form.multi_items():
+        if isinstance(value, UploadFile):
+            if key in {"reference_audio", "source_audio"} and value.filename:
+                uploads.append((key, value))
+            continue
+        payload[key] = value
+    return payload, uploads
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
@@ -136,11 +149,7 @@ async def create_job(request: Request) -> dict[str, object]:
     uploads: list[tuple[str, UploadFile]] = []
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
-        payload = {key: value for key, value in form.multi_items() if not isinstance(value, UploadFile)}
-        for key in ("reference_audio", "source_audio"):
-            value = form.get(key)
-            if isinstance(value, UploadFile) and value.filename:
-                uploads.append((key, value))
+        payload, uploads = _split_multipart(form)
     else:
         body = await request.json()
         if not isinstance(body, dict):
