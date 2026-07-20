@@ -48,7 +48,9 @@ install_runtime() {
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git-lfs
   fi
   if [[ ! -d "$SOURCE_ROOT/.git" ]]; then
-    git clone "$LEVO_REPO" "$SOURCE_ROOT"
+    install -d -o root -g gpu45-music -m 0755 "$SOURCE_ROOT"
+    git -C "$SOURCE_ROOT" init
+    git -C "$SOURCE_ROOT" remote add origin "$LEVO_REPO"
   fi
   git -C "$SOURCE_ROOT" fetch --tags origin
   git -C "$SOURCE_ROOT" checkout --detach "$LEVO_REVISION"
