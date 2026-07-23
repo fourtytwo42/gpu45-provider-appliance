@@ -103,10 +103,20 @@ async function waitForProviderModel(model: string, timeoutMs = 180_000): Promise
   const deadline = Date.now() + timeoutMs;
   let lastModel = "";
   while (Date.now() < deadline) {
-    const provider = await collectProviderSnapshot().catch(() => null);
+    const [provider, profile] = await Promise.all([
+      collectProviderSnapshot().catch(() => null),
+      readProviderProfile().catch(() => null),
+    ]);
     if (provider?.model) {
       lastModel = provider.model;
       if (provider.model === model) return;
+    }
+    if (
+      profile?.name === model
+      && provider
+      && (provider.status === "ready" || provider.status === "busy")
+    ) {
+      return;
     }
     await new Promise((resolve) => setTimeout(resolve, 2500));
   }
