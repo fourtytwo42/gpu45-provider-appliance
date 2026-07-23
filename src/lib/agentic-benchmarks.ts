@@ -12,6 +12,7 @@ export type AgenticModel = {
   name: string;
   description?: string;
   servedAlias?: string;
+  modelPath?: string;
   backend?: string;
   ctxSize?: number;
   modelSizeBytes?: number;
@@ -47,6 +48,31 @@ export type AgenticCampaignDetail = {
   ranking: Array<Record<string, unknown>>;
   events: Array<Record<string, string | number | null>>;
   artifacts: Array<{ id: string; kind: string; relative_path: string; size_bytes: number; created_at: string }>;
+};
+
+export type AgenticLatestSuiteResult = {
+  status: string;
+  score: number | null;
+  expectedTasks: number;
+  completedTasks: number;
+  passedTasks: number;
+  failedTasks: number;
+};
+
+export type AgenticLatestResult = {
+  profileName: string;
+  campaignId: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+  expectedTasks: number;
+  completedTasks: number;
+  passedTasks: number;
+  failedTasks: number;
+  invalidOutputRate: number;
+  compositeScore: number | null;
+  suites: Record<string, AgenticLatestSuiteResult>;
 };
 
 export type AgenticEfficiencyRow = {
@@ -160,6 +186,10 @@ export async function listAgenticSuites(): Promise<AgenticSuite[]> {
 
 export async function listAgenticCampaigns(): Promise<AgenticCampaign[]> {
   return ((await agenticFetch("/v1/campaigns")) as { campaigns: AgenticCampaign[] }).campaigns;
+}
+
+export async function listLatestAgenticResults(): Promise<AgenticLatestResult[]> {
+  return ((await agenticFetch("/v1/results/latest")) as { results: AgenticLatestResult[] }).results;
 }
 
 export async function createAgenticCampaign(body: unknown): Promise<{ id: string }> {

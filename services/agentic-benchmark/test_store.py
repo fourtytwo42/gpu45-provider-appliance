@@ -33,6 +33,37 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(recovered["campaign"]["status"], "queued")
         self.assertEqual(recovered["runs"][0]["status"], "queued")
 
+    def test_latest_model_results_returns_the_newest_common_result_per_profile(self):
+        profiles = [
+            {"name": "model-a", "profileHash": "hash-a", "modelPath": "/models/a.gguf"},
+            {"name": "model-b", "profileHash": "hash-b", "modelPath": "/models/b.gguf"},
+        ]
+        suite_ids = ["bfcl-v4-local", "tau-text-base", "swe-verified-mini50", "terminal-bench-2"]
+        suites = [{"id": suite_id, "manifestHash": f"hash-{suite_id}", "taskCount": 2} for suite_id in suite_ids]
+        older_id = self.store.create_campaign("Older", "common", profiles, suites)
+        newer_id = self.store.create_campaign("Newer", "common", [profiles[0]], suites)
+        with self.store.session() as db:
+            db.execute("UPDATE campaigns SET status='completed',created_at='2026-01-01T00:00:00Z',completed_at='2026-01-01T01:00:00Z' WHERE id=?", (older_id,))
+            db.execute("UPDATE campaigns SET status='running',created_at='2026-01-02T00:00:00Z' WHERE id=?", (newer_id,))
+            db.execute(
+                "UPDATE runs SET status='completed',expected_tasks=2,completed_tasks=2,passed_tasks=1,failed_tasks=1,score=0.5 WHERE campaign_id=?",
+                (older_id,),
+            )
+            db.execute(
+                "UPDATE runs SET status='running',expected_tasks=2,completed_tasks=1,passed_tasks=1,score=0.5 WHERE campaign_id=?",
+                (newer_id,),
+            )
+
+        results = {row["profileName"]: row for row in self.store.latest_model_results()}
+
+        self.assertEqual(newer_id, results["model-a"]["campaignId"])
+        self.assertEqual("running", results["model-a"]["status"])
+        self.assertEqual(4, results["model-a"]["completedTasks"])
+        self.assertIsNone(results["model-a"]["compositeScore"])
+        self.assertEqual(older_id, results["model-b"]["campaignId"])
+        self.assertEqual("completed", results["model-b"]["status"])
+        self.assertEqual(0.5, results["model-b"]["compositeScore"])
+
     def test_model_discovery_uses_served_profiles_and_hashes_settings(self):
         app_db = self.root / "appliance.db"
         model = self.root / "model.gguf"

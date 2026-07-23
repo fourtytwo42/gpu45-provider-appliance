@@ -163,6 +163,74 @@ class BenchmarkStore:
                 row["progress"] = {"completed": int(progress["completed"]), "total": int(progress["total"])}
             return rows
 
+    def latest_model_results(self) -> list[dict[str, Any]]:
+        """Return each profile's newest common-suite result without exposing campaigns."""
+        results: list[dict[str, Any]] = []
+        seen_profiles: set[str] = set()
+        terminal_statuses = {"completed", "failed", "cancelled"}
+        with self.session() as db:
+            campaigns = db.execute(
+                "SELECT * FROM campaigns WHERE preset='common' ORDER BY created_at DESC"
+            ).fetchall()
+            for campaign in campaigns:
+                runs = [
+                    dict(row)
+                    for row in db.execute(
+                        "SELECT * FROM runs WHERE campaign_id=? AND track='controlled' ORDER BY created_at",
+                        (campaign["id"],),
+                    )
+                ]
+                ranking_by_profile = {
+                    row["profileName"]: row for row in ranking_rows(runs)
+                }
+                profile_names = list(dict.fromkeys(str(run["profile_name"]) for run in runs))
+                for profile_name in profile_names:
+                    if profile_name in seen_profiles:
+                        continue
+                    seen_profiles.add(profile_name)
+                    profile_runs = [run for run in runs if run["profile_name"] == profile_name]
+                    statuses = {str(run["status"]) for run in profile_runs}
+                    if profile_runs and statuses == {"completed"}:
+                        status = "completed"
+                    elif statuses and statuses.issubset(terminal_statuses):
+                        status = "failed" if "failed" in statuses else "cancelled"
+                    elif "running" in statuses:
+                        status = "running"
+                    elif campaign["status"] == "paused":
+                        status = "paused"
+                    else:
+                        status = "queued"
+                    ranking = ranking_by_profile.get(profile_name, {})
+                    suites = {
+                        str(run["suite_id"]): {
+                            "status": run["status"],
+                            "score": run["score"],
+                            "expectedTasks": int(run["expected_tasks"] or 0),
+                            "completedTasks": int(run["completed_tasks"] or 0),
+                            "passedTasks": int(run["passed_tasks"] or 0),
+                            "failedTasks": int(run["failed_tasks"] or 0),
+                        }
+                        for run in profile_runs
+                    }
+                    results.append(
+                        {
+                            "profileName": profile_name,
+                            "campaignId": campaign["id"],
+                            "status": status,
+                            "createdAt": campaign["created_at"],
+                            "updatedAt": campaign["updated_at"],
+                            "completedAt": campaign["completed_at"],
+                            "expectedTasks": sum(int(run["expected_tasks"] or 0) for run in profile_runs),
+                            "completedTasks": sum(int(run["completed_tasks"] or 0) for run in profile_runs),
+                            "passedTasks": sum(int(run["passed_tasks"] or 0) for run in profile_runs),
+                            "failedTasks": sum(int(run["failed_tasks"] or 0) for run in profile_runs),
+                            "invalidOutputRate": float(ranking.get("invalidOutputRate") or 0),
+                            "compositeScore": ranking.get("compositeScore"),
+                            "suites": suites,
+                        }
+                    )
+        return results
+
     def campaign_detail(self, campaign_id: str) -> dict[str, Any] | None:
         with self.session() as db:
             campaign = db.execute("SELECT * FROM campaigns WHERE id=?", (campaign_id,)).fetchone()

@@ -4,6 +4,7 @@ import { activateModel } from "./control";
 import { getConfig, isLiveRuntime } from "./config";
 import { prisma } from "./db";
 import { readHostText } from "./proxmox";
+import type { BenchmarkRun } from "./types";
 
 export const DEFAULT_BENCHMARK_PROMPT =
   "Run a sustained local LLM throughput benchmark. Write a detailed technical analysis of GPU inference stability, thermal headroom, VRAM pressure, batching, context cache behavior, and operational monitoring. Keep writing until the response budget is nearly exhausted.";
@@ -296,4 +297,16 @@ export function startBenchmarkJob(input: unknown): BenchmarkJob {
 export function getBenchmarkJob(id: string): BenchmarkJob | null {
   const job = benchmarkJobs.get(id);
   return job ? publicJob(job) : null;
+}
+
+export async function listBenchmarkRuns(limit = 200): Promise<BenchmarkRun[]> {
+  const runs = await prisma.benchmarkRun.findMany({
+    orderBy: { createdAt: "desc" },
+    take: Math.max(1, Math.min(limit, 500)),
+  });
+  return runs.map((run) => ({
+    ...run,
+    peakVramBytes: run.peakVramBytes === null ? null : Number(run.peakVramBytes),
+    createdAt: run.createdAt.toISOString(),
+  }));
 }

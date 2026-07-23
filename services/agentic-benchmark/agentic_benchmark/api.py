@@ -144,6 +144,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, {"suites": load_suite_manifests(PACKAGE_ROOT / "suite-manifests")})
             elif segments == ["v1", "campaigns"]:
                 self._json(HTTPStatus.OK, {"campaigns": STORE.list_campaigns()})
+            elif segments == ["v1", "results", "latest"]:
+                self._json(HTTPStatus.OK, {"results": STORE.latest_model_results()})
             elif len(segments) == 3 and segments[:2] == ["v1", "campaigns"]:
                 detail = STORE.campaign_detail(segments[2])
                 self._json(HTTPStatus.OK if detail else HTTPStatus.NOT_FOUND, detail or {"error": "Campaign not found"})
