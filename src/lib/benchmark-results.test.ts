@@ -77,4 +77,21 @@ describe("buildUnifiedBenchmarkRows", () => {
     expect(rows[0].profileName).toBe("model-b-q6");
     expect(rows.some((row) => row.profileName === "legacy-model")).toBe(true);
   });
+
+  it("keeps an unmatched agent-system reference as a scored table row", () => {
+    const reference = {
+      ...agentic("reference-codex-gpt-5.6-sol-medium", 0.625),
+      displayName: "Codex GPT-5.6 Sol Medium",
+      systemType: "agent-system-reference" as const,
+    };
+
+    const rows = buildUnifiedBenchmarkRows(models, [], [reference]);
+    const row = rows.find((item) => item.profileName === reference.profileName);
+
+    expect(row).toMatchObject({
+      displayName: "Codex GPT-5.6 Sol Medium",
+      agentic: { compositeScore: 0.625, systemType: "agent-system-reference" },
+      throughput: null,
+    });
+  });
 });

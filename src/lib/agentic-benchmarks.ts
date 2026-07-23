@@ -61,6 +61,8 @@ export type AgenticLatestSuiteResult = {
 
 export type AgenticLatestResult = {
   profileName: string;
+  displayName?: string;
+  systemType?: "agent-system-reference";
   campaignId: string;
   status: string;
   createdAt: string;

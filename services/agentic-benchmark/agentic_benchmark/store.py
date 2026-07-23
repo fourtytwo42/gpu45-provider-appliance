@@ -164,7 +164,7 @@ class BenchmarkStore:
             return rows
 
     def latest_model_results(self) -> list[dict[str, Any]]:
-        """Return each profile's newest common-suite result without exposing campaigns."""
+        """Return each local model and agent-system reference's newest comparable result."""
         results: list[dict[str, Any]] = []
         seen_profiles: set[str] = set()
         terminal_statuses = {"completed", "failed", "cancelled"}
@@ -226,6 +226,104 @@ class BenchmarkStore:
                             "failedTasks": sum(int(run["failed_tasks"] or 0) for run in profile_runs),
                             "invalidOutputRate": float(ranking.get("invalidOutputRate") or 0),
                             "compositeScore": ranking.get("compositeScore"),
+                            "suites": suites,
+                        }
+                    )
+
+            reference_suite_map = {
+                "bfcl-efficiency-v1": "bfcl-v4-local",
+                "tau-efficiency-v1": "tau-text-base",
+                "swe-efficiency-v1": "swe-verified-mini50",
+                "terminal-efficiency-v1": "terminal-bench-2",
+            }
+            seen_reference_profiles: set[str] = set()
+            reference_campaigns = db.execute(
+                "SELECT * FROM campaigns WHERE preset='agent-system-reference-v1' ORDER BY created_at DESC"
+            ).fetchall()
+            for campaign in reference_campaigns:
+                runs = [
+                    dict(row)
+                    for row in db.execute(
+                        "SELECT * FROM runs WHERE campaign_id=? AND track='reference' ORDER BY created_at",
+                        (campaign["id"],),
+                    )
+                ]
+                profile_names = list(dict.fromkeys(str(run["profile_name"]) for run in runs))
+                for profile_name in profile_names:
+                    if profile_name in seen_reference_profiles:
+                        continue
+                    seen_reference_profiles.add(profile_name)
+                    profile_runs = [run for run in runs if run["profile_name"] == profile_name]
+                    statuses = {str(run["status"]) for run in profile_runs}
+                    if profile_runs and statuses == {"completed"}:
+                        status = "completed"
+                    elif statuses and statuses.issubset(terminal_statuses):
+                        status = "failed" if "failed" in statuses else "cancelled"
+                    elif "running" in statuses:
+                        status = "running"
+                    elif campaign["status"] == "paused":
+                        status = "paused"
+                    else:
+                        status = "queued"
+                    snapshot = json.loads(profile_runs[0]["profile_snapshot_json"]) if profile_runs else {}
+                    suite_scores = {
+                        str(run["suite_id"]): float(run["score"])
+                        for run in profile_runs
+                        if run["status"] == "completed" and run["score"] is not None
+                    }
+                    all_scores = set(suite_scores) == set(EFFICIENCY_SUITE_WEIGHTS)
+                    composite = (
+                        round(
+                            sum(
+                                suite_scores[suite_id] * weight
+                                for suite_id, weight in EFFICIENCY_SUITE_WEIGHTS.items()
+                            ),
+                            6,
+                        )
+                        if all_scores
+                        else None
+                    )
+                    suites = {
+                        reference_suite_map[str(run["suite_id"])]: {
+                            "status": run["status"],
+                            "score": run["score"],
+                            "expectedTasks": int(run["expected_tasks"] or 0),
+                            "completedTasks": int(run["completed_tasks"] or 0),
+                            "passedTasks": int(run["passed_tasks"] or 0),
+                            "failedTasks": int(run["failed_tasks"] or 0),
+                        }
+                        for run in profile_runs
+                        if str(run["suite_id"]) in reference_suite_map
+                    }
+                    invalid = db.execute(
+                        """
+                        SELECT COALESCE(SUM(m.invalid_calls),0) invalid_calls,
+                               COALESCE(SUM(m.response_calls),0) response_calls
+                        FROM runs r
+                        JOIN tasks t ON t.run_id=r.id
+                        LEFT JOIN task_measurements m ON m.task_id=t.id AND m.attempt=t.attempt
+                        WHERE r.campaign_id=? AND r.profile_name=?
+                        """,
+                        (campaign["id"], profile_name),
+                    ).fetchone()
+                    invalid_calls = int(invalid["invalid_calls"] or 0)
+                    response_calls = int(invalid["response_calls"] or 0)
+                    results.append(
+                        {
+                            "profileName": profile_name,
+                            "displayName": snapshot.get("displayName") or profile_name,
+                            "systemType": "agent-system-reference",
+                            "campaignId": campaign["id"],
+                            "status": status,
+                            "createdAt": campaign["created_at"],
+                            "updatedAt": campaign["updated_at"],
+                            "completedAt": campaign["completed_at"],
+                            "expectedTasks": sum(int(run["expected_tasks"] or 0) for run in profile_runs),
+                            "completedTasks": sum(int(run["completed_tasks"] or 0) for run in profile_runs),
+                            "passedTasks": sum(int(run["passed_tasks"] or 0) for run in profile_runs),
+                            "failedTasks": sum(int(run["failed_tasks"] or 0) for run in profile_runs),
+                            "invalidOutputRate": invalid_calls / response_calls if response_calls else 0.0,
+                            "compositeScore": composite,
                             "suites": suites,
                         }
                     )

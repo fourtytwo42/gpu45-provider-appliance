@@ -64,6 +64,51 @@ class StoreTests(unittest.TestCase):
         self.assertEqual("completed", results["model-b"]["status"])
         self.assertEqual(0.5, results["model-b"]["compositeScore"])
 
+    def test_latest_model_results_includes_the_saved_agent_system_reference(self):
+        profile = {
+            "name": "reference-codex-gpt-5.6-sol-medium",
+            "displayName": "Codex GPT-5.6 Sol Medium",
+            "profileHash": "reference-hash",
+            "executionMode": "external-openai",
+        }
+        suite_scores = {
+            "bfcl-efficiency-v1": (4, 1.0),
+            "tau-efficiency-v1": (3, 2 / 3),
+            "swe-efficiency-v1": (2, 0.5),
+            "terminal-efficiency-v1": (2, 0.5),
+        }
+        suites = [
+            {"id": suite_id, "manifestHash": f"hash-{suite_id}", "taskCount": task_count}
+            for suite_id, (task_count, _score) in suite_scores.items()
+        ]
+        campaign_id = self.store.create_campaign("Codex reference", "agent-system-reference-v1", [profile], suites)
+        with self.store.session() as db:
+            db.execute(
+                "UPDATE campaigns SET status='completed',completed_at='2026-01-03T01:00:00Z' WHERE id=?",
+                (campaign_id,),
+            )
+            db.execute("UPDATE runs SET track='reference' WHERE campaign_id=?", (campaign_id,))
+            for suite_id, (task_count, score) in suite_scores.items():
+                passed = round(task_count * score)
+                db.execute(
+                    "UPDATE runs SET status='completed',expected_tasks=?,completed_tasks=?,passed_tasks=?,"
+                    "failed_tasks=?,score=? WHERE campaign_id=? AND suite_id=?",
+                    (task_count, task_count, passed, task_count - passed, score, campaign_id, suite_id),
+                )
+
+        result = next(
+            row
+            for row in self.store.latest_model_results()
+            if row["profileName"] == profile["name"]
+        )
+
+        self.assertEqual("Codex GPT-5.6 Sol Medium", result["displayName"])
+        self.assertEqual("agent-system-reference", result["systemType"])
+        self.assertEqual(11, result["expectedTasks"])
+        self.assertEqual(8, result["passedTasks"])
+        self.assertEqual(0.625, result["compositeScore"])
+        self.assertEqual(1.0, result["suites"]["bfcl-v4-local"]["score"])
+
     def test_model_discovery_uses_served_profiles_and_hashes_settings(self):
         app_db = self.root / "appliance.db"
         model = self.root / "model.gguf"

@@ -61,11 +61,13 @@ export function buildUnifiedBenchmarkRows(
   );
   const latestAgenticByProfile = new Map(agenticResults.map((result) => [result.profileName, result]));
   const unusedRuns = new Set(newestThroughputRuns);
+  const claimedAgenticProfiles = new Set<string>();
   const rows: UnifiedBenchmarkRow[] = models.map((model) => {
     const keys = new Set(modelKeys(model));
     const throughput = newestThroughputRuns.find((run) => unusedRuns.has(run) && runKeys(run).some((key) => keys.has(key))) || null;
     if (throughput) unusedRuns.delete(throughput);
     const agentic = latestAgenticByProfile.get(model.name) || null;
+    if (agentic) claimedAgenticProfiles.add(agentic.profileName);
     return {
       key: model.name,
       profileName: model.name,
@@ -77,6 +79,18 @@ export function buildUnifiedBenchmarkRows(
       latestAt: newestDate(agentic, throughput),
     };
   });
+
+  for (const agentic of agenticResults) {
+    if (claimedAgenticProfiles.has(agentic.profileName)) continue;
+    rows.push({
+      key: `agentic:${agentic.profileName}`,
+      profileName: agentic.profileName,
+      displayName: agentic.displayName || agentic.profileName,
+      agentic,
+      throughput: null,
+      latestAt: newestDate(agentic, null),
+    });
+  }
 
   for (const run of unusedRuns) {
     if (rows.some((row) => row.throughput?.modelName === run.modelName)) continue;
