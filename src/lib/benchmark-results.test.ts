@@ -69,13 +69,13 @@ describe("buildUnifiedBenchmarkRows", () => {
     expect(rows.find((row) => row.profileName === "model-b-q6")?.throughput?.modelName).toBe("provider-generated-name");
   });
 
-  it("keeps unmatched throughput history visible and ranks scored models first", () => {
+  it("omits legacy throughput aliases that are not runnable model profiles", () => {
     const rows = buildUnifiedBenchmarkRows(models, [
       throughput("legacy-model", "2026-07-19T00:00:00Z", 100),
     ], [agentic("model-b-q6", 0.6)]);
 
     expect(rows[0].profileName).toBe("model-b-q6");
-    expect(rows.some((row) => row.profileName === "legacy-model")).toBe(true);
+    expect(rows.some((row) => row.profileName === "legacy-model")).toBe(false);
   });
 
   it("keeps an unmatched agent-system reference as a scored table row", () => {

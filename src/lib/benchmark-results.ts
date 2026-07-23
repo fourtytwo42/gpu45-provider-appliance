@@ -92,18 +92,6 @@ export function buildUnifiedBenchmarkRows(
     });
   }
 
-  for (const run of unusedRuns) {
-    if (rows.some((row) => row.throughput?.modelName === run.modelName)) continue;
-    rows.push({
-      key: `throughput:${run.modelName}`,
-      profileName: run.modelName,
-      displayName: run.modelName,
-      agentic: null,
-      throughput: run,
-      latestAt: run.createdAt,
-    });
-  }
-
   return rows.sort((left, right) => {
     const leftScore = left.agentic?.compositeScore;
     const rightScore = right.agentic?.compositeScore;
