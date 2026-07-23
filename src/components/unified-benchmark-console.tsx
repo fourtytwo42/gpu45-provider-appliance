@@ -50,11 +50,12 @@ function dateLabel(value: string | null): string {
   if (!value) return "Never";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "Unknown";
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: "America/Chicago",
   }).format(parsed);
 }
 
