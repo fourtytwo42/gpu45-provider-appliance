@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import unittest
+from unittest.mock import Mock, patch
 
-from agentic_benchmark.codex_reference_proxy import build_chat_response, build_turn_prompt, listener_hosts, parse_codex_jsonl
+from agentic_benchmark.codex_reference_proxy import (
+    build_chat_response,
+    build_turn_prompt,
+    listener_hosts,
+    parse_codex_jsonl,
+    run_codex_process,
+)
 
 
 class CodexReferenceProxyTests(unittest.TestCase):
@@ -43,6 +51,22 @@ class CodexReferenceProxyTests(unittest.TestCase):
     def test_listener_hosts_adds_docker_bridge_without_public_wildcard(self):
         self.assertEqual(["127.0.0.1", "172.28.0.1"], listener_hosts("127.0.0.1", "172.28.0.1"))
         self.assertNotIn("0.0.0.0", listener_hosts("127.0.0.1", "172.28.0.1"))
+
+    @patch("agentic_benchmark.codex_reference_proxy._signal_process_tree")
+    @patch("agentic_benchmark.codex_reference_proxy.subprocess.Popen")
+    def test_codex_timeout_terminates_the_full_process_tree(self, popen: Mock, signal_tree: Mock):
+        process = popen.return_value
+        process.pid = 42
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired(["codex"], 1),
+            ("", ""),
+        ]
+
+        with self.assertRaises(subprocess.TimeoutExpired):
+            run_codex_process(["codex"], "prompt", 1)
+
+        signal_tree.assert_called_once_with(process)
+        self.assertEqual(2, process.communicate.call_count)
 
 
 if __name__ == "__main__":

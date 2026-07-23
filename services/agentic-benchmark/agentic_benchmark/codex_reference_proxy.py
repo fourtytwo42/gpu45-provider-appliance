@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import shutil
 import subprocess
 import tempfile
@@ -178,6 +179,43 @@ def auth_status() -> tuple[bool, str]:
     return result.returncode == 0 and "Logged in" in message, message
 
 
+def _signal_process_tree(process: subprocess.Popen[str], force: bool = False) -> None:
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+        elif force:
+            process.kill()
+        else:
+            process.terminate()
+    except ProcessLookupError:
+        pass
+
+
+def run_codex_process(command: list[str], prompt: str, timeout: int) -> subprocess.CompletedProcess[str]:
+    """Run one Codex turn and clean up its full process tree on timeout."""
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=WORK_ROOT,
+        env=codex_environment(),
+        text=True,
+        start_new_session=hasattr(os, "killpg"),
+    )
+    try:
+        stdout, stderr = process.communicate(input=prompt, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _signal_process_tree(process)
+        try:
+            process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            _signal_process_tree(process, force=True)
+            process.communicate()
+        raise
+    return subprocess.CompletedProcess(command, int(process.returncode or 0), stdout, stderr)
+
+
 def run_codex_turn(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int], int]:
     WORK_ROOT.mkdir(parents=True, exist_ok=True)
     CODEX_HOME.mkdir(parents=True, exist_ok=True)
@@ -193,10 +231,7 @@ def run_codex_turn(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]
     started = time.monotonic()
     try:
         with RUN_LOCK:
-            result = subprocess.run(
-                command, input=prompt, cwd=WORK_ROOT, env=codex_environment(), capture_output=True,
-                text=True, timeout=REQUEST_TIMEOUT, check=False,
-            )
+            result = run_codex_process(command, prompt, REQUEST_TIMEOUT)
         duration_ms = int((time.monotonic() - started) * 1000)
         parsed, usage = parse_codex_jsonl(result.stdout)
         if result.returncode:
