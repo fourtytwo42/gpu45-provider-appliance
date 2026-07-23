@@ -75,6 +75,10 @@ function missingThroughputLabel(result: AgenticLatestResult | null): string {
   return result?.systemType === "agent-system-reference" ? "Cloud n/a" : "Not tested";
 }
 
+function estimatedRate(value: number | null | undefined, result: AgenticLatestResult | null): string {
+  return value === null || value === undefined ? missingThroughputLabel(result) : `~${formatNumber(value, 1)}`;
+}
+
 async function responseJson<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -310,12 +314,22 @@ export function UnifiedBenchmarkConsole({ initialRuns, agenticModels, agenticRes
                   </td>
                   <td className="px-3 py-4 font-mono text-xs">{row.agentic ? percent(row.agentic.invalidOutputRate) : "Not tested"}</td>
                   <td className="border-l border-white/[0.06] px-3 py-4 font-mono text-cyan-200">
-                    {row.throughput ? formatNumber(row.throughput.promptTokensPerSecond, 1) : missingThroughputLabel(row.agentic)}
+                    {row.throughput
+                      ? formatNumber(row.throughput.promptTokensPerSecond, 1)
+                      : estimatedRate(row.agentic?.estimatedPromptTokensPerSecond, row.agentic)}
                   </td>
                   <td className="px-3 py-4 font-mono font-semibold text-cyan-200">
-                    {row.throughput ? formatNumber(row.throughput.generationTokensPerSecond, 1) : missingThroughputLabel(row.agentic)}
+                    {row.throughput
+                      ? formatNumber(row.throughput.generationTokensPerSecond, 1)
+                      : estimatedRate(row.agentic?.estimatedOutputTokensPerSecond, row.agentic)}
                   </td>
-                  <td className="px-3 py-4 font-mono text-xs">{row.throughput ? formatDuration(row.throughput.durationMs) : missingThroughputLabel(row.agentic)}</td>
+                  <td className="px-3 py-4 font-mono text-xs">
+                    {row.throughput
+                      ? formatDuration(row.throughput.durationMs)
+                      : row.agentic?.interactionDurationMs
+                        ? `~${formatDuration(row.agentic.interactionDurationMs)}`
+                        : missingThroughputLabel(row.agentic)}
+                  </td>
                   <td className="px-3 py-4 font-mono text-xs">
                     {row.throughput?.peakGpuTempC == null ? missingThroughputLabel(row.agentic) : `${formatNumber(row.throughput.peakGpuTempC, 1)} C`}
                   </td>
@@ -334,8 +348,9 @@ export function UnifiedBenchmarkConsole({ initialRuns, agenticModels, agenticRes
         </table>
       </div>
       <div className="border-t border-white/8 px-5 py-3 text-xs text-slate-500">
-        Agentic composite weights: SWE 35%, Terminal 30%, BFCL 20%, Tau 15%. Local models use the 67-task common suite.
-        Agent-system references use their saved 11-task reference panel and do not report local GPU throughput or hardware metrics.
+        Agentic composite weights: SWE 35%, Terminal 30%, BFCL 20%, Tau 15%. Every scored row uses the same 70-task common suite.
+        Local tok/s comes from two fixed hardware passes. Codex values prefixed with ~ are interaction estimates from recorded API
+        token counts divided by summed response duration; cloud GPU and VRAM metrics are unavailable.
       </div>
     </section>
   );

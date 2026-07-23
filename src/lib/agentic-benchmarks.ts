@@ -75,6 +75,10 @@ export type AgenticLatestResult = {
   invalidOutputRate: number;
   compositeScore: number | null;
   suites: Record<string, AgenticLatestSuiteResult>;
+  estimatedPromptTokensPerSecond?: number | null;
+  estimatedOutputTokensPerSecond?: number | null;
+  interactionDurationMs?: number | null;
+  throughputMethod?: "agentic-api-interaction" | null;
 };
 
 export type AgenticEfficiencyRow = {

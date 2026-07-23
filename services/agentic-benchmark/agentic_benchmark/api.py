@@ -248,6 +248,15 @@ class Handler(BaseHTTPRequestHandler):
                         HTTPStatus.OK if reference_id else HTTPStatus.CONFLICT,
                         {"ok": bool(reference_id), "referenceCampaignId": reference_id},
                     )
+                elif action == "reference-common":
+                    reference_id = STORE.create_reference_common_campaign(
+                        segments[2],
+                        load_reference_profiles(PACKAGE_ROOT / "reference-profiles"),
+                    )
+                    self._json(
+                        HTTPStatus.OK if reference_id else HTTPStatus.CONFLICT,
+                        {"ok": bool(reference_id), "referenceCampaignId": reference_id},
+                    )
                 else:
                     found = STORE.set_campaign_action(segments[2], action)
                     self._json(HTTPStatus.OK if found else HTTPStatus.NOT_FOUND, {"ok": found})

@@ -168,6 +168,56 @@ class BenchmarkStore:
         results: list[dict[str, Any]] = []
         seen_profiles: set[str] = set()
         terminal_statuses = {"completed", "failed", "cancelled"}
+
+        def result_status(campaign: sqlite3.Row, runs: list[dict[str, Any]]) -> str:
+            statuses = {str(run["status"]) for run in runs}
+            if runs and statuses == {"completed"}:
+                return "completed"
+            if statuses and statuses.issubset(terminal_statuses):
+                return "failed" if "failed" in statuses else "cancelled"
+            if "running" in statuses:
+                return "running"
+            if campaign["status"] == "paused":
+                return "paused"
+            return "queued"
+
+        def interaction_metrics(
+            db: sqlite3.Connection,
+            campaign_id: str,
+            profile_name: str,
+        ) -> dict[str, Any]:
+            row = db.execute(
+                """
+                SELECT COALESCE(SUM(m.invalid_calls),0) invalid_calls,
+                       COALESCE(SUM(m.response_calls),0) response_calls,
+                       COALESCE(SUM(m.prompt_tokens),0) prompt_tokens,
+                       COALESCE(SUM(m.completion_tokens),0) completion_tokens,
+                       COALESCE(SUM(m.active_inference_ms),0) active_inference_ms
+                FROM runs r
+                JOIN tasks t ON t.run_id=r.id
+                LEFT JOIN task_measurements m ON m.task_id=t.id AND m.attempt=t.attempt
+                WHERE r.campaign_id=? AND r.profile_name=?
+                """,
+                (campaign_id, profile_name),
+            ).fetchone()
+            invalid_calls = int(row["invalid_calls"] or 0)
+            response_calls = int(row["response_calls"] or 0)
+            prompt_tokens = int(row["prompt_tokens"] or 0)
+            completion_tokens = int(row["completion_tokens"] or 0)
+            active_inference_ms = int(row["active_inference_ms"] or 0)
+            active_seconds = active_inference_ms / 1000
+            return {
+                "invalidOutputRate": invalid_calls / response_calls if response_calls else 0.0,
+                "estimatedPromptTokensPerSecond": (
+                    round(prompt_tokens / active_seconds, 3) if active_seconds else None
+                ),
+                "estimatedOutputTokensPerSecond": (
+                    round(completion_tokens / active_seconds, 3) if active_seconds else None
+                ),
+                "interactionDurationMs": active_inference_ms or None,
+                "throughputMethod": "agentic-api-interaction" if active_seconds else None,
+            }
+
         with self.session() as db:
             campaigns = db.execute(
                 "SELECT * FROM campaigns WHERE preset='common' ORDER BY created_at DESC"
@@ -189,17 +239,7 @@ class BenchmarkStore:
                         continue
                     seen_profiles.add(profile_name)
                     profile_runs = [run for run in runs if run["profile_name"] == profile_name]
-                    statuses = {str(run["status"]) for run in profile_runs}
-                    if profile_runs and statuses == {"completed"}:
-                        status = "completed"
-                    elif statuses and statuses.issubset(terminal_statuses):
-                        status = "failed" if "failed" in statuses else "cancelled"
-                    elif "running" in statuses:
-                        status = "running"
-                    elif campaign["status"] == "paused":
-                        status = "paused"
-                    else:
-                        status = "queued"
+                    status = result_status(campaign, profile_runs)
                     ranking = ranking_by_profile.get(profile_name, {})
                     suites = {
                         str(run["suite_id"]): {
@@ -230,13 +270,81 @@ class BenchmarkStore:
                         }
                     )
 
+            seen_reference_profiles: set[str] = set()
+            common_reference_campaigns = db.execute(
+                "SELECT * FROM campaigns WHERE preset='agent-system-common-v1' ORDER BY created_at DESC"
+            ).fetchall()
+            for campaign in common_reference_campaigns:
+                runs = [
+                    dict(row)
+                    for row in db.execute(
+                        "SELECT * FROM runs WHERE campaign_id=? AND track='reference' ORDER BY created_at",
+                        (campaign["id"],),
+                    )
+                ]
+                profile_names = list(dict.fromkeys(str(run["profile_name"]) for run in runs))
+                for profile_name in profile_names:
+                    if profile_name in seen_reference_profiles:
+                        continue
+                    seen_reference_profiles.add(profile_name)
+                    profile_runs = [run for run in runs if run["profile_name"] == profile_name]
+                    snapshot = json.loads(profile_runs[0]["profile_snapshot_json"]) if profile_runs else {}
+                    suite_scores = {
+                        str(run["suite_id"]): float(run["score"])
+                        for run in profile_runs
+                        if run["status"] == "completed" and run["score"] is not None
+                    }
+                    all_scores = set(suite_scores) == set(COMMON_WEIGHTS)
+                    composite = (
+                        round(
+                            sum(
+                                suite_scores[suite_id] * weight
+                                for suite_id, weight in COMMON_WEIGHTS.items()
+                            ),
+                            6,
+                        )
+                        if all_scores
+                        else None
+                    )
+                    suites = {
+                        str(run["suite_id"]): {
+                            "status": run["status"],
+                            "score": run["score"],
+                            "expectedTasks": int(run["expected_tasks"] or 0),
+                            "completedTasks": int(run["completed_tasks"] or 0),
+                            "passedTasks": int(run["passed_tasks"] or 0),
+                            "failedTasks": int(run["failed_tasks"] or 0),
+                        }
+                        for run in profile_runs
+                        if str(run["suite_id"]) in COMMON_WEIGHTS
+                    }
+                    metrics = interaction_metrics(db, str(campaign["id"]), profile_name)
+                    results.append(
+                        {
+                            "profileName": profile_name,
+                            "displayName": snapshot.get("displayName") or profile_name,
+                            "systemType": "agent-system-reference",
+                            "campaignId": campaign["id"],
+                            "status": result_status(campaign, profile_runs),
+                            "createdAt": campaign["created_at"],
+                            "updatedAt": campaign["updated_at"],
+                            "completedAt": campaign["completed_at"],
+                            "expectedTasks": sum(int(run["expected_tasks"] or 0) for run in profile_runs),
+                            "completedTasks": sum(int(run["completed_tasks"] or 0) for run in profile_runs),
+                            "passedTasks": sum(int(run["passed_tasks"] or 0) for run in profile_runs),
+                            "failedTasks": sum(int(run["failed_tasks"] or 0) for run in profile_runs),
+                            "compositeScore": composite,
+                            "suites": suites,
+                            **metrics,
+                        }
+                    )
+
             reference_suite_map = {
                 "bfcl-efficiency-v1": "bfcl-v4-local",
                 "tau-efficiency-v1": "tau-text-base",
                 "swe-efficiency-v1": "swe-verified-mini50",
                 "terminal-efficiency-v1": "terminal-bench-2",
             }
-            seen_reference_profiles: set[str] = set()
             reference_campaigns = db.execute(
                 "SELECT * FROM campaigns WHERE preset='agent-system-reference-v1' ORDER BY created_at DESC"
             ).fetchall()
@@ -254,17 +362,7 @@ class BenchmarkStore:
                         continue
                     seen_reference_profiles.add(profile_name)
                     profile_runs = [run for run in runs if run["profile_name"] == profile_name]
-                    statuses = {str(run["status"]) for run in profile_runs}
-                    if profile_runs and statuses == {"completed"}:
-                        status = "completed"
-                    elif statuses and statuses.issubset(terminal_statuses):
-                        status = "failed" if "failed" in statuses else "cancelled"
-                    elif "running" in statuses:
-                        status = "running"
-                    elif campaign["status"] == "paused":
-                        status = "paused"
-                    else:
-                        status = "queued"
+                    status = result_status(campaign, profile_runs)
                     snapshot = json.loads(profile_runs[0]["profile_snapshot_json"]) if profile_runs else {}
                     suite_scores = {
                         str(run["suite_id"]): float(run["score"])
@@ -295,19 +393,7 @@ class BenchmarkStore:
                         for run in profile_runs
                         if str(run["suite_id"]) in reference_suite_map
                     }
-                    invalid = db.execute(
-                        """
-                        SELECT COALESCE(SUM(m.invalid_calls),0) invalid_calls,
-                               COALESCE(SUM(m.response_calls),0) response_calls
-                        FROM runs r
-                        JOIN tasks t ON t.run_id=r.id
-                        LEFT JOIN task_measurements m ON m.task_id=t.id AND m.attempt=t.attempt
-                        WHERE r.campaign_id=? AND r.profile_name=?
-                        """,
-                        (campaign["id"], profile_name),
-                    ).fetchone()
-                    invalid_calls = int(invalid["invalid_calls"] or 0)
-                    response_calls = int(invalid["response_calls"] or 0)
+                    metrics = interaction_metrics(db, str(campaign["id"]), profile_name)
                     results.append(
                         {
                             "profileName": profile_name,
@@ -322,9 +408,9 @@ class BenchmarkStore:
                             "completedTasks": sum(int(run["completed_tasks"] or 0) for run in profile_runs),
                             "passedTasks": sum(int(run["passed_tasks"] or 0) for run in profile_runs),
                             "failedTasks": sum(int(run["failed_tasks"] or 0) for run in profile_runs),
-                            "invalidOutputRate": invalid_calls / response_calls if response_calls else 0.0,
                             "compositeScore": composite,
                             "suites": suites,
+                            **metrics,
                         }
                     )
         return results
@@ -498,6 +584,100 @@ class BenchmarkStore:
             self._event(
                 db, campaign_id, None, None, "campaign.reference_queued",
                 "Queued Codex agent-system reference panel",
+                {"targetCampaignId": target_id, "profile": profile["name"]},
+            )
+        return target_id
+
+    def create_reference_common_campaign(
+        self,
+        campaign_id: str,
+        profiles: list[dict[str, Any]],
+    ) -> str | None:
+        """Run a reference agent against the source campaign's exact common-suite snapshots."""
+        source = self.campaign_detail(campaign_id)
+        if not source or source["campaign"]["preset"] != "common" or len(profiles) != 1:
+            return None
+        suite_by_id: dict[str, dict[str, Any]] = {}
+        for run in source["runs"]:
+            suite_id = str(run["suite_id"])
+            if (
+                run["track"] == "controlled"
+                and suite_id in COMMON_WEIGHTS
+                and suite_id not in suite_by_id
+            ):
+                suite_by_id[suite_id] = json.loads(str(run["suite_snapshot_json"]))
+        if set(suite_by_id) != set(COMMON_WEIGHTS):
+            return None
+        selected_suites = list(suite_by_id.values())
+        desired_config = {
+            "preset": "agent-system-common-v1",
+            "profiles": [
+                {"name": profile["name"], "profileHash": profile["profileHash"]}
+                for profile in profiles
+            ],
+            "suites": [
+                {"id": suite["id"], "manifestHash": suite["manifestHash"]}
+                for suite in selected_suites
+            ],
+            "weights": COMMON_WEIGHTS,
+        }
+        desired_hash = configuration_hash(desired_config)
+        link_type = "reference-common"
+        with self.session() as db:
+            existing = db.execute(
+                """
+                SELECT l.target_campaign_id,c.configuration_hash
+                FROM campaign_links l JOIN campaigns c ON c.id=l.target_campaign_id
+                WHERE l.source_campaign_id=? AND l.link_type=?
+                """,
+                (campaign_id, link_type),
+            ).fetchone()
+            if existing and existing["configuration_hash"] == desired_hash:
+                return str(existing["target_campaign_id"])
+            if existing:
+                stale_id = str(existing["target_campaign_id"])
+                stamp = now()
+                message = "Superseded by updated full reference configuration"
+                db.execute(
+                    "UPDATE campaigns SET status='cancelled',error=?,current_run_id=NULL,completed_at=?,updated_at=? WHERE id=?",
+                    (message, stamp, stamp, stale_id),
+                )
+                db.execute(
+                    "UPDATE runs SET status='cancelled',error=?,lease_id=NULL,completed_at=?,updated_at=? "
+                    "WHERE campaign_id=? AND status NOT IN ('completed','failed','cancelled')",
+                    (message, stamp, stamp, stale_id),
+                )
+                db.execute(
+                    "UPDATE tasks SET status='cancelled',error_class='cancelled',user_message=?,"
+                    "completed_at=?,updated_at=? WHERE run_id IN "
+                    "(SELECT id FROM runs WHERE campaign_id=?) "
+                    "AND status NOT IN ('completed','failed','cancelled')",
+                    (message, stamp, stamp, stale_id),
+                )
+                db.execute(
+                    "DELETE FROM campaign_links WHERE source_campaign_id=? AND link_type=?",
+                    (campaign_id, link_type),
+                )
+        profile = profiles[0]
+        target_id = self.create_campaign(
+            f"{profile.get('displayName') or profile['name']} full comparison for {source['campaign']['name']}",
+            "agent-system-common-v1",
+            profiles,
+            selected_suites,
+        )
+        with self.session() as db:
+            db.execute("UPDATE runs SET track='reference' WHERE campaign_id=?", (target_id,))
+            db.execute(
+                "INSERT INTO campaign_links(source_campaign_id,target_campaign_id,link_type,created_at) VALUES(?,?,?,?)",
+                (campaign_id, target_id, link_type, now()),
+            )
+            self._event(
+                db,
+                campaign_id,
+                None,
+                None,
+                "campaign.reference_common_queued",
+                "Queued Codex full common-suite comparison",
                 {"targetCampaignId": target_id, "profile": profile["name"]},
             )
         return target_id
@@ -969,6 +1149,7 @@ class BenchmarkStore:
                   AND r.status IN ('queued','interrupted')
                 ORDER BY
                   CASE c.preset
+                    WHEN 'agent-system-common-v1' THEN 0
                     WHEN 'agent-system-reference-v1' THEN 0
                     ELSE 1
                   END,

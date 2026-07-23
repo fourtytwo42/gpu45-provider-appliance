@@ -21,14 +21,14 @@ const agenticResults: AgenticLatestResult[] = [{
   createdAt: "2026-07-20T00:00:00Z",
   updatedAt: "2026-07-20T01:00:00Z",
   completedAt: "2026-07-20T01:00:00Z",
-  expectedTasks: 67,
-  completedTasks: 67,
+  expectedTasks: 70,
+  completedTasks: 70,
   passedTasks: 50,
   failedTasks: 17,
   invalidOutputRate: 0.01,
   compositeScore: 0.75,
   suites: {
-    "bfcl-v4-local": { status: "completed", score: 0.8, expectedTasks: 33, completedTasks: 33, passedTasks: 26, failedTasks: 7 },
+    "bfcl-v4-local": { status: "completed", score: 0.8, expectedTasks: 36, completedTasks: 36, passedTasks: 29, failedTasks: 7 },
   },
 }];
 
@@ -62,6 +62,26 @@ describe("UnifiedBenchmarkConsole", () => {
     expect(row).toHaveTextContent("35.0");
     expect(screen.queryByText("Campaigns")).not.toBeInTheDocument();
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  });
+
+  it("labels Codex interaction throughput as estimated", () => {
+    const reference: AgenticLatestResult = {
+      ...agenticResults[0],
+      profileName: "reference-codex",
+      displayName: "Codex GPT-5.6 Sol Medium",
+      systemType: "agent-system-reference",
+      estimatedPromptTokensPerSecond: 1527.1,
+      estimatedOutputTokensPerSecond: 24.83,
+      interactionDurationMs: 1_074_450,
+    };
+
+    render(<UnifiedBenchmarkConsole initialRuns={[]} agenticModels={[]} agenticResults={[reference]} />);
+
+    const row = screen.getByText("Codex GPT-5.6 Sol Medium").closest("tr");
+    expect(row).toHaveTextContent("~1527.1");
+    expect(row).toHaveTextContent("~24.8");
+    expect(row).toHaveTextContent("~17m 54s");
+    expect(row).toHaveTextContent("Cloud n/a");
   });
 
   it("starts every model with the fixed throughput recipe", async () => {

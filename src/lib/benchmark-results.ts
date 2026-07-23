@@ -2,7 +2,7 @@ import type { AgenticLatestResult, AgenticModel } from "./agentic-benchmarks";
 import type { BenchmarkRun } from "./types";
 
 export const COMMON_AGENTIC_SUITES = [
-  { id: "bfcl-v4-local", label: "BFCL", tasks: 33 },
+  { id: "bfcl-v4-local", label: "BFCL", tasks: 36 },
   { id: "tau-text-base", label: "Tau", tasks: 18 },
   { id: "swe-verified-mini50", label: "SWE", tasks: 8 },
   { id: "terminal-bench-2", label: "Terminal", tasks: 8 },

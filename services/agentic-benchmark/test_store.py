@@ -109,6 +109,95 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(0.625, result["compositeScore"])
         self.assertEqual(1.0, result["suites"]["bfcl-v4-local"]["score"])
 
+    def test_full_reference_reuses_exact_common_snapshots_and_reports_interaction_rates(self):
+        local_profile = {"name": "local", "profileHash": "local-hash"}
+        suite_counts = {
+            "bfcl-v4-local": 36,
+            "tau-text-base": 18,
+            "swe-verified-mini50": 8,
+            "terminal-bench-2": 8,
+        }
+        common_suites = [
+            {
+                "id": suite_id,
+                "manifestHash": f"saved-hash-{suite_id}",
+                "taskCount": task_count,
+                "savedSelection": f"exact-{suite_id}",
+            }
+            for suite_id, task_count in suite_counts.items()
+        ]
+        source_id = self.store.create_campaign("Common", "common", [local_profile], common_suites)
+        reference = {
+            "name": "reference-codex",
+            "displayName": "Codex GPT-5.6 Sol Medium",
+            "profileHash": "reference-hash",
+            "executionMode": "external-openai",
+        }
+
+        reference_id = self.store.create_reference_common_campaign(source_id, [reference])
+        duplicate_id = self.store.create_reference_common_campaign(source_id, [reference])
+
+        self.assertEqual(reference_id, duplicate_id)
+        detail = self.store.campaign_detail(str(reference_id))
+        self.assertEqual("agent-system-common-v1", detail["campaign"]["preset"])
+        self.assertEqual({"reference"}, {run["track"] for run in detail["runs"]})
+        self.assertEqual(70, sum(int(run["expected_tasks"]) for run in detail["runs"]))
+        for run in detail["runs"]:
+            snapshot = json.loads(run["suite_snapshot_json"])
+            self.assertEqual(f"exact-{run['suite_id']}", snapshot["savedSelection"])
+
+        legacy_id = self.store.create_campaign(
+            "Legacy reference",
+            "agent-system-reference-v1",
+            [reference],
+            [{"id": "bfcl-efficiency-v1", "manifestHash": "legacy", "taskCount": 1}],
+        )
+        with self.store.session() as db:
+            db.execute("UPDATE runs SET track='reference' WHERE campaign_id=?", (legacy_id,))
+            for run in db.execute(
+                "SELECT id,suite_id,expected_tasks FROM runs WHERE campaign_id=?",
+                (reference_id,),
+            ):
+                expected = int(run["expected_tasks"])
+                db.execute(
+                    "UPDATE runs SET status='completed',completed_tasks=?,passed_tasks=?,"
+                    "failed_tasks=?,score=0.5 WHERE id=?",
+                    (expected, expected // 2, expected - expected // 2, run["id"]),
+                )
+                task_id = f"task-{run['suite_id']}"
+                db.execute(
+                    "INSERT INTO tasks(id,run_id,external_task_id,status,passed,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (task_id, run["id"], "case", "completed", 1, now(), now()),
+                )
+                db.execute(
+                    "INSERT INTO task_measurements("
+                    "task_id,attempt,active_inference_ms,response_calls,invalid_calls,prompt_tokens,"
+                    "completion_tokens,measurement_status,created_at,updated_at"
+                    ") VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (task_id, 1, 1000, 1, 0, 100, 25, "complete", now(), now()),
+                )
+            db.execute(
+                "UPDATE campaigns SET status='completed',completed_at=? WHERE id=?",
+                (now(), reference_id),
+            )
+
+        matching = [
+            row
+            for row in self.store.latest_model_results()
+            if row["profileName"] == reference["name"]
+        ]
+
+        self.assertEqual(1, len(matching))
+        result = matching[0]
+        self.assertEqual(reference_id, result["campaignId"])
+        self.assertEqual(70, result["expectedTasks"])
+        self.assertEqual(0.5, result["compositeScore"])
+        self.assertEqual(100.0, result["estimatedPromptTokensPerSecond"])
+        self.assertEqual(25.0, result["estimatedOutputTokensPerSecond"])
+        self.assertEqual(4000, result["interactionDurationMs"])
+        self.assertEqual("agentic-api-interaction", result["throughputMethod"])
+
     def test_model_discovery_uses_served_profiles_and_hashes_settings(self):
         app_db = self.root / "appliance.db"
         model = self.root / "model.gguf"
