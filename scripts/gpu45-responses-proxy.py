@@ -322,6 +322,8 @@ def ensure_model_loaded(model):
         active = subprocess.run(["systemctl", "is-active", "--quiet", PROVIDER_SERVICE], check=False).returncode == 0
         if not active:
             subprocess.run(["systemctl", "start", PROVIDER_SERVICE], check=True, timeout=30)
+            if not wait_for_backend():
+                raise RuntimeError(f"Model {model['servedAlias']} did not become ready")
         return
 
     profile_path = Path(PROFILE_PATH)

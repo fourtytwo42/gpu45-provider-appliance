@@ -108,6 +108,54 @@ class NamespaceToolTranslationTests(unittest.TestCase):
 
         run.assert_not_called()
 
+    @mock.patch.object(PROXY, "wait_for_backend", return_value=True)
+    @mock.patch.object(PROXY, "model_launch_profile", return_value=None)
+    @mock.patch.object(PROXY, "model_companions", return_value=(None, None))
+    @mock.patch.object(PROXY, "db_connect")
+    @mock.patch.object(PROXY, "read_profile")
+    @mock.patch.object(PROXY.subprocess, "run")
+    def test_cold_matching_profile_waits_for_backend(
+        self,
+        run,
+        read_profile,
+        db_connect,
+        _model_companions,
+        _model_launch_profile,
+        wait_for_backend,
+    ):
+        model = {
+            "path": "/models/ornith.gguf",
+            "name": "ornith.gguf",
+            "servedAlias": "ornith",
+        }
+        read_profile.return_value = {
+            "modelPath": model["path"],
+            "alias": model["servedAlias"],
+            "modelDraftPath": None,
+            "mmprojPath": None,
+            "specType": "none",
+        }
+        db_connect.return_value.__enter__.return_value = mock.MagicMock()
+        run.side_effect = [mock.Mock(returncode=3), mock.Mock(returncode=0)]
+
+        PROXY.ensure_model_loaded(model)
+
+        self.assertEqual(
+            run.call_args_list,
+            [
+                mock.call(
+                    ["systemctl", "is-active", "--quiet", PROXY.PROVIDER_SERVICE],
+                    check=False,
+                ),
+                mock.call(
+                    ["systemctl", "start", PROXY.PROVIDER_SERVICE],
+                    check=True,
+                    timeout=30,
+                ),
+            ],
+        )
+        wait_for_backend.assert_called_once_with()
+
     def test_flattens_namespace_tools_and_preserves_regular_tools(self):
         body = {
             "tools": [
