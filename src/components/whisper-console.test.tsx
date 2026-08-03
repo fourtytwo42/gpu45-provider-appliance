@@ -10,7 +10,7 @@ vi.mock("@/lib/appliance-events", () => ({
 const snapshot = {
   healthy: true,
   serviceUrl: "http://127.0.0.1:8020",
-  models: ["small"],
+  models: ["small", "medium"],
   outlineModel: "ornith-fast",
   jobs: [{
     id: "transcript-1",
@@ -31,6 +31,7 @@ describe("WhisperConsole", () => {
     render(<WhisperConsole initialSnapshot={snapshot} />);
 
     expect(screen.getByRole("checkbox", { name: /Generate outline after transcription/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /Model size/i })).toHaveValue("medium");
     expect(screen.getByRole("link", { name: /Transcript/i })).toHaveAttribute("href", "/api/whisper/output?id=transcript-1");
     expect(screen.getByRole("link", { name: /Outline/i })).toHaveAttribute("href", "/api/whisper/output?id=transcript-1&asset=outline");
     expect(screen.getByRole("button", { name: /Refresh outline/i })).toBeEnabled();

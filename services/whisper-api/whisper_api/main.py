@@ -2,6 +2,7 @@ import os
 import shutil
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from threading import Event, Lock, Thread
@@ -10,7 +11,6 @@ from typing import Literal
 from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from faster_whisper import WhisperModel
 from pydantic import BaseModel
 from gpu45_resource import acquire_lease, activate_profile, resource_state, touch_worker, unload_provider
 from .job_store import JobStore
@@ -32,13 +32,15 @@ OUTLINE_DIR = DATA_DIR / "outlines"
 JOBS_PATH = DATA_DIR / "jobs.json"
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+BACKEND = os.environ.get("WHISPER_BACKEND", "faster-whisper").strip().lower()
+MODEL_DIR = Path(os.environ.get("WHISPER_MODEL_DIR", str(DATA_DIR / "models")))
 GPU_ENABLED = DEVICE.lower() != "cpu"
 
 _jobs_lock = Lock()
 _model_lock = Lock()
 _outline_lock = Lock()
 _active_outline_jobs: set[str] = set()
-_model_cache: dict[str, WhisperModel] = {}
+_model_cache: dict[str, object] = {}
 _job_store = JobStore(JOBS_PATH)
 
 
@@ -158,11 +160,71 @@ def update_job(job_id: str, **updates) -> dict:
     raise KeyError(job_id)
 
 
-def get_model(name: str) -> WhisperModel:
+@dataclass
+class TranscriptSegment:
+    start: float
+    end: float
+    text: str
+
+
+@dataclass
+class TranscriptInfo:
+    language: str | None
+    duration: float
+
+
+def get_model(name: str):
     with _model_lock:
         if name not in _model_cache:
-            _model_cache[name] = WhisperModel(name, device=DEVICE, compute_type=COMPUTE_TYPE)
+            MODEL_DIR.mkdir(parents=True, exist_ok=True)
+            if BACKEND == "openai-whisper":
+                import torch
+                import whisper
+
+                if DEVICE.lower() != "cpu" and not torch.cuda.is_available():
+                    raise RuntimeError("ROCm GPU is unavailable to PyTorch; refusing to fall back to CPU")
+                # Keep only one GPU model resident. The selectable large models do not
+                # fit safely beside one another on the appliance's 32 GB GPU.
+                if _model_cache:
+                    _model_cache.clear()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                _model_cache[name] = whisper.load_model(name, device=DEVICE, download_root=str(MODEL_DIR))
+            elif BACKEND == "faster-whisper":
+                from faster_whisper import WhisperModel
+
+                _model_cache[name] = WhisperModel(name, device=DEVICE, compute_type=COMPUTE_TYPE, download_root=str(MODEL_DIR))
+            else:
+                raise RuntimeError(f"Unsupported Whisper backend: {BACKEND}")
         return _model_cache[name]
+
+
+def transcribe_audio(model, input_path: str, job: dict):
+    language = job.get("language") or None
+    if BACKEND == "openai-whisper":
+        result = model.transcribe(
+            input_path,
+            task=job["task"],
+            language=language,
+            fp16=DEVICE.lower() != "cpu",
+            verbose=False,
+        )
+        segments = [
+            TranscriptSegment(
+                start=float(segment.get("start", 0.0) or 0.0),
+                end=float(segment.get("end", 0.0) or 0.0),
+                text=str(segment.get("text", "")),
+            )
+            for segment in result.get("segments", [])
+        ]
+        duration = max((segment.end for segment in segments), default=0.0)
+        return iter(segments), TranscriptInfo(language=result.get("language") or language, duration=duration)
+    return model.transcribe(
+        input_path,
+        task=job["task"],
+        language=language,
+        vad_filter=True,
+    )
 
 
 def timestamp(seconds: float) -> str:
@@ -216,12 +278,7 @@ def run_transcription(job_id: str, input_path: str) -> None:
             lease = acquire_lease(job_id, "whisper", 70, False, "atomic", timeout=1800)
         update_job(job_id, progress_label="Loading model")
         model = get_model(job["model"])
-        segments_iter, info = model.transcribe(
-            input_path,
-            task=job["task"],
-            language=job.get("language") or None,
-            vad_filter=True,
-        )
+        segments_iter, info = transcribe_audio(model, input_path, job)
         media_duration = float(getattr(info, "duration", 0.0) or 0.0)
         update_job(
             job_id,
@@ -411,6 +468,7 @@ def health():
     return {
         "status": "ok",
         "models": MODEL_NAMES,
+        "backend": BACKEND,
         "device": DEVICE,
         "compute_type": COMPUTE_TYPE,
         "outline_model": f"Auto: {OUTLINE_MODEL} / {OUTLINE_LONG_MODEL}",
@@ -428,7 +486,7 @@ def list_jobs():
 async def create_job(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    model: str = Form("small"),
+    model: str = Form("medium"),
     task: Literal["transcribe", "translate"] = Form("transcribe"),
     language: str | None = Form(None),
     generate_outline: bool = Form(False),

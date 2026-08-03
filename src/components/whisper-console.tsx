@@ -171,7 +171,7 @@ export function WhisperConsole({ initialSnapshot }: { initialSnapshot: WhisperSn
           </label>
           <label className="grid gap-2 text-sm text-slate-300">
             Model size
-            <select name="model" defaultValue="small" className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
+            <select name="model" defaultValue={models.includes("medium") ? "medium" : models[0]} className="border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60">
               {models.map((model) => <option key={model} value={model}>{model}</option>)}
             </select>
           </label>
