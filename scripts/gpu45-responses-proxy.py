@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+import base64
 import json
 import hashlib
+import hmac
 import os
 import queue
 import re
@@ -31,6 +33,10 @@ LLM_IDLE_SECONDS = float(os.environ.get("GPU45_LLM_IDLE_SECONDS", "120"))
 LLM_IDLE_LOCK = threading.Lock()
 LLM_IDLE_TIMER = None
 LLM_IDLE_GENERATION = 0
+COMPACTION_ENVELOPE_PREFIX = "gpu45c1."
+COMPACTION_INSTRUCTION = """Create a compact continuation state for the conversation above.
+
+Preserve every fact needed to continue the work correctly: the user's active request and preferences, decisions, constraints, exact identifiers and paths, completed work, current state, failures and diagnoses, pending work, and any tool results that matter. Discard repetition and conversational filler. Do not answer the user's request or call tools. Return only the continuation summary in plain text."""
 
 
 def cancel_llm_idle_unload():
@@ -706,6 +712,166 @@ def text_from_input(value):
     return json.dumps(value, ensure_ascii=False)
 
 
+def compaction_secret():
+    configured = os.environ.get("GPU45_COMPACTION_SECRET")
+    if configured:
+        return configured.encode("utf-8")
+    try:
+        machine_id = Path("/etc/machine-id").read_bytes().strip()
+    except OSError:
+        machine_id = b"gpu45-development-machine"
+    return hashlib.sha256(b"gpu45-responses-compaction-v1\0" + machine_id).digest()
+
+
+def _compaction_keystream(secret, nonce, length):
+    output = bytearray()
+    counter = 0
+    while len(output) < length:
+        output.extend(hmac.new(secret, nonce + counter.to_bytes(4, "big"), hashlib.sha256).digest())
+        counter += 1
+    return bytes(output[:length])
+
+
+def encode_compaction(summary):
+    plaintext = json.dumps(
+        {"version": 1, "summary": str(summary)}, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    secret = compaction_secret()
+    nonce = os.urandom(16)
+    stream = _compaction_keystream(secret, nonce, len(plaintext))
+    ciphertext = bytes(left ^ right for left, right in zip(plaintext, stream))
+    tag = hmac.new(secret, b"gpu45-compaction-v1\0" + nonce + ciphertext, hashlib.sha256).digest()
+    encoded = base64.urlsafe_b64encode(nonce + tag + ciphertext).decode("ascii").rstrip("=")
+    return COMPACTION_ENVELOPE_PREFIX + encoded
+
+
+def decode_compaction(value):
+    if not isinstance(value, str) or not value.startswith(COMPACTION_ENVELOPE_PREFIX):
+        raise ValueError("Compaction state was not created by this GPU45 appliance")
+    encoded = value[len(COMPACTION_ENVELOPE_PREFIX):]
+    try:
+        packed = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+    except Exception as exc:
+        raise ValueError("Compaction state has invalid encoding") from exc
+    if len(packed) < 49:
+        raise ValueError("Compaction state is truncated")
+    nonce, supplied_tag, ciphertext = packed[:16], packed[16:48], packed[48:]
+    secret = compaction_secret()
+    expected_tag = hmac.new(
+        secret, b"gpu45-compaction-v1\0" + nonce + ciphertext, hashlib.sha256
+    ).digest()
+    if not hmac.compare_digest(supplied_tag, expected_tag):
+        raise ValueError("Compaction state failed integrity validation")
+    stream = _compaction_keystream(secret, nonce, len(ciphertext))
+    plaintext = bytes(left ^ right for left, right in zip(ciphertext, stream))
+    try:
+        envelope = json.loads(plaintext.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Compaction state payload is invalid") from exc
+    if envelope.get("version") != 1 or not isinstance(envelope.get("summary"), str):
+        raise ValueError("Compaction state version is unsupported")
+    return envelope["summary"]
+
+
+def has_compaction_trigger(value):
+    return isinstance(value, list) and any(
+        isinstance(item, dict) and item.get("type") == "compaction_trigger" for item in value
+    )
+
+
+def expand_compaction_items(value):
+    if not isinstance(value, list):
+        return value
+    expanded = []
+    for item in value:
+        if isinstance(item, dict) and item.get("type") == "compaction":
+            summary = decode_compaction(item.get("encrypted_content"))
+            expanded.append({
+                "type": "message",
+                "role": "system",
+                "content": [{
+                    "type": "input_text",
+                    "text": (
+                        "GPU45 compacted continuation state. Treat this as authoritative prior "
+                        "conversation context:\n\n" + summary
+                    ),
+                }],
+            })
+        else:
+            expanded.append(item)
+    return expanded
+
+
+def prepare_compaction_request(body):
+    compact_request = dict(body)
+    value = compact_request.get("input", [])
+    if isinstance(value, str):
+        items = [{
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": value}],
+        }]
+    elif isinstance(value, list):
+        items = expand_compaction_items(value)
+    else:
+        items = []
+    items = [
+        item for item in items
+        if not (isinstance(item, dict) and item.get("type") == "compaction_trigger")
+    ]
+    items.append({
+        "type": "message",
+        "role": "system",
+        "content": [{"type": "input_text", "text": COMPACTION_INSTRUCTION}],
+    })
+    compact_request["input"] = items
+    compact_request["tools"] = []
+    compact_request["tool_choice"] = "none"
+    compact_request["parallel_tool_calls"] = False
+    compact_request["stream"] = True
+    compact_request["max_output_tokens"] = min(int(body.get("max_output_tokens") or 8192), 8192)
+    return compact_request
+
+
+def output_text_from_response(response):
+    parts = []
+    for item in response.get("output", []) if isinstance(response, dict) else []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for content in item.get("content", []):
+            if isinstance(content, dict) and content.get("type") == "output_text":
+                parts.append(str(content.get("text", "")))
+    return "\n".join(part for part in parts if part).strip()
+
+
+def compaction_response(model, summary, usage=None):
+    now = int(time.time())
+    item = {
+        "id": f"cmp_{uuid.uuid4().hex}",
+        "type": "compaction",
+        "encrypted_content": encode_compaction(summary),
+    }
+    response = {
+        "id": f"resp_gpu45_cmp_{uuid.uuid4().hex}",
+        "object": "response",
+        "created_at": now,
+        "completed_at": now,
+        "status": "completed",
+        "error": None,
+        "incomplete_details": None,
+        "model": model,
+        "output": [item],
+        "usage": usage or {
+            "input_tokens": 0,
+            "input_tokens_details": {"cached_tokens": 0},
+            "output_tokens": 0,
+            "output_tokens_details": {"reasoning_tokens": 0},
+            "total_tokens": 0,
+        },
+    }
+    return response, item
+
+
 def describe_output_items(items):
     lines = []
     for item in items or []:
@@ -837,6 +1003,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         inference_request = self.command == "POST" and path.startswith("/v1/")
         lock_acquired = False
         resource_lease = None
+        compaction_requested = False
 
         if self.command == "POST" and raw_body:
             try:
@@ -870,10 +1037,27 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 raw_body = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
 
         if self.command == "POST" and path == "/v1/responses" and raw_body:
+            compaction_requested = has_compaction_trigger(request_body.get("input"))
             if request_body.get("previous_response_id"):
                 request_body = dict(request_body)
                 request_body["input"] = build_followup_input(request_body)
                 request_body.pop("previous_response_id", None)
+            if compaction_requested:
+                try:
+                    request_body = prepare_compaction_request(request_body)
+                except (TypeError, ValueError) as exc:
+                    self.send_json(400, {"error": {"message": str(exc), "type": "invalid_request_error"}})
+                    if lock_acquired:
+                        MODEL_REQUEST_LOCK.release()
+                    return
+            else:
+                try:
+                    request_body["input"] = expand_compaction_items(request_body.get("input"))
+                except ValueError as exc:
+                    self.send_json(400, {"error": {"message": str(exc), "type": "invalid_request_error"}})
+                    if lock_acquired:
+                        MODEL_REQUEST_LOCK.release()
+                    return
             request_body = normalize_responses_instructions(request_body)
             request_body = apply_model_behavior_hints(request_body)
             request_body, namespace_map = flatten_namespace_tools(request_body)
@@ -919,6 +1103,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     api_key["id"] if api_key else None,
                     selected_model["servedAlias"] if selected_model else None,
                     requested_model,
+                    compaction_requested,
                 )
             else:
                 usage_recorded = self.proxy_upstream_response(
@@ -992,7 +1177,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(payload)
             return bool(inference_request)
 
-    def proxy_responses_stream(self, req, request_body, namespace_map, api_key_id, model, requested_model):
+    def proxy_responses_stream(self, req, request_body, namespace_map, api_key_id, model, requested_model, compaction_requested=False):
         request_id = f"gpu45-{uuid.uuid4().hex[:12]}"
         started_at = time.time()
         input_size = len(json.dumps(request_body.get("input", ""), ensure_ascii=False))
@@ -1061,6 +1246,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         completed = False
         upstream_opened = False
+        upstream_completed_response = None
         try:
             self.write_sse_comment(f"{request_id} accepted")
             while True:
@@ -1082,10 +1268,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     elapsed = int(time.time() - started_at)
                     self.write_sse_comment(f"{request_id} waiting reason={item[1]} elapsed_s={elapsed}")
                 elif kind == "event":
-                    response = self.write_sse_event(item[1], request_body, namespace_map)
+                    if compaction_requested:
+                        response = self.parse_sse_response(item[1], namespace_map)
+                    else:
+                        response = self.write_sse_event(item[1], request_body, namespace_map)
                     if response and not completed:
-                        record_usage(api_key_id, model or "unknown", requested_model, 200, response)
-                        completed = True
+                        if compaction_requested:
+                            upstream_completed_response = response
+                        else:
+                            record_usage(api_key_id, model or "unknown", requested_model, 200, response)
+                            completed = True
                 elif kind == "payload":
                     status, content_type, payload = item[1], item[2], item[3]
                     response = None
@@ -1110,6 +1302,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     record_usage(api_key_id, model or "unknown", requested_model, 502)
                     completed = True
                 elif kind == "done":
+                    if compaction_requested and not completed:
+                        summary = output_text_from_response(upstream_completed_response)
+                        if not summary:
+                            self.write_sse_error(502, "GPU45 model returned no continuation summary")
+                            record_usage(api_key_id, model or "unknown", requested_model, 502)
+                        else:
+                            response, compaction_item = compaction_response(
+                                model or "unknown",
+                                summary,
+                                upstream_completed_response.get("usage"),
+                            )
+                            self.write_compaction_sse(response, compaction_item)
+                            store_response(request_body or {}, response)
+                            record_usage(api_key_id, model or "unknown", requested_model, 200, response)
+                            completed = True
                     self.wfile.write(b"0\r\n\r\n")
                     self.wfile.flush()
                     self.close_connection = True
@@ -1134,6 +1341,38 @@ class ProxyHandler(BaseHTTPRequestHandler):
         }
         self.write_chunk(b"event: error\n")
         self.write_chunk(b"data: " + json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n\n")
+
+    def write_sse_json_event(self, event):
+        event_type = event.get("type", "message")
+        self.write_chunk(f"event: {event_type}\n".encode("utf-8"))
+        self.write_chunk(
+            b"data: " + json.dumps(event, ensure_ascii=False).encode("utf-8") + b"\n\n"
+        )
+
+    def write_compaction_sse(self, response, item):
+        in_progress = dict(response)
+        in_progress.update({"status": "in_progress", "completed_at": None, "output": [], "usage": None})
+        self.write_sse_json_event({
+            "type": "response.created", "sequence_number": 0, "response": in_progress
+        })
+        self.write_sse_json_event({
+            "type": "response.in_progress", "sequence_number": 1, "response": in_progress
+        })
+        self.write_sse_json_event({
+            "type": "response.output_item.added",
+            "sequence_number": 2,
+            "output_index": 0,
+            "item": item,
+        })
+        self.write_sse_json_event({
+            "type": "response.output_item.done",
+            "sequence_number": 3,
+            "output_index": 0,
+            "item": item,
+        })
+        self.write_sse_json_event({
+            "type": "response.completed", "sequence_number": 4, "response": response
+        })
 
     def write_chunk(self, data):
         if not data:
@@ -1195,6 +1434,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
         )
         if event.get("type") == "response.completed" and isinstance(event.get("response"), dict):
             store_response(request_body or {}, event["response"])
+            return event["response"]
+        return None
+
+    def parse_sse_response(self, lines, namespace_map):
+        decoded = [line.decode("utf-8", "replace") for line in lines]
+        data_lines = [line[5:].strip() for line in decoded if line.startswith("data:")]
+        if not data_lines:
+            return None
+        try:
+            event = restore_namespaced_calls(
+                json.loads("\n".join(data_lines)), namespace_map
+            )
+        except json.JSONDecodeError:
+            return None
+        if event.get("type") == "response.completed" and isinstance(event.get("response"), dict):
             return event["response"]
         return None
 

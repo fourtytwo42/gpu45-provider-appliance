@@ -276,6 +276,69 @@ class NamespaceToolTranslationTests(unittest.TestCase):
         self.assertEqual(len(guarded["input"]), 20)
 
 
+class CompactionTests(unittest.TestCase):
+    def test_compaction_envelope_round_trips_and_rejects_tampering(self):
+        encoded = PROXY.encode_compaction("Remember BLUE-COMET-7319 and continue the deployment.")
+
+        self.assertTrue(encoded.startswith("gpu45c1."))
+        self.assertEqual(
+            PROXY.decode_compaction(encoded),
+            "Remember BLUE-COMET-7319 and continue the deployment.",
+        )
+
+        replacement = "A" if encoded[-1] != "A" else "B"
+        with self.assertRaisesRegex(ValueError, "integrity validation"):
+            PROXY.decode_compaction(encoded[:-1] + replacement)
+
+    def test_prepares_selected_model_compaction_request(self):
+        body = {
+            "model": "qwen-local",
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Keep this."}]},
+                {"type": "compaction_trigger"},
+            ],
+            "tools": [{"type": "function", "name": "shell"}],
+            "stream": True,
+        }
+
+        prepared = PROXY.prepare_compaction_request(body)
+
+        self.assertEqual(prepared["model"], "qwen-local")
+        self.assertFalse(PROXY.has_compaction_trigger(prepared["input"]))
+        self.assertEqual(prepared["tools"], [])
+        self.assertEqual(prepared["tool_choice"], "none")
+        self.assertIn("compact continuation state", prepared["input"][-1]["content"][0]["text"])
+
+    def test_replays_compaction_as_authoritative_context(self):
+        encoded = PROXY.encode_compaction("Marker is BLUE-COMET-7319.")
+
+        expanded = PROXY.expand_compaction_items([
+            {"type": "compaction", "id": "cmp_1", "encrypted_content": encoded},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What marker?"}]},
+        ])
+
+        self.assertEqual(expanded[0]["role"], "system")
+        self.assertIn("BLUE-COMET-7319", expanded[0]["content"][0]["text"])
+        self.assertEqual(expanded[1]["role"], "user")
+
+    def test_compaction_stream_finishes_with_one_compaction_item(self):
+        response, item = PROXY.compaction_response("qwen-local", "Summary")
+        handler = object.__new__(PROXY.ProxyHandler)
+        chunks = []
+        handler.write_chunk = chunks.append
+
+        handler.write_compaction_sse(response, item)
+
+        events = []
+        for chunk in chunks:
+            for line in chunk.decode("utf-8").splitlines():
+                if line.startswith("data: "):
+                    events.append(PROXY.json.loads(line[6:]))
+        self.assertEqual(events[-1]["type"], "response.completed")
+        self.assertEqual(len(events[-1]["response"]["output"]), 1)
+        self.assertEqual(events[-1]["response"]["output"][0]["type"], "compaction")
+
+
 class EndpointControlTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()

@@ -20,6 +20,8 @@ The dashboard manages telemetry, fan controls, model downloads, installed model 
 - A supported model name triggers a serialized model switch before inference. Missing or unsupported names use the active model, then the configured fallback model.
 - Inference is serialized across model switching so the active model cannot be unloaded during another request.
 - `/v1/responses` is normalized to streaming mode and returns SSE headers immediately. The proxy emits keepalive comments while llama.cpp is still processing long full-context prompts, then forwards upstream events when generation starts. This keeps Codex from treating long time-to-first-token prefill as a dead connection.
+- Codex `compaction_trigger` requests are handled by the selected GPU45 model. The proxy emits exactly one authenticated, appliance-opaque `compaction` item followed by `response.completed`, then expands that state for the selected model on subsequent turns. Compaction never falls back to a hosted OpenAI model.
+- If the configured model is already selected but `llama-openai.service` is stopped, the Responses proxy starts it before inference.
 
 ## Model Management
 
